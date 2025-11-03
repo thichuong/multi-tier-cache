@@ -174,18 +174,128 @@ Tested in production environment:
 
 ## 🔧 Configuration
 
-### Environment Variables
+### Redis Connection (REDIS_URL)
 
-```bash
-# Redis connection URL (default: redis://127.0.0.1:6379)
-export REDIS_URL="redis://localhost:6379"
-```
+The library connects to Redis using the `REDIS_URL` environment variable. Configuration priority (highest to lowest):
 
-### Custom Redis URL
+#### 1. Programmatic Configuration (Highest Priority)
 
 ```rust
-let cache = CacheSystem::with_redis_url("redis://custom:6379").await?;
+// Set custom Redis URL before initialization
+let cache = CacheSystem::with_redis_url("redis://production:6379").await?;
 ```
+
+#### 2. Environment Variable
+
+```bash
+# Set in shell
+export REDIS_URL="redis://your-redis-host:6379"
+cargo run
+```
+
+#### 3. .env File (Recommended for Development)
+
+```bash
+# Create .env file in project root
+REDIS_URL="redis://localhost:6379"
+```
+
+#### 4. Default Fallback
+
+If not configured, defaults to: `redis://127.0.0.1:6379`
+
+---
+
+### Use Cases
+
+**Development (Local Redis)**
+```bash
+# .env
+REDIS_URL="redis://127.0.0.1:6379"
+```
+
+**Production (Cloud Redis with Authentication)**
+```bash
+# Railway, Render, AWS ElastiCache, etc.
+REDIS_URL="redis://:your-password@redis-host.cloud:6379"
+```
+
+**Docker Compose**
+```yaml
+services:
+  app:
+    environment:
+      - REDIS_URL=redis://redis:6379
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+```
+
+**Testing (Separate Instance)**
+```rust
+#[tokio::test]
+async fn test_cache() {
+    let cache = CacheSystem::with_redis_url("redis://localhost:6380").await?;
+    // Test logic...
+}
+```
+
+---
+
+### Redis URL Format
+
+```
+redis://[username]:[password]@[host]:[port]/[database]
+```
+
+**Examples:**
+- `redis://localhost:6379` - Local Redis, no authentication
+- `redis://:mypassword@localhost:6379` - Local with password only
+- `redis://user:pass@redis.example.com:6379/0` - Remote with username, password, and database 0
+- `rediss://redis.cloud:6380` - SSL/TLS connection (note the `rediss://`)
+
+---
+
+### Troubleshooting Redis Connection
+
+**Connection Refused**
+```bash
+# Check if Redis is running
+redis-cli ping  # Should return "PONG"
+
+# Check the port
+netstat -an | grep 6379
+
+# Verify REDIS_URL
+echo $REDIS_URL
+```
+
+**Authentication Failed**
+```bash
+# Ensure password is in the URL
+REDIS_URL="redis://:YOUR_PASSWORD@host:6379"
+
+# Test connection with redis-cli
+redis-cli -h host -p 6379 -a YOUR_PASSWORD ping
+```
+
+**Timeout Errors**
+- Check network connectivity: `ping your-redis-host`
+- Verify firewall rules allow port 6379
+- Check Redis `maxclients` setting (may be full)
+- Review Redis logs: `redis-cli INFO clients`
+
+**DNS Resolution Issues**
+```bash
+# Test DNS resolution
+nslookup your-redis-host.com
+
+# Use IP address as fallback
+REDIS_URL="redis://192.168.1.100:6379"
+```
+
+---
 
 ### Cache Tuning
 

@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics export (Prometheus format)
 - Cache invalidation patterns (wildcard, regex)
 
+## [0.1.2] - 2025-01-03
+
+### Changed
+- **Documentation**: Significantly improved REDIS_URL configuration documentation
+  - Added configuration priority order (programmatic > env var > .env > default)
+  - Added use case examples (development, production, Docker, testing)
+  - Added Redis URL format specification with examples
+  - Added comprehensive troubleshooting section for common connection issues
+  - Better organization with clear headings and code examples
+
+### Internal
+- No code changes - documentation-only release
+- Fully backward compatible with 0.1.1 and 0.1.0
+
 ## [0.1.1] - 2025-01-03
 
 ### Changed

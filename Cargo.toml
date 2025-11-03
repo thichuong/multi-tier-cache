@@ -1,6 +1,6 @@
 [package]
 name = "multi-tier-cache"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["thichuong <thichuong22022000@gmail.com>"]
 description = "High-performance multi-tier cache with L1 (Moka) + L2 (Redis) and stampede protection"
