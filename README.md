@@ -165,12 +165,12 @@ Tested in production environment:
 
 ### Comparison with Other Libraries
 
-| Library | Multi-Tier | Stampede Protection | Redis Support | Streams | RPS |
-|---------|------------|---------------------|---------------|---------|-----|
-| **multi-tier-cache** | ✅ L1+L2 | ✅ Full | ✅ Full | ✅ Built-in | 16,829+ |
-| cached | ❌ Single | ❌ No | ❌ No | ❌ No | N/A |
-| moka | ❌ L1 only | ✅ L1 only | ❌ No | ❌ No | N/A |
-| redis-rs | ❌ No cache | ❌ Manual | ✅ Low-level | ✅ Manual | N/A |
+| Library | Multi-Tier | Stampede Protection | Redis Support | Streams |
+|---------|------------|---------------------|---------------|---------|
+| **multi-tier-cache** | ✅ L1+L2 | ✅ Full | ✅ Full | ✅ Built-in |
+| cached | ❌ Single | ❌ No | ❌ No | ❌ No |
+| moka | ❌ L1 only | ✅ L1 only | ❌ No | ❌ No |
+| redis-rs | ❌ No cache | ❌ Manual | ✅ Low-level | ✅ Manual |
 
 ## 🔧 Configuration
 
