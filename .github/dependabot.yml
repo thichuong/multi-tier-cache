@@ -12,7 +12,7 @@ updates:
       - "dependencies"
       - "rust"
     reviewers:
-      - "YOURUSERNAME"  # Replace with actual GitHub username
+      - "thichuong"
     commit-message:
       prefix: "chore"
       include: "scope"

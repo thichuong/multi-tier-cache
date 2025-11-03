@@ -14,7 +14,7 @@ We release patches for security vulnerabilities in the following versions:
 
 If you discover a security vulnerability in multi-tier-cache, please send an email to:
 
-📧 **your.email@example.com** (replace with actual email)
+📧 **thichuong22022000@gmail.com**
 
 ### What to Include
 
@@ -265,4 +265,4 @@ This security policy is provided as-is without warranty. By reporting vulnerabil
 
 **Last Updated**: 2025-01-03
 
-For questions about this policy, open an issue or contact: your.email@example.com
+For questions about this policy, open an issue or contact: thichuong22022000@gmail.com

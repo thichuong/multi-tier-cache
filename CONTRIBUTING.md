@@ -15,7 +15,7 @@ Thank you for your interest in contributing to multi-tier-cache! 🎉
 
 3. **Add upstream** remote:
    ```bash
-   git remote add upstream https://github.com/ORIGINAL_OWNER/multi-tier-cache.git
+   git remote add upstream https://github.com/thichuong/multi-tier-cache.git
    ```
 
 ### Development Environment
