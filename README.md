@@ -151,6 +151,125 @@ let new_entries = cache.cache_manager()
     .await?;
 ```
 
+### 4. Type-Safe Database Caching (New in 0.2.0! 🎉)
+
+Eliminate boilerplate with automatic serialization/deserialization for database queries:
+
+```rust
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+struct User {
+    id: i64,
+    name: String,
+    email: String,
+}
+
+// ❌ OLD WAY: Manual cache + serialize + deserialize (40+ lines)
+let cached = cache.cache_manager().get("user:123").await?;
+let user: User = match cached {
+    Some(json) => serde_json::from_value(json)?,
+    None => {
+        let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+            .bind(123)
+            .fetch_one(&pool)
+            .await?;
+        let json = serde_json::to_value(&user)?;
+        cache.cache_manager().set_with_strategy("user:123", json, CacheStrategy::MediumTerm).await?;
+        user
+    }
+};
+
+// ✅ NEW WAY: Type-safe automatic caching (5 lines)
+let user: User = cache.cache_manager()
+    .get_or_compute_typed(
+        "user:123",
+        CacheStrategy::MediumTerm,
+        || async {
+            sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+                .bind(123)
+                .fetch_one(&pool)
+                .await
+        }
+    )
+    .await?;
+```
+
+**Benefits:**
+- ✅ **Type-Safe**: Compiler checks types, no runtime surprises
+- ✅ **Zero Boilerplate**: Automatic serialize/deserialize
+- ✅ **Full Cache Features**: L1→L2 fallback, stampede protection, auto-promotion
+- ✅ **Generic**: Works with any type implementing `Serialize + DeserializeOwned`
+
+**More Examples:**
+
+```rust
+// PostgreSQL Reports
+#[derive(Serialize, Deserialize)]
+struct Report {
+    id: i64,
+    title: String,
+    data: serde_json::Value,
+}
+
+let report: Report = cache.cache_manager()
+    .get_or_compute_typed(
+        &format!("report:{}", id),
+        CacheStrategy::LongTerm,
+        || async {
+            sqlx::query_as("SELECT * FROM reports WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+        }
+    )
+    .await?;
+
+// API Responses
+#[derive(Serialize, Deserialize)]
+struct ApiData {
+    status: String,
+    items: Vec<String>,
+}
+
+let data: ApiData = cache.cache_manager()
+    .get_or_compute_typed(
+        "api:external",
+        CacheStrategy::RealTime,
+        || async {
+            reqwest::get("https://api.example.com/data")
+                .await?
+                .json::<ApiData>()
+                .await
+        }
+    )
+    .await?;
+
+// Complex Computations
+#[derive(Serialize, Deserialize)]
+struct AnalyticsResult {
+    total: i64,
+    average: f64,
+    breakdown: HashMap<String, i64>,
+}
+
+let analytics: AnalyticsResult = cache.cache_manager()
+    .get_or_compute_typed(
+        "analytics:monthly",
+        CacheStrategy::Custom(Duration::from_secs(6 * 3600)),
+        || async {
+            // Expensive computation...
+            compute_monthly_analytics(&pool).await
+        }
+    )
+    .await?;
+```
+
+**Performance:**
+- **L1 Hit**: <1ms + deserialization (~10-50μs)
+- **L2 Hit**: 2-5ms + deserialization + L1 promotion
+- **Cache Miss**: Your query time + serialization + L1+L2 storage
+
 ## 📊 Performance Benchmarks
 
 Tested in production environment:

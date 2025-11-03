@@ -601,13 +601,14 @@ dependencies = [
 
 [[package]]
 name = "multi-tier-cache"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "criterion",
  "dashmap",
  "moka",
  "redis",
+ "serde",
  "serde_json",
  "tokio",
 ]

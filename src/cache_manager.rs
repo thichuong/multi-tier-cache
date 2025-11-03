@@ -317,10 +317,198 @@ impl CacheManager {
         }
         
         // 7. _cleanup_guard will auto-remove entry on drop
-        
+
         Ok(fresh_data)
     }
-    
+
+    /// Get or compute typed value with Cache Stampede protection (Type-Safe Version)
+    ///
+    /// This method provides the same functionality as `get_or_compute_with()` but with
+    /// **type-safe** automatic serialization/deserialization. Perfect for database queries,
+    /// API calls, or any computation that returns structured data.
+    ///
+    /// # Type Safety
+    ///
+    /// - Returns your actual type `T` instead of `serde_json::Value`
+    /// - Compiler enforces Serialize + DeserializeOwned bounds
+    /// - No manual JSON conversion needed
+    ///
+    /// # Cache Flow
+    ///
+    /// 1. Check L1 cache → deserialize if found
+    /// 2. Check L2 cache → deserialize + promote to L1 if found
+    /// 3. Execute compute_fn → serialize → store in L1+L2
+    /// 4. Full stampede protection (only ONE request computes)
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - Cache key
+    /// * `strategy` - Cache strategy for TTL
+    /// * `compute_fn` - Async function returning `Result<T>`
+    ///
+    /// # Example - Database Query
+    ///
+    /// ```rust
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct User {
+    ///     id: i64,
+    ///     name: String,
+    /// }
+    ///
+    /// // Type-safe database caching
+    /// let user: User = cache_manager.get_or_compute_typed(
+    ///     "user:123",
+    ///     CacheStrategy::MediumTerm,
+    ///     || async {
+    ///         // Your database query here
+    ///         sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+    ///             .bind(123)
+    ///             .fetch_one(&pool)
+    ///             .await
+    ///     }
+    /// ).await?;
+    /// ```
+    ///
+    /// # Example - API Call
+    ///
+    /// ```rust
+    /// #[derive(Serialize, Deserialize)]
+    /// struct ApiResponse {
+    ///     data: String,
+    ///     timestamp: i64,
+    /// }
+    ///
+    /// let response: ApiResponse = cache_manager.get_or_compute_typed(
+    ///     "api:endpoint",
+    ///     CacheStrategy::RealTime,
+    ///     || async {
+    ///         reqwest::get("https://api.example.com/data")
+    ///             .await?
+    ///             .json::<ApiResponse>()
+    ///             .await
+    ///     }
+    /// ).await?;
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// - L1 hit: <1ms + deserialization (~10-50μs for small structs)
+    /// - L2 hit: 2-5ms + deserialization + L1 promotion
+    /// - Compute: Your function time + serialization + L1+L2 storage
+    /// - Stampede protection: 99.6% latency reduction under high concurrency
+    ///
+    /// # Errors
+    ///
+    /// Returns error if:
+    /// - Compute function fails
+    /// - Serialization fails (invalid type for JSON)
+    /// - Deserialization fails (cache data doesn't match type T)
+    /// - Cache operations fail (Redis connection issues)
+    pub async fn get_or_compute_typed<T, F, Fut>(
+        &self,
+        key: &str,
+        strategy: CacheStrategy,
+        compute_fn: F,
+    ) -> Result<T>
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned + Send + 'static,
+        F: FnOnce() -> Fut + Send,
+        Fut: Future<Output = Result<T>> + Send,
+    {
+        self.total_requests.fetch_add(1, Ordering::Relaxed);
+
+        // 1. Try L1 cache first (with built-in Moka coalescing for hot data)
+        if let Some(cached_json) = self.l1_cache.get(key).await {
+            self.l1_hits.fetch_add(1, Ordering::Relaxed);
+
+            // Attempt to deserialize from JSON to type T
+            match serde_json::from_value::<T>(cached_json) {
+                Ok(typed_value) => {
+                    println!("✅ [L1 HIT] Deserialized '{}' to type {}", key, std::any::type_name::<T>());
+                    return Ok(typed_value);
+                }
+                Err(e) => {
+                    // Deserialization failed - cache data may be stale or corrupt
+                    eprintln!("⚠️ L1 cache deserialization failed for key '{}': {}. Will recompute.", key, e);
+                    // Fall through to recompute
+                }
+            }
+        }
+
+        // 2. L1 miss - try L2 with Cache Stampede protection
+        let key_owned = key.to_string();
+        let lock_guard = self.in_flight_requests
+            .entry(key_owned.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+
+        let _guard = lock_guard.lock().await;
+
+        // RAII cleanup guard - ensures entry is removed even on early return or panic
+        let _cleanup_guard = CleanupGuard {
+            map: &self.in_flight_requests,
+            key: key_owned,
+        };
+
+        // 3. Double-check L1 cache after acquiring lock
+        // (Another request might have populated it while we were waiting)
+        if let Some(cached_json) = self.l1_cache.get(key).await {
+            self.l1_hits.fetch_add(1, Ordering::Relaxed);
+            if let Ok(typed_value) = serde_json::from_value::<T>(cached_json) {
+                println!("✅ [L1 HIT] Deserialized '{}' after lock acquisition", key);
+                return Ok(typed_value);
+            }
+        }
+
+        // 4. Check L2 cache
+        if let Some(cached_json) = self.l2_cache.get(key).await {
+            self.l2_hits.fetch_add(1, Ordering::Relaxed);
+
+            // Attempt to deserialize
+            match serde_json::from_value::<T>(cached_json.clone()) {
+                Ok(typed_value) => {
+                    println!("✅ [L2 HIT] Deserialized '{}' from Redis", key);
+
+                    // Promote to L1 for faster future access
+                    let ttl = strategy.to_duration();
+                    if let Err(e) = self.l1_cache.set_with_ttl(key, cached_json, ttl).await {
+                        eprintln!("⚠️ Failed to promote key '{}' to L1: {}", key, e);
+                    } else {
+                        self.promotions.fetch_add(1, Ordering::Relaxed);
+                        println!("⬆️ Promoted '{}' from L2 to L1", key);
+                    }
+
+                    return Ok(typed_value);
+                }
+                Err(e) => {
+                    eprintln!("⚠️ L2 cache deserialization failed for key '{}': {}. Will recompute.", key, e);
+                    // Fall through to recompute
+                }
+            }
+        }
+
+        // 5. Both L1 and L2 miss (or deserialization failed) - compute fresh data
+        println!("💻 Computing fresh typed data for key: '{}' (Cache Stampede protected)", key);
+        let typed_value = compute_fn().await?;
+
+        // 6. Serialize to JSON for storage
+        let json_value = serde_json::to_value(&typed_value)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize type {} for caching: {}", std::any::type_name::<T>(), e))?;
+
+        // 7. Store in both L1 and L2 caches
+        if let Err(e) = self.set_with_strategy(key, json_value, strategy).await {
+            eprintln!("⚠️ Failed to cache computed typed data for key '{}': {}", key, e);
+        } else {
+            println!("💾 Cached typed value for '{}' (type: {})", key, std::any::type_name::<T>());
+        }
+
+        // 8. _cleanup_guard will auto-remove entry on drop
+
+        Ok(typed_value)
+    }
+
     /// Get comprehensive cache statistics
     #[allow(dead_code)]
     pub fn get_stats(&self) -> CacheManagerStats {

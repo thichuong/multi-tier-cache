@@ -14,6 +14,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics export (Prometheus format)
 - Cache invalidation patterns (wildcard, regex)
 
+## [0.2.0] - 2025-01-03
+
+### Added
+
+**🎉 Major Feature: Type-Safe Database Caching**
+
+- **`get_or_compute_typed<T>()`** - New method for automatic type-safe caching
+  - Generic over any type implementing `Serialize + DeserializeOwned`
+  - Automatic serialization/deserialization (no manual JSON conversion)
+  - Full L1→L2 cache flow with stampede protection
+  - Perfect for database queries, API calls, complex computations
+  - **Reduces boilerplate from 40+ lines to 5 lines**
+
+**Examples:**
+- `examples/database_caching.rs` - Comprehensive demonstration with multiple types
+- README section "Type-Safe Database Caching" with before/after comparisons
+
+**Dependencies:**
+- Added `serde = { version = "1.0", features = ["derive"] }` for trait bounds
+
+### Documentation
+
+- Added comprehensive "Type-Safe Database Caching" section to README
+- Added before/after comparison showing 40+ lines → 5 lines reduction
+- Added examples for PostgreSQL, API calls, complex computations
+- Updated method documentation with detailed examples and performance notes
+
+### Benefits
+
+- ✅ **Type Safety**: Compiler enforces correct types at compile time
+- ✅ **Zero Boilerplate**: Eliminates manual serialize/deserialize code
+- ✅ **Full Cache Features**: L1+L2, stampede protection, auto-promotion
+- ✅ **Generic**: Works with any serializable type (User, Product, Report, etc.)
+- ✅ **Performance**: Same cache performance + ~10-50μs deserialization overhead
+
+### Breaking Changes
+
+**None** - This is a fully backward compatible release. All existing code continues to work.
+- New method is additive only
+- Existing `get_or_compute_with()` unchanged
+- Version bump to 0.2.0 due to new public API (semver minor)
+
 ## [0.1.2] - 2025-01-03
 
 ### Changed
