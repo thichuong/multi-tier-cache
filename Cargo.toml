@@ -1,0 +1,36 @@
+[package]
+name = "multi-tier-cache"
+version = "0.1.0"
+edition = "2021"
+authors = ["thichuong <thichuong@example.com>"]
+description = "High-performance multi-tier cache with L1 (Moka) + L2 (Redis) and stampede protection"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/thichuong/multi-tier-cache"
+keywords = ["cache", "redis", "moka", "multi-tier", "stampede"]
+categories = ["caching", "asynchronous", "database"]
+readme = "README.md"
+
+[dependencies]
+# Caching
+moka = { version = "0.12", features = ["future"] }
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+
+# Async runtime
+tokio = { version = "1.28", features = ["sync"] }
+
+# Serialization
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+
+# Concurrency
+dashmap = "5.5"
+
+[dev-dependencies]
+tokio = { version = "1.28", features = ["full"] }
+criterion = "0.5"
+
+[features]
+default = ["redis-streams"]
+redis-streams = []
