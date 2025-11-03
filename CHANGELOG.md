@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics export (Prometheus format)
 - Cache invalidation patterns (wildcard, regex)
 
+## [0.1.1] - 2025-01-03
+
+### Changed
+- **Documentation**: Removed RPS column from library comparison table in README
+- **Documentation**: Removed unavailable docs.rs link from Contact section
+- **Documentation**: Fixed GitHub repository URLs to use correct username
+
+### Internal
+- No code changes - documentation-only release
+- Fully backward compatible with 0.1.0
+
 ## [0.1.0] - 2025-01-03
 
 ### Added
