@@ -329,8 +329,7 @@ Built with:
 
 ## 📞 Contact
 
-- GitHub Issues: [Report bugs or request features](https://github.com/yourusername/multi-tier-cache/issues)
-- Documentation: [https://docs.rs/multi-tier-cache](https://docs.rs/multi-tier-cache)
+- GitHub Issues: [Report bugs or request features](https://github.com/thichuong/multi-tier-cache/issues)
 
 ---
 
