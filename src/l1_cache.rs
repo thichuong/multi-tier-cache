@@ -127,6 +127,42 @@ impl L1Cache {
 
 }
 
+// ===== Trait Implementations =====
+
+use crate::traits::CacheBackend;
+use async_trait::async_trait;
+
+/// Implement CacheBackend trait for L1Cache
+///
+/// This allows L1Cache to be used as a pluggable backend in the multi-tier cache system.
+#[async_trait]
+impl CacheBackend for L1Cache {
+    async fn get(&self, key: &str) -> Option<serde_json::Value> {
+        L1Cache::get(self, key).await
+    }
+
+    async fn set_with_ttl(
+        &self,
+        key: &str,
+        value: serde_json::Value,
+        ttl: Duration,
+    ) -> Result<()> {
+        L1Cache::set_with_ttl(self, key, value, ttl).await
+    }
+
+    async fn remove(&self, key: &str) -> Result<()> {
+        L1Cache::remove(self, key).await
+    }
+
+    async fn health_check(&self) -> bool {
+        L1Cache::health_check(self).await
+    }
+
+    fn name(&self) -> &str {
+        "Moka (L1)"
+    }
+}
+
 /// Cache statistics
 #[allow(dead_code)]
 #[derive(Debug, Clone)]

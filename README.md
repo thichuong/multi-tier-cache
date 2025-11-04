@@ -9,9 +9,10 @@
 ## ✨ Features
 
 - **🔥 Multi-Tier Architecture**: Combines fast in-memory (Moka) with persistent distributed (Redis) caching
+- **🔌 Pluggable Backends** *(v0.3.0+)*: Swap Moka/Redis with custom implementations (DashMap, Memcached, etc.)
 - **🛡️ Cache Stampede Protection**: DashMap + Mutex request coalescing prevents duplicate computations (99.6% latency reduction: 534ms → 5.2ms)
 - **📊 Redis Streams**: Built-in publish/subscribe with automatic trimming for event streaming
-- **⚡ Automatic L2-to-L1 Promotion**: Intelligent cache tier promotion for frequently accessed data
+- **⚡ Automatic L2-to-L1 Promotion**: Intelligent cache tier promotion for frequently accessed data with TTL preservation
 - **📈 Comprehensive Statistics**: Hit rates, promotions, in-flight request tracking
 - **🎯 Zero-Config**: Sensible defaults, works out of the box
 - **✅ Production-Proven**: Battle-tested at **16,829+ RPS** with **5.2ms latency** and **95% hit rate**
@@ -36,10 +37,15 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-multi-tier-cache = "0.1"
+multi-tier-cache = "0.3"
 tokio = { version = "1.28", features = ["full"] }
 serde_json = "1.0"
 ```
+
+**Version Guide:**
+- **v0.3.0+**: Pluggable backends, trait-based architecture
+- **v0.2.0+**: Type-safe database caching with `get_or_compute_typed()`
+- **v0.1.0+**: Core multi-tier caching with stampede protection
 
 ## 🚀 Quick Start
 
@@ -269,6 +275,125 @@ let analytics: AnalyticsResult = cache.cache_manager()
 - **L1 Hit**: <1ms + deserialization (~10-50μs)
 - **L2 Hit**: 2-5ms + deserialization + L1 promotion
 - **Cache Miss**: Your query time + serialization + L1+L2 storage
+
+### 5. Custom Cache Backends (New in 0.3.0! 🎉)
+
+Starting from **v0.3.0**, you can replace the default Moka (L1) and Redis (L2) backends with your own custom implementations!
+
+**Use Cases:**
+- Replace Redis with Memcached, DragonflyDB, or KeyDB
+- Use DashMap instead of Moka for L1
+- Implement no-op caches for testing
+- Add custom cache eviction policies
+- Integrate with proprietary caching systems
+
+#### Basic Example: Custom HashMap L1 Cache
+
+```rust
+use multi_tier_cache::{CacheBackend, CacheSystemBuilder, async_trait};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+use anyhow::Result;
+
+struct HashMapCache {
+    store: Arc<RwLock<HashMap<String, (serde_json::Value, Instant)>>>,
+}
+
+#[async_trait]
+impl CacheBackend for HashMapCache {
+    async fn get(&self, key: &str) -> Option<serde_json::Value> {
+        let store = self.store.read().unwrap();
+        store.get(key).and_then(|(value, expiry)| {
+            if *expiry > Instant::now() {
+                Some(value.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    async fn set_with_ttl(
+        &self,
+        key: &str,
+        value: serde_json::Value,
+        ttl: Duration,
+    ) -> Result<()> {
+        let mut store = self.store.write().unwrap();
+        store.insert(key.to_string(), (value, Instant::now() + ttl));
+        Ok(())
+    }
+
+    async fn remove(&self, key: &str) -> Result<()> {
+        self.store.write().unwrap().remove(key);
+        Ok(())
+    }
+
+    async fn health_check(&self) -> bool {
+        true
+    }
+
+    fn name(&self) -> &str {
+        "HashMap"
+    }
+}
+
+// Use custom backend
+let custom_l1 = Arc::new(HashMapCache::new());
+
+let cache = CacheSystemBuilder::new()
+    .with_l1(custom_l1 as Arc<dyn CacheBackend>)
+    .build()
+    .await?;
+```
+
+#### Advanced: Custom L2 Backend with TTL
+
+For L2 caches, implement `L2CacheBackend` which extends `CacheBackend` with `get_with_ttl()`:
+
+```rust
+use multi_tier_cache::{L2CacheBackend, async_trait};
+
+#[async_trait]
+impl CacheBackend for MyCustomL2 {
+    // ... implement CacheBackend methods
+}
+
+#[async_trait]
+impl L2CacheBackend for MyCustomL2 {
+    async fn get_with_ttl(
+        &self,
+        key: &str,
+    ) -> Option<(serde_json::Value, Option<Duration>)> {
+        // Return value with remaining TTL
+        Some((value, Some(remaining_ttl)))
+    }
+}
+```
+
+#### Builder API
+
+```rust
+use multi_tier_cache::CacheSystemBuilder;
+
+let cache = CacheSystemBuilder::new()
+    .with_l1(custom_l1)        // Custom L1 backend
+    .with_l2(custom_l2)        // Custom L2 backend
+    .with_streams(kafka)       // Optional: Custom streaming backend
+    .build()
+    .await?;
+```
+
+**Mix and Match:**
+- Use custom L1 with default Redis L2
+- Use default Moka L1 with custom L2
+- Replace both L1 and L2 backends
+
+**See:** [`examples/custom_backends.rs`](examples/custom_backends.rs) for complete working examples including:
+- HashMap L1 cache
+- In-memory L2 cache with TTL
+- No-op cache (for testing)
+- Mixed backend configurations
 
 ## 📊 Performance Benchmarks
 

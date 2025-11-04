@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 
 use super::l1_cache::L1Cache;
 use super::l2_cache::L2Cache;
+use super::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 
 /// RAII cleanup guard for in-flight request tracking
 /// Ensures that entries are removed from DashMap even on early return or panic
@@ -61,10 +62,12 @@ impl CacheStrategy {
 
 /// Cache Manager - Unified operations across L1 and L2
 pub struct CacheManager {
-    /// L1 Cache (Moka)
-    l1_cache: Arc<L1Cache>,
-    /// L2 Cache (Redis)
-    l2_cache: Arc<L2Cache>,
+    /// L1 Cache (trait object for pluggable backends)
+    l1_cache: Arc<dyn CacheBackend>,
+    /// L2 Cache (trait object for pluggable backends)
+    l2_cache: Arc<dyn L2CacheBackend>,
+    /// Optional streaming backend (defaults to L2 if it implements StreamingBackend)
+    streaming_backend: Option<Arc<dyn StreamingBackend>>,
     /// Statistics
     total_requests: Arc<AtomicU64>,
     l1_hits: Arc<AtomicU64>,
@@ -76,13 +79,45 @@ pub struct CacheManager {
 }
 
 impl CacheManager {
-    /// Create new cache manager
-    pub async fn new(l1_cache: Arc<L1Cache>, l2_cache: Arc<L2Cache>) -> Result<Self> {
-        println!("  🎯 Initializing Cache Manager...");
-        
+    /// Create new cache manager with trait objects (pluggable backends)
+    ///
+    /// This is the primary constructor for v0.3.0+, supporting custom cache backends.
+    ///
+    /// # Arguments
+    ///
+    /// * `l1_cache` - Any L1 cache backend implementing `CacheBackend` trait
+    /// * `l2_cache` - Any L2 cache backend implementing `L2CacheBackend` trait
+    /// * `streaming_backend` - Optional streaming backend (None to disable streaming)
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use multi_tier_cache::{CacheManager, L1Cache, L2Cache};
+    /// use std::sync::Arc;
+    ///
+    /// let l1: Arc<dyn CacheBackend> = Arc::new(L1Cache::new().await?);
+    /// let l2: Arc<dyn L2CacheBackend> = Arc::new(L2Cache::new().await?);
+    ///
+    /// let manager = CacheManager::new_with_backends(l1, l2, None).await?;
+    /// ```
+    pub async fn new_with_backends(
+        l1_cache: Arc<dyn CacheBackend>,
+        l2_cache: Arc<dyn L2CacheBackend>,
+        streaming_backend: Option<Arc<dyn StreamingBackend>>,
+    ) -> Result<Self> {
+        println!("  🎯 Initializing Cache Manager with custom backends...");
+        println!("    L1: {}", l1_cache.name());
+        println!("    L2: {}", l2_cache.name());
+        if streaming_backend.is_some() {
+            println!("    Streaming: enabled");
+        } else {
+            println!("    Streaming: disabled");
+        }
+
         Ok(Self {
             l1_cache,
             l2_cache,
+            streaming_backend,
             total_requests: Arc::new(AtomicU64::new(0)),
             l1_hits: Arc::new(AtomicU64::new(0)),
             l2_hits: Arc::new(AtomicU64::new(0)),
@@ -90,6 +125,27 @@ impl CacheManager {
             promotions: Arc::new(AtomicUsize::new(0)),
             in_flight_requests: Arc::new(DashMap::new()),
         })
+    }
+
+    /// Create new cache manager with default backends (backward compatible)
+    ///
+    /// This is the legacy constructor maintained for backward compatibility.
+    /// New code should prefer `new_with_backends()` or `CacheSystemBuilder`.
+    ///
+    /// # Arguments
+    ///
+    /// * `l1_cache` - Moka L1 cache instance
+    /// * `l2_cache` - Redis L2 cache instance
+    pub async fn new(l1_cache: Arc<L1Cache>, l2_cache: Arc<L2Cache>) -> Result<Self> {
+        println!("  🎯 Initializing Cache Manager...");
+
+        // Convert concrete types to trait objects
+        let l1_backend: Arc<dyn CacheBackend> = l1_cache.clone();
+        let l2_backend: Arc<dyn L2CacheBackend> = l2_cache.clone();
+        // L2Cache also implements StreamingBackend, so use it for streaming
+        let streaming_backend: Arc<dyn StreamingBackend> = l2_cache;
+
+        Self::new_with_backends(l1_backend, l2_backend, Some(streaming_backend)).await
     }
     
     /// Get value from cache (L1 first, then L2 fallback with promotion)
@@ -137,19 +193,21 @@ impl CacheManager {
             return Ok(Some(value));
         }
         
-        // Check L2 cache
-        if let Some(value) = self.l2_cache.get(key).await {
+        // Check L2 cache with TTL information
+        if let Some((value, ttl)) = self.l2_cache.get_with_ttl(key).await {
             self.l2_hits.fetch_add(1, Ordering::Relaxed);
-            
-            // Promote to L1 for faster access next time
-            if let Err(_) = self.l1_cache.set_with_ttl(key, value.clone(), Duration::from_secs(300)).await {
+
+            // Promote to L1 with same TTL as Redis (or default if no TTL)
+            let promotion_ttl = ttl.unwrap_or_else(|| CacheStrategy::Default.to_duration());
+
+            if let Err(_) = self.l1_cache.set_with_ttl(key, value.clone(), promotion_ttl).await {
                 // L1 promotion failed, but we still have the data
                 eprintln!("⚠️ Failed to promote key '{}' to L1 cache", key);
             } else {
                 self.promotions.fetch_add(1, Ordering::Relaxed);
-                println!("⬆️ Promoted '{}' from L2 to L1 (via get)", key);
+                println!("⬆️ Promoted '{}' from L2 to L1 with TTL {:?} (via get)", key, promotion_ttl);
             }
-            
+
             // cleanup_guard will auto-remove entry on drop
             return Ok(Some(value));
         }
@@ -290,19 +348,20 @@ impl CacheManager {
             return Ok(value);
         }
         
-        // 4. Check L2 cache
-        if let Some(value) = self.l2_cache.get(key).await {
+        // 4. Check L2 cache with TTL
+        if let Some((value, redis_ttl)) = self.l2_cache.get_with_ttl(key).await {
             self.l2_hits.fetch_add(1, Ordering::Relaxed);
-            
-            // Promote to L1 for future requests
-            let ttl = strategy.to_duration();
-            if let Err(e) = self.l1_cache.set_with_ttl(key, value.clone(), ttl).await {
+
+            // Promote to L1 using Redis TTL (or strategy TTL as fallback)
+            let promotion_ttl = redis_ttl.unwrap_or_else(|| strategy.to_duration());
+
+            if let Err(e) = self.l1_cache.set_with_ttl(key, value.clone(), promotion_ttl).await {
                 eprintln!("⚠️ Failed to promote key '{}' to L1: {}", key, e);
             } else {
                 self.promotions.fetch_add(1, Ordering::Relaxed);
-                println!("⬆️ Promoted '{}' from L2 to L1", key);
+                println!("⬆️ Promoted '{}' from L2 to L1 with TTL {:?}", key, promotion_ttl);
             }
-            
+
             // _cleanup_guard will auto-remove entry on drop
             return Ok(value);
         }
@@ -462,8 +521,8 @@ impl CacheManager {
             }
         }
 
-        // 4. Check L2 cache
-        if let Some(cached_json) = self.l2_cache.get(key).await {
+        // 4. Check L2 cache with TTL
+        if let Some((cached_json, redis_ttl)) = self.l2_cache.get_with_ttl(key).await {
             self.l2_hits.fetch_add(1, Ordering::Relaxed);
 
             // Attempt to deserialize
@@ -471,13 +530,14 @@ impl CacheManager {
                 Ok(typed_value) => {
                     println!("✅ [L2 HIT] Deserialized '{}' from Redis", key);
 
-                    // Promote to L1 for faster future access
-                    let ttl = strategy.to_duration();
-                    if let Err(e) = self.l1_cache.set_with_ttl(key, cached_json, ttl).await {
+                    // Promote to L1 using Redis TTL (or strategy TTL as fallback)
+                    let promotion_ttl = redis_ttl.unwrap_or_else(|| strategy.to_duration());
+
+                    if let Err(e) = self.l1_cache.set_with_ttl(key, cached_json, promotion_ttl).await {
                         eprintln!("⚠️ Failed to promote key '{}' to L1: {}", key, e);
                     } else {
                         self.promotions.fetch_add(1, Ordering::Relaxed);
-                        println!("⬆️ Promoted '{}' from L2 to L1", key);
+                        println!("⬆️ Promoted '{}' from L2 to L1 with TTL {:?}", key, promotion_ttl);
                     }
 
                     return Ok(typed_value);
@@ -545,41 +605,56 @@ impl CacheManager {
     ///
     /// # Returns
     /// The entry ID generated by Redis
+    ///
+    /// # Errors
+    /// Returns error if streaming backend is not configured
     pub async fn publish_to_stream(
         &self,
         stream_key: &str,
         fields: Vec<(String, String)>,
         maxlen: Option<usize>
     ) -> Result<String> {
-        self.l2_cache.stream_add(stream_key, fields, maxlen).await
+        match &self.streaming_backend {
+            Some(backend) => backend.stream_add(stream_key, fields, maxlen).await,
+            None => Err(anyhow::anyhow!("Streaming backend not configured"))
+        }
     }
     
     /// Read latest entries from Redis Stream
-    /// 
+    ///
     /// # Arguments
     /// * `stream_key` - Name of the stream
     /// * `count` - Number of latest entries to retrieve
-    /// 
+    ///
     /// # Returns
     /// Vector of (entry_id, fields) tuples (newest first)
+    ///
+    /// # Errors
+    /// Returns error if streaming backend is not configured
     pub async fn read_stream_latest(
         &self,
         stream_key: &str,
         count: usize
     ) -> Result<Vec<(String, Vec<(String, String)>)>> {
-        self.l2_cache.stream_read_latest(stream_key, count).await
+        match &self.streaming_backend {
+            Some(backend) => backend.stream_read_latest(stream_key, count).await,
+            None => Err(anyhow::anyhow!("Streaming backend not configured"))
+        }
     }
     
     /// Read from Redis Stream with optional blocking
-    /// 
+    ///
     /// # Arguments
     /// * `stream_key` - Name of the stream
     /// * `last_id` - Last ID seen ("0" for start, "$" for new only)
     /// * `count` - Max entries to retrieve
     /// * `block_ms` - Optional blocking timeout in ms
-    /// 
+    ///
     /// # Returns
     /// Vector of (entry_id, fields) tuples
+    ///
+    /// # Errors
+    /// Returns error if streaming backend is not configured
     pub async fn read_stream(
         &self,
         stream_key: &str,
@@ -587,7 +662,10 @@ impl CacheManager {
         count: usize,
         block_ms: Option<usize>
     ) -> Result<Vec<(String, Vec<(String, String)>)>> {
-        self.l2_cache.stream_read(stream_key, last_id, count, block_ms).await
+        match &self.streaming_backend {
+            Some(backend) => backend.stream_read(stream_key, last_id, count, block_ms).await,
+            None => Err(anyhow::anyhow!("Streaming backend not configured"))
+        }
     }
 }
 
