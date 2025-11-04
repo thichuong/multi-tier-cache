@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metrics export (Prometheus format)
 - Cache invalidation patterns (wildcard, regex)
 
+## [0.2.1] - 2025-01-04
+
+### Changed
+- **Metadata**: Added `documentation` field to Cargo.toml pointing to docs.rs
+  - Enables automatic documentation link on crates.io page
+  - Improves discoverability for users
+
+### Removed
+- Removed internal tracking documents (PROJECT_COMPLETE.md, NEXT_STEPS.md, MIGRATION_SUMMARY.md)
+  - These were development artifacts not needed by end users
+  - Cleaner package for crates.io publication
+
+### Internal
+- No code changes - metadata and cleanup only
+- Fully backward compatible with 0.2.0
+
 ## [0.2.0] - 2025-01-03
 
 ### Added
@@ -156,5 +172,9 @@ This is the initial release extracted from a production web server project that 
 
 The cache system was originally developed as `cache_system_island` module and has been refactored into a standalone, reusable library with zero business logic coupling.
 
-[Unreleased]: https://github.com/yourusername/multi-tier-cache/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/yourusername/multi-tier-cache/releases/tag/v0.1.0
+[Unreleased]: https://github.com/thichuong/multi-tier-cache/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/thichuong/multi-tier-cache/compare/v0.2.0...v0.2.1
+[0.2.0]: https://github.com/thichuong/multi-tier-cache/compare/v0.1.2...v0.2.0
+[0.1.2]: https://github.com/thichuong/multi-tier-cache/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/thichuong/multi-tier-cache/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/thichuong/multi-tier-cache/releases/tag/v0.1.0
