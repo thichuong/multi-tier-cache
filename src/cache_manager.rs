@@ -1,5 +1,5 @@
 //! Cache Manager - Unified Cache Operations
-//! 
+//!
 //! Manages operations across L1 (Moka) and L2 (Redis) caches with intelligent fallback.
 
 use std::sync::Arc;
@@ -14,6 +14,10 @@ use tokio::sync::Mutex;
 use super::l1_cache::L1Cache;
 use super::l2_cache::L2Cache;
 use super::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
+use super::invalidation::{
+    InvalidationConfig, InvalidationPublisher, InvalidationSubscriber,
+    InvalidationMessage, AtomicInvalidationStats, InvalidationStats,
+};
 
 /// RAII cleanup guard for in-flight request tracking
 /// Ensures that entries are removed from DashMap even on early return or panic
@@ -66,6 +70,8 @@ pub struct CacheManager {
     l1_cache: Arc<dyn CacheBackend>,
     /// L2 Cache (trait object for pluggable backends)
     l2_cache: Arc<dyn L2CacheBackend>,
+    /// L2 Cache concrete instance (for invalidation scan_keys)
+    l2_cache_concrete: Option<Arc<L2Cache>>,
     /// Optional streaming backend (defaults to L2 if it implements StreamingBackend)
     streaming_backend: Option<Arc<dyn StreamingBackend>>,
     /// Statistics
@@ -76,6 +82,12 @@ pub struct CacheManager {
     promotions: Arc<AtomicUsize>,
     /// In-flight requests to prevent Cache Stampede on L2/compute operations
     in_flight_requests: Arc<DashMap<String, Arc<Mutex<()>>>>,
+    /// Invalidation publisher (for broadcasting invalidation messages)
+    invalidation_publisher: Option<Arc<Mutex<InvalidationPublisher>>>,
+    /// Invalidation subscriber (for receiving invalidation messages)
+    invalidation_subscriber: Option<Arc<InvalidationSubscriber>>,
+    /// Invalidation statistics
+    invalidation_stats: Arc<AtomicInvalidationStats>,
 }
 
 impl CacheManager {
@@ -117,6 +129,7 @@ impl CacheManager {
         Ok(Self {
             l1_cache,
             l2_cache,
+            l2_cache_concrete: None,
             streaming_backend,
             total_requests: Arc::new(AtomicU64::new(0)),
             l1_hits: Arc::new(AtomicU64::new(0)),
@@ -124,6 +137,9 @@ impl CacheManager {
             misses: Arc::new(AtomicU64::new(0)),
             promotions: Arc::new(AtomicUsize::new(0)),
             in_flight_requests: Arc::new(DashMap::new()),
+            invalidation_publisher: None,
+            invalidation_subscriber: None,
+            invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
         })
     }
 
@@ -147,7 +163,128 @@ impl CacheManager {
 
         Self::new_with_backends(l1_backend, l2_backend, Some(streaming_backend)).await
     }
-    
+
+    /// Create new cache manager with invalidation support
+    ///
+    /// This constructor enables cross-instance cache invalidation via Redis Pub/Sub.
+    ///
+    /// # Arguments
+    ///
+    /// * `l1_cache` - Moka L1 cache instance
+    /// * `l2_cache` - Redis L2 cache instance
+    /// * `redis_url` - Redis connection URL for Pub/Sub
+    /// * `config` - Invalidation configuration
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use multi_tier_cache::{CacheManager, L1Cache, L2Cache, InvalidationConfig};
+    ///
+    /// let config = InvalidationConfig {
+    ///     channel: "my_app:cache:invalidate".to_string(),
+    ///     ..Default::default()
+    /// };
+    ///
+    /// let manager = CacheManager::new_with_invalidation(
+    ///     l1, l2, "redis://localhost", config
+    /// ).await?;
+    /// ```
+    pub async fn new_with_invalidation(
+        l1_cache: Arc<L1Cache>,
+        l2_cache: Arc<L2Cache>,
+        redis_url: &str,
+        config: InvalidationConfig,
+    ) -> Result<Self> {
+        println!("  🎯 Initializing Cache Manager with Invalidation...");
+        println!("    Pub/Sub channel: {}", config.channel);
+
+        // Convert concrete types to trait objects
+        let l1_backend: Arc<dyn CacheBackend> = l1_cache.clone();
+        let l2_backend: Arc<dyn L2CacheBackend> = l2_cache.clone();
+        let streaming_backend: Arc<dyn StreamingBackend> = l2_cache.clone();
+
+        // Create publisher
+        let client = redis::Client::open(redis_url)?;
+        let conn_manager = redis::aio::ConnectionManager::new(client).await?;
+        let publisher = InvalidationPublisher::new(conn_manager, config.clone());
+
+        // Create subscriber
+        let subscriber = InvalidationSubscriber::new(redis_url, config.clone())?;
+        let invalidation_stats = Arc::new(AtomicInvalidationStats::default());
+
+        let manager = Self {
+            l1_cache: l1_backend,
+            l2_cache: l2_backend,
+            l2_cache_concrete: Some(l2_cache),
+            streaming_backend: Some(streaming_backend),
+            total_requests: Arc::new(AtomicU64::new(0)),
+            l1_hits: Arc::new(AtomicU64::new(0)),
+            l2_hits: Arc::new(AtomicU64::new(0)),
+            misses: Arc::new(AtomicU64::new(0)),
+            promotions: Arc::new(AtomicUsize::new(0)),
+            in_flight_requests: Arc::new(DashMap::new()),
+            invalidation_publisher: Some(Arc::new(Mutex::new(publisher))),
+            invalidation_subscriber: Some(Arc::new(subscriber)),
+            invalidation_stats,
+        };
+
+        // Start subscriber with handler
+        manager.start_invalidation_subscriber();
+
+        println!("  ✅ Cache Manager initialized with invalidation support");
+
+        Ok(manager)
+    }
+
+    /// Start the invalidation subscriber background task
+    fn start_invalidation_subscriber(&self) {
+        if let Some(subscriber) = &self.invalidation_subscriber {
+            let l1_cache = Arc::clone(&self.l1_cache);
+            let l2_cache_concrete = self.l2_cache_concrete.clone();
+
+            subscriber.start(move |msg| {
+                let l1 = Arc::clone(&l1_cache);
+                let _l2 = l2_cache_concrete.clone();
+
+                async move {
+                    match msg {
+                        InvalidationMessage::Remove { key } => {
+                            // Remove from L1
+                            l1.remove(&key).await?;
+                            println!("🗑️  [Invalidation] Removed '{}' from L1", key);
+                        }
+                        InvalidationMessage::Update { key, value, ttl_secs } => {
+                            // Update L1 with new value
+                            let ttl = ttl_secs
+                                .map(Duration::from_secs)
+                                .unwrap_or_else(|| Duration::from_secs(300));
+                            l1.set_with_ttl(&key, value, ttl).await?;
+                            println!("🔄 [Invalidation] Updated '{}' in L1", key);
+                        }
+                        InvalidationMessage::RemovePattern { pattern } => {
+                            // For pattern-based invalidation, we can't easily iterate L1 cache
+                            // So we just log it. The pattern invalidation is mainly for L2.
+                            // L1 entries will naturally expire via TTL.
+                            println!("🔍 [Invalidation] Pattern '{}' invalidated (L1 will expire naturally)", pattern);
+                        }
+                        InvalidationMessage::RemoveBulk { keys } => {
+                            // Remove multiple keys from L1
+                            for key in keys {
+                                if let Err(e) = l1.remove(&key).await {
+                                    eprintln!("⚠️  Failed to remove '{}' from L1: {}", key, e);
+                                }
+                            }
+                            println!("🗑️  [Invalidation] Bulk removed keys from L1");
+                        }
+                    }
+                    Ok(())
+                }
+            });
+
+            println!("📡 Invalidation subscriber started");
+        }
+    }
+
     /// Get value from cache (L1 first, then L2 fallback with promotion)
     /// 
     /// This method now includes built-in Cache Stampede protection when cache misses occur.
@@ -665,6 +802,177 @@ impl CacheManager {
         match &self.streaming_backend {
             Some(backend) => backend.stream_read(stream_key, last_id, count, block_ms).await,
             None => Err(anyhow::anyhow!("Streaming backend not configured"))
+        }
+    }
+
+    // ===== Cache Invalidation Methods =====
+
+    /// Invalidate a cache key across all instances
+    ///
+    /// This removes the key from both L1 and L2 caches and broadcasts
+    /// the invalidation to all other cache instances via Redis Pub/Sub.
+    ///
+    /// # Arguments
+    /// * `key` - Cache key to invalidate
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Invalidate user cache after profile update
+    /// cache_manager.invalidate("user:123").await?;
+    /// ```
+    pub async fn invalidate(&self, key: &str) -> Result<()> {
+        // Remove from local L1 cache
+        self.l1_cache.remove(key).await?;
+
+        // Remove from L2 cache
+        self.l2_cache.remove(key).await?;
+
+        // Broadcast to other instances
+        if let Some(publisher) = &self.invalidation_publisher {
+            let mut pub_lock = publisher.lock().await;
+            let msg = InvalidationMessage::remove(key);
+            pub_lock.publish(&msg).await?;
+            self.invalidation_stats.messages_sent.fetch_add(1, Ordering::Relaxed);
+        }
+
+        println!("🗑️  Invalidated '{}' across all instances", key);
+        Ok(())
+    }
+
+    /// Update cache value across all instances
+    ///
+    /// This updates the key in both L1 and L2 caches and broadcasts
+    /// the update to all other cache instances, avoiding cache misses.
+    ///
+    /// # Arguments
+    /// * `key` - Cache key to update
+    /// * `value` - New value
+    /// * `ttl` - Optional TTL (uses default if None)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Update user cache with new data
+    /// let user_data = serde_json::json!({"id": 123, "name": "Alice"});
+    /// cache_manager.update_cache("user:123", user_data, Some(Duration::from_secs(3600))).await?;
+    /// ```
+    pub async fn update_cache(
+        &self,
+        key: &str,
+        value: serde_json::Value,
+        ttl: Option<Duration>,
+    ) -> Result<()> {
+        let ttl = ttl.unwrap_or_else(|| CacheStrategy::Default.to_duration());
+
+        // Update local L1 cache
+        self.l1_cache.set_with_ttl(key, value.clone(), ttl).await?;
+
+        // Update L2 cache
+        self.l2_cache.set_with_ttl(key, value.clone(), ttl).await?;
+
+        // Broadcast update to other instances
+        if let Some(publisher) = &self.invalidation_publisher {
+            let mut pub_lock = publisher.lock().await;
+            let msg = InvalidationMessage::update(key, value, Some(ttl));
+            pub_lock.publish(&msg).await?;
+            self.invalidation_stats.messages_sent.fetch_add(1, Ordering::Relaxed);
+        }
+
+        println!("🔄 Updated '{}' across all instances", key);
+        Ok(())
+    }
+
+    /// Invalidate all keys matching a pattern
+    ///
+    /// This scans L2 cache for keys matching the pattern, removes them,
+    /// and broadcasts the invalidation. L1 caches will be cleared via broadcast.
+    ///
+    /// # Arguments
+    /// * `pattern` - Glob-style pattern (e.g., "user:*", "product:123:*")
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Invalidate all user caches
+    /// cache_manager.invalidate_pattern("user:*").await?;
+    ///
+    /// // Invalidate specific user's related caches
+    /// cache_manager.invalidate_pattern("user:123:*").await?;
+    /// ```
+    pub async fn invalidate_pattern(&self, pattern: &str) -> Result<()> {
+        // Scan L2 for matching keys
+        let keys = if let Some(l2) = &self.l2_cache_concrete {
+            l2.scan_keys(pattern).await?
+        } else {
+            return Err(anyhow::anyhow!("Pattern invalidation requires concrete L2Cache instance"));
+        };
+
+        if keys.is_empty() {
+            println!("🔍 No keys found matching pattern '{}'", pattern);
+            return Ok(());
+        }
+
+        // Remove from L2 in bulk
+        if let Some(l2) = &self.l2_cache_concrete {
+            l2.remove_bulk(&keys).await?;
+        }
+
+        // Broadcast pattern invalidation
+        if let Some(publisher) = &self.invalidation_publisher {
+            let mut pub_lock = publisher.lock().await;
+            let msg = InvalidationMessage::remove_bulk(keys.clone());
+            pub_lock.publish(&msg).await?;
+            self.invalidation_stats.messages_sent.fetch_add(1, Ordering::Relaxed);
+        }
+
+        println!("🔍 Invalidated {} keys matching pattern '{}'", keys.len(), pattern);
+        Ok(())
+    }
+
+    /// Set value with automatic broadcast to all instances
+    ///
+    /// This is a write-through operation that updates the cache and
+    /// broadcasts the update to all other instances automatically.
+    ///
+    /// # Arguments
+    /// * `key` - Cache key
+    /// * `value` - Value to cache
+    /// * `strategy` - Cache strategy (determines TTL)
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Update and broadcast in one call
+    /// let data = serde_json::json!({"status": "active"});
+    /// cache_manager.set_with_broadcast("user:123", data, CacheStrategy::MediumTerm).await?;
+    /// ```
+    pub async fn set_with_broadcast(
+        &self,
+        key: &str,
+        value: serde_json::Value,
+        strategy: CacheStrategy,
+    ) -> Result<()> {
+        let ttl = strategy.to_duration();
+
+        // Set in local caches
+        self.set_with_strategy(key, value.clone(), strategy).await?;
+
+        // Broadcast update if invalidation is enabled
+        if let Some(publisher) = &self.invalidation_publisher {
+            let mut pub_lock = publisher.lock().await;
+            let msg = InvalidationMessage::update(key, value, Some(ttl));
+            pub_lock.publish(&msg).await?;
+            self.invalidation_stats.messages_sent.fetch_add(1, Ordering::Relaxed);
+        }
+
+        Ok(())
+    }
+
+    /// Get invalidation statistics
+    ///
+    /// Returns statistics about invalidation operations if invalidation is enabled.
+    pub fn get_invalidation_stats(&self) -> Option<InvalidationStats> {
+        if self.invalidation_subscriber.is_some() {
+            Some(self.invalidation_stats.snapshot())
+        } else {
+            None
         }
     }
 }

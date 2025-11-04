@@ -61,12 +61,17 @@ pub mod l2_cache;
 pub mod cache_manager;
 pub mod traits;
 pub mod builder;
+pub mod invalidation;
 
 pub use l1_cache::L1Cache;
 pub use l2_cache::L2Cache;
 pub use cache_manager::{CacheManager, CacheStrategy, CacheManagerStats};
 pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 pub use builder::CacheSystemBuilder;
+pub use invalidation::{
+    InvalidationConfig, InvalidationMessage, InvalidationStats,
+    InvalidationPublisher, InvalidationSubscriber,
+};
 
 // Re-export async_trait for user convenience
 pub use async_trait::async_trait;

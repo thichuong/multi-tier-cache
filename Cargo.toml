@@ -1,9 +1,9 @@
 [package]
 name = "multi-tier-cache"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["thichuong <thichuong22022000@gmail.com>"]
-description = "High-performance multi-tier cache with L1 (Moka) + L2 (Redis) and stampede protection"
+description = "High-performance multi-tier cache with L1 (Moka) + L2 (Redis), cross-instance invalidation, and stampede protection"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/thichuong/multi-tier-cache"
 documentation = "https://docs.rs/multi-tier-cache"
@@ -17,7 +17,8 @@ moka = { version = "0.12", features = ["future"] }
 redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
 
 # Async runtime
-tokio = { version = "1.28", features = ["sync"] }
+tokio = { version = "1.28", features = ["sync", "macros", "time"] }
+futures-util = "0.3"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

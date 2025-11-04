@@ -133,6 +133,68 @@ impl L2Cache {
         let _: () = conn.del(key).await?;
         Ok(())
     }
+
+    /// Scan keys matching a pattern (glob-style: *, ?, [])
+    ///
+    /// Uses Redis SCAN command (non-blocking, cursor-based iteration)
+    /// This is safe for production use, unlike KEYS command.
+    ///
+    /// # Arguments
+    /// * `pattern` - Glob-style pattern (e.g., "user:*", "product:123:*")
+    ///
+    /// # Returns
+    /// Vector of matching key names
+    ///
+    /// # Examples
+    /// ```
+    /// // Find all user cache keys
+    /// let keys = cache.scan_keys("user:*").await?;
+    ///
+    /// // Find specific user's cache keys
+    /// let keys = cache.scan_keys("user:123:*").await?;
+    /// ```
+    pub async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
+        let mut conn = self.conn_manager.clone();
+        let mut keys = Vec::new();
+        let mut cursor: u64 = 0;
+
+        loop {
+            // SCAN cursor MATCH pattern COUNT 100
+            let result: (u64, Vec<String>) = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(pattern)
+                .arg("COUNT")
+                .arg(100) // Fetch 100 keys per iteration
+                .query_async(&mut conn)
+                .await?;
+
+            cursor = result.0;
+            keys.extend(result.1);
+
+            // Cursor 0 means iteration is complete
+            if cursor == 0 {
+                break;
+            }
+        }
+
+        println!("🔍 [L2] Scanned keys matching '{}': {} found", pattern, keys.len());
+        Ok(keys)
+    }
+
+    /// Remove multiple keys at once (bulk delete)
+    ///
+    /// More efficient than calling remove() multiple times
+    pub async fn remove_bulk(&self, keys: &[String]) -> Result<usize> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        let mut conn = self.conn_manager.clone();
+        let count: usize = conn.del(keys).await?;
+        println!("🗑️  [L2] Removed {} keys", count);
+        Ok(count)
+    }
     
     /// Health check
     pub async fn health_check(&self) -> bool {
