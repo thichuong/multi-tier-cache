@@ -6,6 +6,7 @@ authors = ["thichuong <thichuong22022000@gmail.com>"]
 description = "High-performance multi-tier cache with L1 (Moka) + L2 (Redis) and stampede protection"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/thichuong/multi-tier-cache"
+documentation = "https://docs.rs/multi-tier-cache"
 keywords = ["cache", "redis", "moka", "multi-tier", "stampede"]
 categories = ["caching", "asynchronous", "database"]
 readme = "README.md"
