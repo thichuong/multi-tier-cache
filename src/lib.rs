@@ -62,6 +62,7 @@ pub mod cache_manager;
 pub mod traits;
 pub mod builder;
 pub mod invalidation;
+pub mod redis_streams;
 
 pub use l1_cache::L1Cache;
 pub use l2_cache::L2Cache;
@@ -76,6 +77,7 @@ pub use invalidation::{
     InvalidationConfig, InvalidationMessage, InvalidationStats,
     InvalidationPublisher, InvalidationSubscriber,
 };
+pub use redis_streams::RedisStreams;
 
 // Re-export async_trait for user convenience
 pub use async_trait::async_trait;

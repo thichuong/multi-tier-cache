@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - Metrics export (Prometheus format)
 
+## [0.5.1] - 2025-01-05
+
+### Added
+
+- **Multi-Tier Stampede Protection**: `get_or_compute_with()` and `get_or_compute_typed()` now support all tiers (L1+L2+L3+L4+...)
+  - Stampede protection now checks L2, L3, L4... before computing
+  - Automatically promotes from any tier to L1 with stampede lock held
+  - Prevents unnecessary recomputation when data exists in lower tiers
+  - 2 new integration tests: `test_multi_tier_stampede_protection`, `test_stampede_retrieves_from_l3`
+
+### Changed
+
+- **Redis Streams Refactoring**: Separated into dedicated `redis_streams` module
+  - New `RedisStreams` struct - standalone Redis Streams client
+  - Removed ~200 lines of streaming code from `L2Cache`
+  - `L2Cache` now focuses purely on cache operations
+  - Better separation of concerns (cache vs. streaming)
+  - `RedisStreams` can be used independently without full cache system
+  - Backward compatible - existing stream APIs still work via `CacheManager`
+
+- **Improved Description**: Updated Cargo.toml description
+  - Clarifies L1 (Moka in-memory) + L2 (Redis distributed) as defaults
+  - Highlights expandability to L3/L4+ tiers
+
+### Fixed
+
+- **Stampede Protection**: Fixed multi-tier support in compute methods
+  - Previously only checked L1+L2 in multi-tier mode
+  - Now correctly checks all configured tiers (L1+L2+L3+L4+...)
+  - Ensures data is retrieved from lower tiers instead of recomputing
+
 ## [0.5.0] - 2025-01-05
 
 ### Added

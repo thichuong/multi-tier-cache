@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 mod common;
+use common::{test_key, test_data};
 
 /// Test basic multi-tier get/set operations
 #[tokio::test]
@@ -237,4 +238,133 @@ async fn test_convenience_methods() {
     }
 
     println!("✅ Convenience methods test passed");
+}
+
+/// Test multi-tier stampede protection
+#[tokio::test]
+async fn test_multi_tier_stampede_protection() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use tokio::task::JoinSet;
+
+    let l1 = Arc::new(L2Cache::new().await.unwrap());
+    let l2 = Arc::new(L2Cache::new().await.unwrap());
+    let l3 = Arc::new(L2Cache::new().await.unwrap());
+
+    let cache = CacheSystemBuilder::new()
+        .with_tier(l1, TierConfig::as_l1())
+        .with_tier(l2, TierConfig::as_l2())
+        .with_l3(l3)
+        .build()
+        .await
+        .unwrap();
+
+    let manager = Arc::new(cache.cache_manager().clone());
+    let key = test_key("stampede_multi_tier");
+    let compute_count = Arc::new(AtomicU32::new(0));
+
+    // Spawn 50 concurrent requests for same key
+    let mut tasks = JoinSet::new();
+    for _ in 0..50 {
+        let manager_clone = Arc::clone(&manager);
+        let key_clone = key.clone();
+        let counter_clone = Arc::clone(&compute_count);
+
+        tasks.spawn(async move {
+            manager_clone
+                .get_or_compute_with(&key_clone, CacheStrategy::ShortTerm, || {
+                    counter_clone.fetch_add(1, Ordering::SeqCst);
+                    async move { Ok(test_data::json_user(999)) }
+                })
+                .await
+        });
+    }
+
+    // Wait for all tasks
+    while let Some(result) = tasks.join_next().await {
+        result.expect("Task panicked").expect("Compute failed");
+    }
+
+    // Stampede protection: only ONE compute should have happened
+    let compute_calls = compute_count.load(Ordering::SeqCst);
+    assert_eq!(
+        compute_calls, 1,
+        "Expected exactly 1 compute call with multi-tier stampede protection, got {}",
+        compute_calls
+    );
+
+    // Verify data is in L1
+    let cached_in_l1 = manager.get(&key).await.unwrap();
+    assert!(cached_in_l1.is_some(), "Data should be cached in L1 after stampede");
+
+    println!("✅ Multi-tier stampede protection test passed");
+}
+
+/// Test stampede protection retrieves from L3 instead of computing
+#[tokio::test]
+async fn test_stampede_retrieves_from_l3() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use tokio::task::JoinSet;
+
+    let l1 = Arc::new(L2Cache::new().await.unwrap());
+    let l2 = Arc::new(L2Cache::new().await.unwrap());
+    let l3 = Arc::new(L2Cache::new().await.unwrap());
+
+    let cache = CacheSystemBuilder::new()
+        .with_tier(l1.clone(), TierConfig::as_l1())
+        .with_tier(l2.clone(), TierConfig::as_l2())
+        .with_l3(l3.clone())
+        .build()
+        .await
+        .unwrap();
+
+    let manager = Arc::new(cache.cache_manager().clone());
+    let key = test_key("stampede_l3_hit");
+    let data = test_data::json_user(777);
+
+    // Pre-populate ONLY L3 (skip L1 and L2)
+    l3.set_with_ttl(&key, data.clone(), std::time::Duration::from_secs(300))
+        .await
+        .unwrap();
+
+    let compute_count = Arc::new(AtomicU32::new(0));
+
+    // Spawn 30 concurrent requests
+    let mut tasks = JoinSet::new();
+    for _ in 0..30 {
+        let manager_clone = Arc::clone(&manager);
+        let key_clone = key.clone();
+        let counter_clone = Arc::clone(&compute_count);
+
+        tasks.spawn(async move {
+            manager_clone
+                .get_or_compute_with(&key_clone, CacheStrategy::ShortTerm, || {
+                    counter_clone.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        // This should NEVER be called since data is in L3
+                        panic!("Compute should not be called when data exists in L3!");
+                    }
+                })
+                .await
+        });
+    }
+
+    // Wait for all tasks
+    while let Some(result) = tasks.join_next().await {
+        result.expect("Task panicked").expect("Should retrieve from L3");
+    }
+
+    // Should NOT have computed (data retrieved from L3)
+    let compute_calls = compute_count.load(Ordering::SeqCst);
+    assert_eq!(
+        compute_calls, 0,
+        "Expected 0 compute calls (data should be retrieved from L3), got {}",
+        compute_calls
+    );
+
+    // Verify data was promoted to L1
+    let l1_data = l1.get(&key).await;
+    assert!(l1_data.is_some(), "Data should be promoted from L3 to L1");
+    assert_eq!(l1_data.unwrap(), data, "Promoted data should match original");
+
+    println!("✅ Stampede retrieves from L3 test passed");
 }

@@ -355,8 +355,12 @@ impl CacheManager {
         // Convert concrete types to trait objects
         let l1_backend: Arc<dyn CacheBackend> = l1_cache.clone();
         let l2_backend: Arc<dyn L2CacheBackend> = l2_cache.clone();
-        // L2Cache also implements StreamingBackend, so use it for streaming
-        let streaming_backend: Arc<dyn StreamingBackend> = l2_cache;
+
+        // Create RedisStreams backend for streaming functionality
+        let redis_url = std::env::var("REDIS_URL")
+            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let redis_streams = crate::redis_streams::RedisStreams::new(&redis_url).await?;
+        let streaming_backend: Arc<dyn StreamingBackend> = Arc::new(redis_streams);
 
         Self::new_with_backends(l1_backend, l2_backend, Some(streaming_backend)).await
     }
@@ -398,7 +402,10 @@ impl CacheManager {
         // Convert concrete types to trait objects
         let l1_backend: Arc<dyn CacheBackend> = l1_cache.clone();
         let l2_backend: Arc<dyn L2CacheBackend> = l2_cache.clone();
-        let streaming_backend: Arc<dyn StreamingBackend> = l2_cache.clone();
+
+        // Create RedisStreams backend for streaming functionality
+        let redis_streams = crate::redis_streams::RedisStreams::new(redis_url).await?;
+        let streaming_backend: Arc<dyn StreamingBackend> = Arc::new(redis_streams);
 
         // Create publisher
         let client = redis::Client::open(redis_url)?;
@@ -899,26 +906,49 @@ impl CacheManager {
             // _cleanup_guard will auto-remove entry on drop
             return Ok(value);
         }
-        
-        // 4. Check L2 cache with TTL
-        if let Some((value, redis_ttl)) = self.l2_cache.get_with_ttl(key).await {
-            self.l2_hits.fetch_add(1, Ordering::Relaxed);
 
-            // Promote to L1 using Redis TTL (or strategy TTL as fallback)
-            let promotion_ttl = redis_ttl.unwrap_or_else(|| strategy.to_duration());
+        // 4. Check remaining tiers (L2, L3, L4...) with Stampede protection
+        if let Some(tiers) = &self.tiers {
+            // Check tiers starting from index 1 (skip L1 since already checked)
+            for tier in tiers.iter().skip(1) {
+                if let Some((value, ttl)) = tier.get_with_ttl(key).await {
+                    tier.record_hit();
 
-            if let Err(e) = self.l1_cache.set_with_ttl(key, value.clone(), promotion_ttl).await {
-                eprintln!("⚠️ Failed to promote key '{}' to L1: {}", key, e);
-            } else {
-                self.promotions.fetch_add(1, Ordering::Relaxed);
-                println!("⬆️ Promoted '{}' from L2 to L1 with TTL {:?}", key, promotion_ttl);
+                    // Promote to L1 (first tier)
+                    let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
+                    if let Err(e) = tiers[0].set_with_ttl(key, value.clone(), promotion_ttl).await {
+                        eprintln!("⚠️ Failed to promote '{}' from L{} to L1: {}", key, tier.tier_level, e);
+                    } else {
+                        self.promotions.fetch_add(1, Ordering::Relaxed);
+                        println!("⬆️ Promoted '{}' from L{} to L1 with TTL {:?} (Stampede protected)",
+                                key, tier.tier_level, promotion_ttl);
+                    }
+
+                    // _cleanup_guard will auto-remove entry on drop
+                    return Ok(value);
+                }
             }
+        } else {
+            // LEGACY: Check L2 cache with TTL
+            if let Some((value, redis_ttl)) = self.l2_cache.get_with_ttl(key).await {
+                self.l2_hits.fetch_add(1, Ordering::Relaxed);
 
-            // _cleanup_guard will auto-remove entry on drop
-            return Ok(value);
+                // Promote to L1 using Redis TTL (or strategy TTL as fallback)
+                let promotion_ttl = redis_ttl.unwrap_or_else(|| strategy.to_duration());
+
+                if let Err(e) = self.l1_cache.set_with_ttl(key, value.clone(), promotion_ttl).await {
+                    eprintln!("⚠️ Failed to promote key '{}' to L1: {}", key, e);
+                } else {
+                    self.promotions.fetch_add(1, Ordering::Relaxed);
+                    println!("⬆️ Promoted '{}' from L2 to L1 with TTL {:?}", key, promotion_ttl);
+                }
+
+                // _cleanup_guard will auto-remove entry on drop
+                return Ok(value);
+            }
         }
-        
-        // 5. Both L1 and L2 miss - compute fresh data
+
+        // 5. Cache miss across all tiers - compute fresh data
         println!("💻 Computing fresh data for key: '{}' (Cache Stampede protected)", key);
         let fresh_data = compute_fn().await?;
         
@@ -1090,35 +1120,71 @@ impl CacheManager {
             }
         }
 
-        // 4. Check L2 cache with TTL
-        if let Some((cached_json, redis_ttl)) = self.l2_cache.get_with_ttl(key).await {
-            self.l2_hits.fetch_add(1, Ordering::Relaxed);
+        // 4. Check remaining tiers (L2, L3, L4...) with Stampede protection
+        if let Some(tiers) = &self.tiers {
+            // Check tiers starting from index 1 (skip L1 since already checked)
+            for tier in tiers.iter().skip(1) {
+                if let Some((cached_json, ttl)) = tier.get_with_ttl(key).await {
+                    tier.record_hit();
 
-            // Attempt to deserialize
-            match serde_json::from_value::<T>(cached_json.clone()) {
-                Ok(typed_value) => {
-                    println!("✅ [L2 HIT] Deserialized '{}' from Redis", key);
+                    // Attempt to deserialize
+                    match serde_json::from_value::<T>(cached_json.clone()) {
+                        Ok(typed_value) => {
+                            println!("✅ [L{} HIT] Deserialized '{}' to type {}",
+                                    tier.tier_level, key, std::any::type_name::<T>());
 
-                    // Promote to L1 using Redis TTL (or strategy TTL as fallback)
-                    let promotion_ttl = redis_ttl.unwrap_or_else(|| strategy.to_duration());
+                            // Promote to L1 (first tier)
+                            let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
+                            if let Err(e) = tiers[0].set_with_ttl(key, cached_json, promotion_ttl).await {
+                                eprintln!("⚠️ Failed to promote '{}' from L{} to L1: {}",
+                                         key, tier.tier_level, e);
+                            } else {
+                                self.promotions.fetch_add(1, Ordering::Relaxed);
+                                println!("⬆️ Promoted '{}' from L{} to L1 with TTL {:?} (Stampede protected)",
+                                        key, tier.tier_level, promotion_ttl);
+                            }
 
-                    if let Err(e) = self.l1_cache.set_with_ttl(key, cached_json, promotion_ttl).await {
-                        eprintln!("⚠️ Failed to promote key '{}' to L1: {}", key, e);
-                    } else {
-                        self.promotions.fetch_add(1, Ordering::Relaxed);
-                        println!("⬆️ Promoted '{}' from L2 to L1 with TTL {:?}", key, promotion_ttl);
+                            return Ok(typed_value);
+                        }
+                        Err(e) => {
+                            eprintln!("⚠️ L{} cache deserialization failed for key '{}': {}. Trying next tier.",
+                                     tier.tier_level, key, e);
+                            // Continue to next tier
+                        }
                     }
-
-                    return Ok(typed_value);
                 }
-                Err(e) => {
-                    eprintln!("⚠️ L2 cache deserialization failed for key '{}': {}. Will recompute.", key, e);
-                    // Fall through to recompute
+            }
+        } else {
+            // LEGACY: Check L2 cache with TTL
+            if let Some((cached_json, redis_ttl)) = self.l2_cache.get_with_ttl(key).await {
+                self.l2_hits.fetch_add(1, Ordering::Relaxed);
+
+                // Attempt to deserialize
+                match serde_json::from_value::<T>(cached_json.clone()) {
+                    Ok(typed_value) => {
+                        println!("✅ [L2 HIT] Deserialized '{}' from Redis", key);
+
+                        // Promote to L1 using Redis TTL (or strategy TTL as fallback)
+                        let promotion_ttl = redis_ttl.unwrap_or_else(|| strategy.to_duration());
+
+                        if let Err(e) = self.l1_cache.set_with_ttl(key, cached_json, promotion_ttl).await {
+                            eprintln!("⚠️ Failed to promote key '{}' to L1: {}", key, e);
+                        } else {
+                            self.promotions.fetch_add(1, Ordering::Relaxed);
+                            println!("⬆️ Promoted '{}' from L2 to L1 with TTL {:?}", key, promotion_ttl);
+                        }
+
+                        return Ok(typed_value);
+                    }
+                    Err(e) => {
+                        eprintln!("⚠️ L2 cache deserialization failed for key '{}': {}. Will recompute.", key, e);
+                        // Fall through to recompute
+                    }
                 }
             }
         }
 
-        // 5. Both L1 and L2 miss (or deserialization failed) - compute fresh data
+        // 5. Cache miss across all tiers (or deserialization failed) - compute fresh data
         println!("💻 Computing fresh typed data for key: '{}' (Cache Stampede protected)", key);
         let typed_value = compute_fn().await?;
 
