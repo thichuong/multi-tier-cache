@@ -6,6 +6,29 @@
 
 **A high-performance, production-ready multi-tier caching library for Rust** featuring L1 (in-memory) + L2 (Redis) caches, automatic stampede protection, and built-in Redis Streams support.
 
+## 📑 Table of Contents
+
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Installation](#-installation)
+- [Quick Start](#-quick-start)
+- [Usage Patterns](#-usage-patterns)
+  - [1. Cache Strategies](#1-cache-strategies)
+  - [2. Compute-on-Miss Pattern](#2-compute-on-miss-pattern)
+  - [3. Redis Streams Integration](#3-redis-streams-integration)
+  - [4. Type-Safe Database Caching](#4-type-safe-database-caching-new-in-020-)
+  - [5. Cross-Instance Cache Invalidation](#5-cross-instance-cache-invalidation-new-in-040-) ⭐ **NEW**
+  - [6. Custom Cache Backends](#6-custom-cache-backends-new-in-030-)
+- [Feature Compatibility](#%EF%B8%8F-feature-compatibility)
+- [Performance Benchmarks](#-performance-benchmarks)
+- [Configuration](#-configuration)
+- [Testing](#-testing)
+- [Examples](#-examples)
+- [Architecture Details](#%EF%B8%8F-architecture-details)
+- [Development](#%EF%B8%8F-development)
+- [Contributing](#-contributing)
+- [License](#-license)
+
 ## ✨ Features
 
 - **🔥 Multi-Tier Architecture**: Combines fast in-memory (Moka) with persistent distributed (Redis) caching
