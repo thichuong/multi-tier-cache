@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Integration Tests** (30 tests with real Redis)
+  - Basic L1+L2 cache operations (12 tests)
+  - Cross-instance invalidation (8 tests)
+  - Stampede protection (5 tests)
+  - Redis Streams functionality (5 tests)
+  - Test utilities in `tests/common/mod.rs`
+
 ### Planned
-- Integration tests with real Redis instance
 - Benchmark suite with Criterion
 - Metrics export (Prometheus format)
 

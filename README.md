@@ -750,6 +750,47 @@ Default settings (configurable in library source):
 - **L2 TTL**: 1 hour (per key)
 - **Stream Max Length**: 1000 entries
 
+## 🧪 Testing
+
+### Integration Tests
+
+The library includes comprehensive integration tests (30 tests) that verify functionality with real Redis:
+
+```bash
+# Run all integration tests
+cargo test --tests
+
+# Run specific test suite
+cargo test --test integration_basic
+cargo test --test integration_invalidation
+cargo test --test integration_stampede
+cargo test --test integration_streams
+```
+
+**Test Coverage:**
+- ✅ L1 cache operations (get, set, remove, TTL)
+- ✅ L2 cache operations (get_with_ttl, scan_keys, bulk operations)
+- ✅ L2-to-L1 promotion
+- ✅ Cross-instance invalidation (Remove, Update, Pattern)
+- ✅ Stampede protection with concurrent requests
+- ✅ Type-safe caching with serialization
+- ✅ Redis Streams (publish, read, trimming)
+- ✅ Statistics tracking
+
+**Requirements:**
+- Redis server running on `localhost:6379` (or set `REDIS_URL`)
+- Tests automatically clean up after themselves
+
+**Test Structure:**
+```
+tests/
+├── common/mod.rs           # Shared utilities
+├── integration_basic.rs    # Core cache operations
+├── integration_invalidation.rs  # Cross-instance sync
+├── integration_stampede.rs # Concurrent access
+└── integration_streams.rs  # Redis Streams
+```
+
 ## 📚 Examples
 
 Run examples with:
