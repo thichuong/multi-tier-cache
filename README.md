@@ -18,8 +18,9 @@
   - [3. Redis Streams Integration](#3-redis-streams-integration)
   - [4. Type-Safe Database Caching](#4-type-safe-database-caching-new-in-020-)
   - [5. Cross-Instance Cache Invalidation](#5-cross-instance-cache-invalidation-new-in-040-)
-  - [6. Custom Cache Backends](#6-custom-cache-backends-new-in-030-)
-  - [7. Multi-Tier Architecture](#7-multi-tier-architecture-new-in-050-) ⭐ **NEW**
+  - [6. Available Backends](#6-available-backends-new-in-052-) ⭐ **NEW**
+  - [7. Custom Cache Backends](#7-custom-cache-backends-new-in-030-)
+  - [8. Multi-Tier Architecture](#8-multi-tier-architecture-new-in-050-)
 - [Feature Compatibility](#%EF%B8%8F-feature-compatibility)
 - [Performance Benchmarks](#-performance-benchmarks)
 - [Configuration](#-configuration)
@@ -427,7 +428,61 @@ let config = InvalidationConfig {
 | **Update** | Higher | No (instant) | Small values, frequent access |
 | **Pattern** | Medium | Yes | Bulk invalidation (categories) |
 
-### 6. Custom Cache Backends (New in 0.3.0! 🎉)
+### 6. Available Backends (New in 0.5.2! 🎉)
+
+Starting from **v0.5.2**, the library includes multiple built-in cache backend implementations beyond the defaults!
+
+#### In-Memory Backends (L1 Tier)
+
+| Backend | Feature | Performance | Eviction | Use Case |
+|---------|---------|-------------|----------|----------|
+| **MokaCache** *(default)* | Always available | High | Automatic (LRU + TTL) | Production workloads |
+| **DashMapCache** | Always available | Medium | Manual cleanup | Simple caching, education |
+| **QuickCacheBackend** | `backend-quickcache` | Very High | Automatic (LRU) | Maximum throughput |
+
+#### Distributed Backends (L2 Tier)
+
+| Backend | Feature | Persistence | TTL Introspection | Use Case |
+|---------|---------|-------------|-------------------|----------|
+| **RedisCache** *(default)* | Always available | Yes (disk) | ✅ Yes | Production, multi-instance |
+| **MemcachedCache** | `backend-memcached` | No (memory only) | ❌ No | High-performance distributed |
+
+#### Example: Using DashMapCache as L1
+
+```rust
+use multi_tier_cache::{DashMapCache, CacheSystemBuilder, CacheBackend};
+use std::sync::Arc;
+
+let dashmap_l1 = Arc::new(DashMapCache::new());
+
+let cache = CacheSystemBuilder::new()
+    .with_l1(dashmap_l1 as Arc<dyn CacheBackend>)
+    .build()
+    .await?;
+```
+
+#### Example: Using QuickCache (requires feature flag)
+
+```toml
+[dependencies]
+multi-tier-cache = { version = "0.5", features = ["backend-quickcache"] }
+```
+
+```rust
+use multi_tier_cache::{QuickCacheBackend, CacheSystemBuilder, CacheBackend};
+use std::sync::Arc;
+
+let quickcache_l1 = Arc::new(QuickCacheBackend::new(5000).await?);
+
+let cache = CacheSystemBuilder::new()
+    .with_l1(quickcache_l1 as Arc<dyn CacheBackend>)
+    .build()
+    .await?;
+```
+
+**See Example:** `examples/builtin_backends.rs` for complete demonstrations of all backends.
+
+### 7. Custom Cache Backends (New in 0.3.0! 🎉)
 
 Starting from **v0.3.0**, you can replace the default Moka (L1) and Redis (L2) backends with your own custom implementations!
 
@@ -546,7 +601,7 @@ let cache = CacheSystemBuilder::new()
 - No-op cache (for testing)
 - Mixed backend configurations
 
-### 7. Multi-Tier Architecture (New in 0.5.0! 🎉)
+### 8. Multi-Tier Architecture (New in 0.5.0! 🎉)
 
 Starting from **v0.5.0**, you can configure **3, 4, or more cache tiers** beyond the default L1+L2 setup!
 

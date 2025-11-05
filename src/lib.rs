@@ -56,16 +56,26 @@
 use std::sync::Arc;
 use anyhow::Result;
 
-pub mod l1_cache;
-pub mod l2_cache;
+pub mod backends;
 pub mod cache_manager;
 pub mod traits;
 pub mod builder;
 pub mod invalidation;
 pub mod redis_streams;
 
-pub use l1_cache::L1Cache;
-pub use l2_cache::L2Cache;
+// Re-export backend types (maintains backward compatibility)
+pub use backends::{
+    L1Cache, L2Cache,           // Type aliases
+    MokaCache, RedisCache,       // Default backends
+    DashMapCache,                // Additional backends
+};
+
+// Optional backends (feature-gated)
+#[cfg(feature = "backend-memcached")]
+pub use backends::MemcachedCache;
+
+#[cfg(feature = "backend-quickcache")]
+pub use backends::QuickCacheBackend;
 pub use cache_manager::{
     CacheManager, CacheStrategy, CacheManagerStats,
     // Multi-tier support (v0.5.0+)

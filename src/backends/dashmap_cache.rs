@@ -1,0 +1,222 @@
+//! DashMap Cache - Simple Concurrent HashMap Backend
+//!
+//! A lightweight in-memory cache using DashMap for concurrent access.
+//! This is a reference implementation showing how to create custom cache backends.
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use anyhow::Result;
+use serde_json;
+use dashmap::DashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Cache entry with expiration tracking
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    value: serde_json::Value,
+    expires_at: Option<Instant>,
+}
+
+impl CacheEntry {
+    fn new(value: serde_json::Value, ttl: Duration) -> Self {
+        Self {
+            value,
+            expires_at: Some(Instant::now() + ttl),
+        }
+    }
+
+    fn is_expired(&self) -> bool {
+        match self.expires_at {
+            Some(expires_at) => Instant::now() > expires_at,
+            None => false,
+        }
+    }
+}
+
+/// Simple concurrent cache using DashMap
+///
+/// **Use Case**: Educational reference, simple concurrent scenarios
+///
+/// **Features**:
+/// - Lock-free concurrent reads/writes
+/// - Manual TTL tracking
+/// - No automatic eviction (manual cleanup needed)
+/// - Minimal memory overhead
+///
+/// **Limitations**:
+/// - No automatic eviction policy (LRU, LFU, etc.)
+/// - No size limits (unbounded growth)
+/// - Manual TTL cleanup required
+///
+/// **When to use**:
+/// - Learning how to implement cache backends
+/// - Simple use cases with predictable data sizes
+/// - When you need full control over eviction logic
+///
+/// **Example**:
+/// ```rust
+/// use multi_tier_cache::backends::DashMapCache;
+/// use multi_tier_cache::traits::CacheBackend;
+/// use std::time::Duration;
+///
+/// # async fn example() -> anyhow::Result<()> {
+/// let cache = DashMapCache::new();
+/// let value = serde_json::json!({"user": "alice"});
+///
+/// cache.set_with_ttl("user:1", value.clone(), Duration::from_secs(60)).await?;
+/// let cached = cache.get("user:1").await;
+/// assert_eq!(cached, Some(value));
+/// # Ok(())
+/// # }
+/// ```
+pub struct DashMapCache {
+    /// Concurrent HashMap
+    map: Arc<DashMap<String, CacheEntry>>,
+    /// Hit counter
+    hits: Arc<AtomicU64>,
+    /// Miss counter
+    misses: Arc<AtomicU64>,
+    /// Set counter
+    sets: Arc<AtomicU64>,
+}
+
+impl DashMapCache {
+    /// Create new DashMap cache
+    pub fn new() -> Self {
+        println!("  🗺️  Initializing DashMap Cache...");
+        println!("  ✅ DashMap Cache initialized (concurrent HashMap)");
+
+        Self {
+            map: Arc::new(DashMap::new()),
+            hits: Arc::new(AtomicU64::new(0)),
+            misses: Arc::new(AtomicU64::new(0)),
+            sets: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Get value from cache
+    pub async fn get(&self, key: &str) -> Option<serde_json::Value> {
+        match self.map.get(key) {
+            Some(entry) => {
+                if entry.is_expired() {
+                    // Remove expired entry
+                    drop(entry); // Release read lock
+                    self.map.remove(key);
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                } else {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    Some(entry.value.clone())
+                }
+            }
+            None => {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        }
+    }
+
+    /// Set value with TTL
+    pub async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
+        let entry = CacheEntry::new(value, ttl);
+        self.map.insert(key.to_string(), entry);
+        self.sets.fetch_add(1, Ordering::Relaxed);
+        println!("💾 [DashMap] Cached '{}' with TTL {:?}", key, ttl);
+        Ok(())
+    }
+
+    /// Remove value from cache
+    pub async fn remove(&self, key: &str) -> Result<()> {
+        self.map.remove(key);
+        Ok(())
+    }
+
+    /// Health check
+    pub async fn health_check(&self) -> bool {
+        let test_key = "health_check_dashmap";
+        let test_value = serde_json::json!({"test": true});
+
+        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60)).await {
+            Ok(_) => {
+                match self.get(test_key).await {
+                    Some(retrieved) => {
+                        let _ = self.remove(test_key).await;
+                        retrieved == test_value
+                    }
+                    None => false
+                }
+            }
+            Err(_) => false
+        }
+    }
+
+    /// Cleanup expired entries (should be called periodically)
+    ///
+    /// **Note**: DashMap doesn't have automatic eviction, so you need to
+    /// call this method periodically to remove expired entries.
+    pub fn cleanup_expired(&self) -> usize {
+        let mut removed = 0;
+        self.map.retain(|_, entry| {
+            if entry.is_expired() {
+                removed += 1;
+                false // Remove
+            } else {
+                true // Keep
+            }
+        });
+        if removed > 0 {
+            println!("🧹 [DashMap] Cleaned up {} expired entries", removed);
+        }
+        removed
+    }
+
+    /// Get current cache size
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Check if cache is empty
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
+
+impl Default for DashMapCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ===== Trait Implementations =====
+
+use crate::traits::CacheBackend;
+use async_trait::async_trait;
+
+/// Implement CacheBackend trait for DashMapCache
+#[async_trait]
+impl CacheBackend for DashMapCache {
+    async fn get(&self, key: &str) -> Option<serde_json::Value> {
+        DashMapCache::get(self, key).await
+    }
+
+    async fn set_with_ttl(
+        &self,
+        key: &str,
+        value: serde_json::Value,
+        ttl: Duration,
+    ) -> Result<()> {
+        DashMapCache::set_with_ttl(self, key, value, ttl).await
+    }
+
+    async fn remove(&self, key: &str) -> Result<()> {
+        DashMapCache::remove(self, key).await
+    }
+
+    async fn health_check(&self) -> bool {
+        DashMapCache::health_check(self).await
+    }
+
+    fn name(&self) -> &str {
+        "DashMap"
+    }
+}

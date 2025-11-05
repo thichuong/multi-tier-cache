@@ -10,6 +10,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - Metrics export (Prometheus format)
 
+## [0.5.2] - 2025-01-05
+
+### Added
+
+**🎉 New Feature: Multiple Cache Backend Options**
+
+- **Backend Module Refactoring**: Organized backends in `src/backends/` subdirectory
+  - Renamed `l1_cache.rs` → `backends/moka_cache.rs` (MokaCache)
+  - Renamed `l2_cache.rs` → `backends/redis_cache.rs` (RedisCache)
+  - Type aliases `L1Cache = MokaCache`, `L2Cache = RedisCache` for backward compatibility
+  - Zero breaking changes - existing code continues to work
+
+- **DashMapCache Backend**: Simple concurrent HashMap-based L1 cache
+  - Always available (no feature flag required)
+  - Manual expiration cleanup via `cleanup_expired()`
+  - Ideal for educational purposes and simple use cases
+  - Example: `examples/builtin_backends.rs`
+
+- **MemcachedCache Backend**: Lightweight distributed L2 cache
+  - Feature flag: `backend-memcached`
+  - High-performance distributed caching
+  - Server statistics via `get_server_stats()`
+  - Note: Does not implement `L2CacheBackend` (no TTL introspection)
+  - Dependency: `memcache = { version = "0.17", optional = true }`
+
+- **QuickCacheBackend**: Ultra-fast L1 cache optimized for maximum throughput
+  - Feature flag: `backend-quickcache`
+  - Sub-microsecond latency
+  - Lock-free design for concurrent access
+  - Configurable capacity via `new(max_capacity)`
+  - Dependencies: `quick_cache = { version = "0.6", optional = true }`, `parking_lot = { version = "0.12", optional = true }`
+
+- **Documentation**: New "Available Backends" section in README
+  - Comparison tables for L1 and L2 backends
+  - Feature requirements and use cases
+  - Code examples for each backend
+  - Updated Table of Contents
+
+- **Example File**: `examples/builtin_backends.rs`
+  - Demonstrates DashMapCache, MemcachedCache, and QuickCacheBackend
+  - Shows feature flag usage
+  - Server statistics demonstration
+
+### Changed
+
+- **Backend Organization**: Improved module structure
+  - All backends now in `src/backends/` subdirectory
+  - Centralized exports via `backends/mod.rs`
+  - Feature-gated backends with conditional compilation
+  - Better separation and discoverability
+
+- **Public API**: Enhanced re-exports
+  - Backends accessible via `multi_tier_cache::backends::*`
+  - Also available at top level: `multi_tier_cache::{MokaCache, RedisCache, DashMapCache, ...}`
+  - Feature-gated exports for optional backends
+
+- **Cargo.toml**: New optional dependencies and features
+  - `memcache = { version = "0.17", optional = true }`
+  - `quick_cache = { version = "0.6", optional = true }`
+  - `parking_lot = { version = "0.12", optional = true }`
+  - New feature flags: `backend-memcached`, `backend-quickcache`
+
+### Fixed
+
+- All existing tests pass (42 tests) - backward compatibility maintained
+
 ## [0.5.1] - 2025-01-05
 
 ### Added

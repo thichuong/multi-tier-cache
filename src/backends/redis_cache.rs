@@ -1,4 +1,4 @@
-//! L2 Cache - Redis Cache
+//! Redis Cache - Distributed Cache Backend
 //!
 //! Redis-based distributed cache for warm data storage with persistence.
 
@@ -10,8 +10,15 @@ use redis::aio::ConnectionManager;
 use serde_json;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// L2 Cache using Redis with ConnectionManager for automatic reconnection
-pub struct L2Cache {
+/// Redis distributed cache with ConnectionManager for automatic reconnection
+///
+/// This is the default L2 (warm tier) cache backend, providing:
+/// - Distributed caching across multiple instances
+/// - Persistence to disk
+/// - Automatic reconnection via ConnectionManager
+/// - TTL introspection for cache promotion
+/// - Pattern-based key scanning
+pub struct RedisCache {
     /// Redis connection manager - handles reconnection automatically
     conn_manager: ConnectionManager,
     /// Hit counter
@@ -22,10 +29,10 @@ pub struct L2Cache {
     sets: Arc<AtomicU64>,
 }
 
-impl L2Cache {
-    /// Create new L2 cache with ConnectionManager for automatic reconnection
+impl RedisCache {
+    /// Create new Redis cache with ConnectionManager for automatic reconnection
     pub async fn new() -> Result<Self> {
-        println!("  🔴 Initializing L2 Cache (Redis with ConnectionManager)...");
+        println!("  🔴 Initializing Redis Cache (with ConnectionManager)...");
 
         // Try to connect to Redis
         let redis_url = std::env::var("REDIS_URL")
@@ -40,7 +47,7 @@ impl L2Cache {
         let mut conn = conn_manager.clone();
         let _: String = redis::cmd("PING").query_async(&mut conn).await?;
 
-        println!("  ✅ L2 Cache connected to Redis at {} (ConnectionManager enabled)", redis_url);
+        println!("  ✅ Redis Cache connected at {} (ConnectionManager enabled)", redis_url);
 
         Ok(Self {
             conn_manager,
@@ -49,8 +56,8 @@ impl L2Cache {
             sets: Arc::new(AtomicU64::new(0)),
         })
     }
-    
-    /// Get value from L2 cache using persistent ConnectionManager
+
+    /// Get value from Redis cache using persistent ConnectionManager
     pub async fn get(&self, key: &str) -> Option<serde_json::Value> {
         let mut conn = self.conn_manager.clone();
 
@@ -74,9 +81,9 @@ impl L2Cache {
         }
     }
 
-    /// Get value with its remaining TTL from L2 cache
+    /// Get value with its remaining TTL from Redis cache
     ///
-    /// Returns tuple of (value, ttl_seconds) if key exists
+    /// Returns tuple of (value, ttl) if key exists
     /// TTL is in seconds, None if key doesn't exist or has no expiration
     pub async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
         let mut conn = self.conn_manager.clone();
@@ -115,7 +122,7 @@ impl L2Cache {
 
         Some((value, ttl))
     }
-    
+
     /// Set value with custom TTL using persistent ConnectionManager
     pub async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
         let json_str = serde_json::to_string(&value)?;
@@ -123,10 +130,10 @@ impl L2Cache {
 
         let _: () = conn.set_ex(key, json_str, ttl.as_secs()).await?;
         self.sets.fetch_add(1, Ordering::Relaxed);
-        println!("💾 [L2] Cached '{}' with TTL {:?}", key, ttl);
+        println!("💾 [Redis] Cached '{}' with TTL {:?}", key, ttl);
         Ok(())
     }
-    
+
     /// Remove value from cache using persistent ConnectionManager
     pub async fn remove(&self, key: &str) -> Result<()> {
         let mut conn = self.conn_manager.clone();
@@ -147,9 +154,9 @@ impl L2Cache {
     ///
     /// # Examples
     /// ```no_run
-    /// # use multi_tier_cache::L2Cache;
+    /// # use multi_tier_cache::backends::RedisCache;
     /// # async fn example() -> anyhow::Result<()> {
-    /// # let cache = L2Cache::new().await?;
+    /// # let cache = RedisCache::new().await?;
     /// // Find all user cache keys
     /// let keys = cache.scan_keys("user:*").await?;
     ///
@@ -183,7 +190,7 @@ impl L2Cache {
             }
         }
 
-        println!("🔍 [L2] Scanned keys matching '{}': {} found", pattern, keys.len());
+        println!("🔍 [Redis] Scanned keys matching '{}': {} found", pattern, keys.len());
         Ok(keys)
     }
 
@@ -197,13 +204,13 @@ impl L2Cache {
 
         let mut conn = self.conn_manager.clone();
         let count: usize = conn.del(keys).await?;
-        println!("🗑️  [L2] Removed {} keys", count);
+        println!("🗑️  [Redis] Removed {} keys", count);
         Ok(count)
     }
-    
+
     /// Health check
     pub async fn health_check(&self) -> bool {
-        let test_key = "health_check_l2";
+        let test_key = "health_check_redis";
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or(Duration::from_secs(0))
@@ -223,7 +230,6 @@ impl L2Cache {
             Err(_) => false
         }
     }
-    
 }
 
 // ===== Trait Implementations =====
@@ -231,13 +237,13 @@ impl L2Cache {
 use crate::traits::{CacheBackend, L2CacheBackend};
 use async_trait::async_trait;
 
-/// Implement CacheBackend trait for L2Cache
+/// Implement CacheBackend trait for RedisCache
 ///
-/// This allows L2Cache to be used as a pluggable backend in the multi-tier cache system.
+/// This allows RedisCache to be used as a pluggable backend in the multi-tier cache system.
 #[async_trait]
-impl CacheBackend for L2Cache {
+impl CacheBackend for RedisCache {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        L2Cache::get(self, key).await
+        RedisCache::get(self, key).await
     }
 
     async fn set_with_ttl(
@@ -246,31 +252,31 @@ impl CacheBackend for L2Cache {
         value: serde_json::Value,
         ttl: Duration,
     ) -> Result<()> {
-        L2Cache::set_with_ttl(self, key, value, ttl).await
+        RedisCache::set_with_ttl(self, key, value, ttl).await
     }
 
     async fn remove(&self, key: &str) -> Result<()> {
-        L2Cache::remove(self, key).await
+        RedisCache::remove(self, key).await
     }
 
     async fn health_check(&self) -> bool {
-        L2Cache::health_check(self).await
+        RedisCache::health_check(self).await
     }
 
     fn name(&self) -> &str {
-        "Redis (L2)"
+        "Redis"
     }
 }
 
-/// Implement L2CacheBackend trait for L2Cache
+/// Implement L2CacheBackend trait for RedisCache
 ///
 /// This extends CacheBackend with TTL introspection capabilities needed for L2->L1 promotion.
 #[async_trait]
-impl L2CacheBackend for L2Cache {
+impl L2CacheBackend for RedisCache {
     async fn get_with_ttl(
         &self,
         key: &str,
     ) -> Option<(serde_json::Value, Option<Duration>)> {
-        L2Cache::get_with_ttl(self, key).await
+        RedisCache::get_with_ttl(self, key).await
     }
 }

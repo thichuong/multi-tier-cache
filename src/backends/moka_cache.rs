@@ -1,5 +1,5 @@
-//! L1 Cache - Moka In-Memory Cache
-//! 
+//! Moka Cache - In-Memory Cache Backend
+//!
 //! High-performance in-memory cache using Moka for hot data storage.
 
 use std::sync::Arc;
@@ -23,19 +23,25 @@ impl CacheEntry {
             expires_at: Instant::now() + ttl,
         }
     }
-    
+
     fn is_expired(&self) -> bool {
         Instant::now() > self.expires_at
     }
 }
 
-/// L1 Cache using Moka with per-key TTL support
-pub struct L1Cache {
+/// Moka in-memory cache with per-key TTL support
+///
+/// This is the default L1 (hot tier) cache backend, providing:
+/// - Fast in-memory access (< 1ms latency)
+/// - Automatic eviction via LRU
+/// - Per-key TTL support
+/// - Statistics tracking
+pub struct MokaCache {
     /// Moka cache instance
     cache: Cache<String, CacheEntry>,
     /// Hit counter
     hits: Arc<AtomicU64>,
-    /// Miss counter  
+    /// Miss counter
     misses: Arc<AtomicU64>,
     /// Set counter
     sets: Arc<AtomicU64>,
@@ -44,19 +50,19 @@ pub struct L1Cache {
     coalesced_requests: Arc<AtomicU64>,
 }
 
-impl L1Cache {
-    /// Create new L1 cache
+impl MokaCache {
+    /// Create new Moka cache
     pub async fn new() -> Result<Self> {
-        println!("  🚀 Initializing L1 Cache (Moka)...");
-        
+        println!("  🚀 Initializing Moka Cache...");
+
         let cache = Cache::builder()
             .max_capacity(2000) // 2000 entries max
             .time_to_live(Duration::from_secs(3600)) // 1 hour max TTL as safety net
             .time_to_idle(Duration::from_secs(120)) // 2 minutes idle time
             .build();
-            
-        println!("  ✅ L1 Cache initialized with 2000 capacity, per-key TTL support");
-        
+
+        println!("  ✅ Moka Cache initialized with 2000 capacity, per-key TTL support");
+
         Ok(Self {
             cache,
             hits: Arc::new(AtomicU64::new(0)),
@@ -65,8 +71,8 @@ impl L1Cache {
             coalesced_requests: Arc::new(AtomicU64::new(0)),
         })
     }
-    
-    /// Get value from L1 cache
+
+    /// Get value from Moka cache
     pub async fn get(&self, key: &str) -> Option<serde_json::Value> {
         match self.cache.get(key).await {
             Some(entry) => {
@@ -86,28 +92,28 @@ impl L1Cache {
             }
         }
     }
-    
-    /// Set value with custom TTL (same as set method now)
+
+    /// Set value with custom TTL
     pub async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
         let entry = CacheEntry::new(value, ttl);
         self.cache.insert(key.to_string(), entry).await;
         self.sets.fetch_add(1, Ordering::Relaxed);
-        println!("💾 [L1] Cached '{}' with TTL {:?}", key, ttl);
+        println!("💾 [Moka] Cached '{}' with TTL {:?}", key, ttl);
         Ok(())
     }
-    
+
     /// Remove value from cache
     pub async fn remove(&self, key: &str) -> Result<()> {
         self.cache.remove(key).await;
         Ok(())
     }
-    
+
     /// Health check
     pub async fn health_check(&self) -> bool {
         // Test basic functionality with custom TTL
-        let test_key = "health_check_l1";
+        let test_key = "health_check_moka";
         let test_value = serde_json::json!({"test": true});
-        
+
         match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60)).await {
             Ok(_) => {
                 match self.get(test_key).await {
@@ -121,10 +127,6 @@ impl L1Cache {
             Err(_) => false
         }
     }
-
-    
-
-
 }
 
 // ===== Trait Implementations =====
@@ -132,13 +134,13 @@ impl L1Cache {
 use crate::traits::CacheBackend;
 use async_trait::async_trait;
 
-/// Implement CacheBackend trait for L1Cache
+/// Implement CacheBackend trait for MokaCache
 ///
-/// This allows L1Cache to be used as a pluggable backend in the multi-tier cache system.
+/// This allows MokaCache to be used as a pluggable backend in the multi-tier cache system.
 #[async_trait]
-impl CacheBackend for L1Cache {
+impl CacheBackend for MokaCache {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        L1Cache::get(self, key).await
+        MokaCache::get(self, key).await
     }
 
     async fn set_with_ttl(
@@ -147,19 +149,19 @@ impl CacheBackend for L1Cache {
         value: serde_json::Value,
         ttl: Duration,
     ) -> Result<()> {
-        L1Cache::set_with_ttl(self, key, value, ttl).await
+        MokaCache::set_with_ttl(self, key, value, ttl).await
     }
 
     async fn remove(&self, key: &str) -> Result<()> {
-        L1Cache::remove(self, key).await
+        MokaCache::remove(self, key).await
     }
 
     async fn health_check(&self) -> bool {
-        L1Cache::health_check(self).await
+        MokaCache::health_check(self).await
     }
 
     fn name(&self) -> &str {
-        "Moka (L1)"
+        "Moka"
     }
 }
 

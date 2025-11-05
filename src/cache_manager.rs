@@ -11,9 +11,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use dashmap::DashMap;
 use tokio::sync::Mutex;
 
-use super::l1_cache::L1Cache;
-use super::l2_cache::L2Cache;
-use super::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
+use crate::backends::{L1Cache, L2Cache};
+use crate::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 use super::invalidation::{
     InvalidationConfig, InvalidationPublisher, InvalidationSubscriber,
     InvalidationMessage, AtomicInvalidationStats, InvalidationStats,
