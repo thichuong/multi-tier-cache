@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+- Metrics export (Prometheus format)
+
+## [0.4.1] - 2025-01-05
+
 ### Added
 - **Integration Tests** (30 tests with real Redis)
   - Basic L1+L2 cache operations (12 tests)
@@ -21,8 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **invalidation**: Single key and pattern-based invalidation overhead, update vs remove comparison
   - **serialization**: JSON vs typed caching performance, data size impact
 
-### Planned
-- Metrics export (Prometheus format)
+### Fixed
+- Fixed doctests compilation errors for examples with external dependencies
 
 ## [0.4.0] - 2025-01-04
 
