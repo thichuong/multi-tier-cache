@@ -616,6 +616,32 @@ Tested in production environment:
 | moka | ❌ L1 only | ✅ L1 only | ❌ No | ❌ No | ❌ No |
 | redis-rs | ❌ No cache | ❌ Manual | ✅ Low-level | ✅ Manual | ❌ Manual |
 
+### Running Benchmarks
+
+The library includes comprehensive benchmarks built with Criterion:
+
+```bash
+# Run all benchmarks
+cargo bench
+
+# Run specific benchmark suite
+cargo bench --bench cache_operations
+cargo bench --bench stampede_protection
+cargo bench --bench invalidation
+cargo bench --bench serialization
+
+# Generate detailed HTML reports
+cargo bench -- --save-baseline my_baseline
+```
+
+**Benchmark Suites:**
+- **cache_operations**: L1/L2 read/write performance, cache strategies, compute-on-miss patterns
+- **stampede_protection**: Concurrent access, request coalescing under load
+- **invalidation**: Cross-instance invalidation overhead, pattern matching performance
+- **serialization**: JSON vs typed caching, data size impact
+
+Results are saved to `target/criterion/` with interactive HTML reports.
+
 ## 🔧 Configuration
 
 ### Redis Connection (REDIS_URL)

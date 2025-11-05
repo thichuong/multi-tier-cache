@@ -41,3 +41,19 @@ rand = "0.8"
 [features]
 default = ["redis-streams"]
 redis-streams = []
+
+[[bench]]
+name = "cache_operations"
+harness = false
+
+[[bench]]
+name = "stampede_protection"
+harness = false
+
+[[bench]]
+name = "invalidation"
+harness = false
+
+[[bench]]
+name = "serialization"
+harness = false

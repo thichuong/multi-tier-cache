@@ -15,8 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Redis Streams functionality (5 tests)
   - Test utilities in `tests/common/mod.rs`
 
+- **Benchmark Suite with Criterion**
+  - **cache_operations**: L1/L2 read/write performance, cache hit/miss latency, different cache strategies
+  - **stampede_protection**: Concurrent access patterns, request coalescing effectiveness
+  - **invalidation**: Single key and pattern-based invalidation overhead, update vs remove comparison
+  - **serialization**: JSON vs typed caching performance, data size impact
+
 ### Planned
-- Benchmark suite with Criterion
 - Metrics export (Prometheus format)
 
 ## [0.4.0] - 2025-01-04
