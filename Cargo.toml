@@ -1,6 +1,6 @@
 [package]
 name = "multi-tier-cache"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2021"
 authors = ["thichuong <thichuong22022000@gmail.com>"]
 description = "Customizable multi-tier cache (L1-L4+) with pluggable backends, cross-instance invalidation via Redis Pub/Sub, stampede protection, and flexible TTL scaling"
