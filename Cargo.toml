@@ -3,7 +3,7 @@ name = "multi-tier-cache"
 version = "0.4.1"
 edition = "2021"
 authors = ["thichuong <thichuong22022000@gmail.com>"]
-description = "High-performance multi-tier cache with L1 (Moka) + L2 (Redis), cross-instance invalidation, and stampede protection"
+description = "Customizable multi-tier cache (L1-L4+) with pluggable backends, cross-instance invalidation via Redis Pub/Sub, stampede protection, and flexible TTL scaling"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/thichuong/multi-tier-cache"
 documentation = "https://docs.rs/multi-tier-cache"
@@ -56,4 +56,8 @@ harness = false
 
 [[bench]]
 name = "serialization"
+harness = false
+
+[[bench]]
+name = "multi_tier"
 harness = false

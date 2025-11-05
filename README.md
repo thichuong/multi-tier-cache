@@ -17,8 +17,9 @@
   - [2. Compute-on-Miss Pattern](#2-compute-on-miss-pattern)
   - [3. Redis Streams Integration](#3-redis-streams-integration)
   - [4. Type-Safe Database Caching](#4-type-safe-database-caching-new-in-020-)
-  - [5. Cross-Instance Cache Invalidation](#5-cross-instance-cache-invalidation-new-in-040-) ⭐ **NEW**
+  - [5. Cross-Instance Cache Invalidation](#5-cross-instance-cache-invalidation-new-in-040-)
   - [6. Custom Cache Backends](#6-custom-cache-backends-new-in-030-)
+  - [7. Multi-Tier Architecture](#7-multi-tier-architecture-new-in-050-) ⭐ **NEW**
 - [Feature Compatibility](#%EF%B8%8F-feature-compatibility)
 - [Performance Benchmarks](#-performance-benchmarks)
 - [Configuration](#-configuration)
@@ -32,12 +33,13 @@
 ## ✨ Features
 
 - **🔥 Multi-Tier Architecture**: Combines fast in-memory (Moka) with persistent distributed (Redis) caching
+- **🌐 Dynamic Multi-Tier** *(v0.5.0+)*: Support for 3, 4, or more cache tiers (L1+L2+L3+L4+...) with flexible configuration ⭐ **NEW**
 - **🔄 Cross-Instance Cache Invalidation** *(v0.4.0+)*: Real-time cache synchronization across all instances via Redis Pub/Sub
-- **🔌 Pluggable Backends** *(v0.3.0+)*: Swap Moka/Redis with custom implementations (DashMap, Memcached, etc.)
+- **🔌 Pluggable Backends** *(v0.3.0+)*: Swap Moka/Redis with custom implementations (DashMap, Memcached, RocksDB, etc.)
 - **🛡️ Cache Stampede Protection**: DashMap + Mutex request coalescing prevents duplicate computations (99.6% latency reduction: 534ms → 5.2ms)
 - **📊 Redis Streams**: Built-in publish/subscribe with automatic trimming for event streaming
-- **⚡ Automatic L2-to-L1 Promotion**: Intelligent cache tier promotion for frequently accessed data with TTL preservation
-- **📈 Comprehensive Statistics**: Hit rates, promotions, in-flight request tracking, invalidation metrics
+- **⚡ Automatic Tier Promotion**: Intelligent cache tier promotion for frequently accessed data with TTL preservation and per-tier scaling
+- **📈 Comprehensive Statistics**: Hit rates per tier, promotions, in-flight request tracking, invalidation metrics
 - **🎯 Zero-Config**: Sensible defaults, works out of the box
 - **✅ Production-Proven**: Battle-tested at **16,829+ RPS** with **5.2ms latency** and **95% hit rate**
 
@@ -61,12 +63,13 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-multi-tier-cache = "0.4"
+multi-tier-cache = "0.5"
 tokio = { version = "1.28", features = ["full"] }
 serde_json = "1.0"
 ```
 
 **Version Guide:**
+- **v0.5.0+**: Dynamic multi-tier architecture (L1+L2+L3+L4+...), per-tier statistics ⭐ **NEW**
 - **v0.4.0+**: Cross-instance cache invalidation via Redis Pub/Sub
 - **v0.3.0+**: Pluggable backends, trait-based architecture
 - **v0.2.0+**: Type-safe database caching with `get_or_compute_typed()`
@@ -542,6 +545,171 @@ let cache = CacheSystemBuilder::new()
 - In-memory L2 cache with TTL
 - No-op cache (for testing)
 - Mixed backend configurations
+
+### 7. Multi-Tier Architecture (New in 0.5.0! 🎉)
+
+Starting from **v0.5.0**, you can configure **3, 4, or more cache tiers** beyond the default L1+L2 setup!
+
+**Use Cases:**
+- **L3 (Cold Storage)**: RocksDB or LevelDB for large datasets with longer TTL
+- **L4 (Archive)**: S3 or filesystem for rarely-accessed but important data
+- **Custom Tiers**: Any combination of backends to fit your workload
+
+#### Why Multi-Tier?
+
+```
+Request → L1 (Hot - RAM) → L2 (Warm - Redis) → L3 (Cold - RocksDB) → L4 (Archive - S3)
+          <1ms (95%)        2-5ms (4%)           10-50ms (0.9%)        100-500ms (0.1%)
+```
+
+- **Cost Optimization**: Keep hot data in expensive fast storage, cold data in cheap slow storage
+- **Capacity**: Extend cache capacity beyond RAM limits
+- **Performance**: 95%+ requests served from L1/L2, only rare misses hit slower tiers
+
+#### Basic Example: 3-Tier Cache
+
+```rust
+use multi_tier_cache::{CacheSystemBuilder, TierConfig, L2Cache};
+use std::sync::Arc;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // Setup backends
+    let l1 = Arc::new(L2Cache::new().await?);  // Fast: Redis
+    let l2 = Arc::new(L2Cache::new().await?);  // Warm: Redis
+    let l3 = Arc::new(RocksDBCache::new("/tmp/cache").await?);  // Cold: RocksDB
+
+    // Build 3-tier cache
+    let cache = CacheSystemBuilder::new()
+        .with_tier(l1, TierConfig::as_l1())
+        .with_tier(l2, TierConfig::as_l2())
+        .with_l3(l3)  // Convenience method: 2x TTL
+        .build()
+        .await?;
+
+    // Use as normal - transparent multi-tier
+    cache.cache_manager()
+        .set_with_strategy("key", data, CacheStrategy::LongTerm)
+        .await?;
+
+    Ok(())
+}
+```
+
+#### Tier Configuration
+
+**Pre-configured Tiers:**
+
+```rust
+// L1 - Hot tier (no promotion, standard TTL)
+TierConfig::as_l1()
+
+// L2 - Warm tier (promote to L1, standard TTL)
+TierConfig::as_l2()
+
+// L3 - Cold tier (promote to L2+L1, 2x TTL)
+TierConfig::as_l3()
+
+// L4 - Archive tier (promote to all, 8x TTL)
+TierConfig::as_l4()
+```
+
+**Custom Tier:**
+
+```rust
+TierConfig::new(3)
+    .with_promotion(true)   // Auto-promote on hit
+    .with_ttl_scale(5.0)    // 5x TTL multiplier
+    .with_level(3)          // Tier number
+```
+
+#### TTL Scaling Example
+
+```rust
+// Set data with 1-hour TTL
+cache.cache_manager()
+    .set_with_strategy("product:123", data, CacheStrategy::MediumTerm)  // 1hr
+    .await?;
+
+// Actual TTL per tier:
+// L1: 1 hour   (scale = 1.0x)
+// L2: 1 hour   (scale = 1.0x)
+// L3: 2 hours  (scale = 2.0x) ← Keeps data longer!
+// L4: 8 hours  (scale = 8.0x) ← Much longer retention!
+```
+
+#### Per-Tier Statistics
+
+Track hit rates for each tier:
+
+```rust
+if let Some(tier_stats) = cache.cache_manager().get_tier_stats() {
+    for stats in tier_stats {
+        println!("L{}: {} hits ({})",
+                 stats.tier_level,
+                 stats.hit_count(),
+                 stats.backend_name);
+    }
+}
+
+// Output:
+// L1: 9500 hits (Redis)
+// L2: 450 hits (Redis)
+// L3: 45 hits (RocksDB)
+// L4: 5 hits (S3)
+```
+
+#### 4-Tier Example
+
+```rust
+let cache = CacheSystemBuilder::new()
+    .with_tier(moka_l1, TierConfig::as_l1())
+    .with_tier(redis_l2, TierConfig::as_l2())
+    .with_tier(rocksdb_l3, TierConfig::as_l3())
+    .with_tier(s3_l4, TierConfig::as_l4())
+    .build()
+    .await?;
+```
+
+#### Automatic Tier Promotion
+
+When data is found in a lower tier (e.g., L3), it's automatically promoted to all upper tiers:
+
+```
+Request for "key"
+  ├─ Check L1 → Miss
+  ├─ Check L2 → Miss
+  └─ Check L3 → HIT!
+       ├─ Promote to L2 (with original TTL)
+       ├─ Promote to L1 (with original TTL)
+       └─ Return data
+
+Next request for "key" → L1 Hit! <1ms
+```
+
+#### Backward Compatibility
+
+**Existing 2-tier users**: No changes required! Your code continues to work:
+
+```rust
+// This still works exactly as before (v0.1.0 - v0.4.x)
+let cache = CacheSystemBuilder::new().build().await?;
+```
+
+**Multi-tier mode** is opt-in via `.with_tier()` or `.with_l3()`/`.with_l4()` methods.
+
+#### When to Use Multi-Tier
+
+✅ **Good fit:**
+- Large datasets that don't fit in RAM
+- Cost-sensitive workloads (mix expensive + cheap storage)
+- Long-tail data access patterns (90% hot, 10% cold)
+- Hierarchical data with different access frequencies
+
+❌ **Not needed:**
+- Small datasets (< 10GB) that fit in Redis
+- Uniform access patterns (all data equally hot)
+- Latency-critical paths (stick to L1+L2)
 
 ## ⚖️ Feature Compatibility
 

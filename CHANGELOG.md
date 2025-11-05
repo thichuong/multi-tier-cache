@@ -10,6 +10,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 - Metrics export (Prometheus format)
 
+## [0.5.0] - 2025-01-05
+
+### Added
+
+**🚀 Major Feature: Dynamic Multi-Tier Cache Architecture**
+
+- **Multi-Tier Support (L1+L2+L3+L4+...)**: Flexible tier configuration
+  - Support for 3, 4, or more cache tiers beyond L1+L2
+  - Dynamic tier chain with automatic promotion
+  - Per-tier TTL scaling (e.g., L3 = 2x, L4 = 8x)
+  - Per-tier hit statistics and monitoring
+  - Configurable promotion behavior per tier
+
+- **Builder API Extensions**: New methods for tier configuration
+  - `.with_tier(backend, TierConfig)` - Add custom tier with full control
+  - `.with_l3(backend)` - Convenience method for L3 (cold tier, 2x TTL)
+  - `.with_l4(backend)` - Convenience method for L4 (archive tier, 8x TTL)
+  - Automatic tier sorting by level during build
+  - Validation of tier ordering
+
+- **TierConfig**: Flexible tier configuration
+  - `TierConfig::as_l1()` - Hot tier (no promotion)
+  - `TierConfig::as_l2()` - Warm tier (promote to L1)
+  - `TierConfig::as_l3()` - Cold tier (2x TTL, promote to L2+L1)
+  - `TierConfig::as_l4()` - Archive tier (8x TTL, promote to all)
+  - Builder pattern: `.with_promotion(bool)`, `.with_ttl_scale(f64)`, `.with_level(usize)`
+
+- **Per-Tier Statistics**: Granular performance monitoring
+  - `TierStats` struct with tier-level, hits, backend name
+  - `get_tier_stats()` - Get statistics for all configured tiers
+  - Individual tier hit tracking
+  - Statistics available only in multi-tier mode
+
+- **Integration Tests**: 8 new tests for multi-tier functionality
+  - Multi-tier basic operations (get/set across 3+ tiers)
+  - Statistics tracking per tier
+  - Backward compatibility verification
+  - TTL scaling validation
+  - Cache miss behavior
+  - Convenience methods (with_l3/with_l4)
+
+- **Benchmarks**: 5 benchmarks for multi-tier performance
+  - 2-tier vs 3-tier vs 4-tier write performance
+  - Multi-tier read performance (L1 hits)
+  - TTL scaling impact measurement
+  - Data size scaling across tiers
+  - Tier statistics access overhead
+
+### Changed
+
+- **CacheManager**: Extended for multi-tier support
+  - Added `tiers: Option<Vec<CacheTier>>` field
+  - New `new_with_tiers(tiers, streaming_backend)` constructor
+  - Updated `get()` to iterate through all tiers with promotion
+  - Updated `set_with_strategy()` to write to all tiers with TTL scaling
+  - Updated `invalidate()` and `update_cache()` to work across all tiers
+  - **Backward Compatible**: Legacy 2-tier mode still works when `tiers: None`
+
+- **CacheTier**: Internal tier representation
+  - Wraps L2CacheBackend with tier metadata
+  - Tracks tier level, promotion settings, TTL scale
+  - Per-tier statistics tracking
+  - Automatic TTL scaling on set operations
+
+- **ProxyCacheBackend**: Trait conversion helper
+  - Converts L2CacheBackend → CacheBackend for trait object compatibility
+  - Enables L2CacheBackend as tier backend (needed for get_with_ttl)
+
+### Backward Compatibility
+
+- ✅ **Fully Backward Compatible**: All 36 existing tests pass
+- Legacy 2-tier mode (L1+L2) continues to work without changes
+- `tiers: None` triggers legacy code paths
+- Multi-tier mode activated only when using `.with_tier()` builder methods
+- Existing APIs unchanged: `get()`, `set_with_strategy()`, `invalidate()`, etc.
+
+### Migration Guide
+
+**Existing 2-tier users**: No changes required. Your code continues to work as-is.
+
+**New 3+ tier users**: Use the builder pattern:
+
+```rust
+use multi_tier_cache::{CacheSystemBuilder, TierConfig};
+
+// 3-tier setup
+let cache = CacheSystemBuilder::new()
+    .with_tier(l1, TierConfig::as_l1())
+    .with_tier(l2, TierConfig::as_l2())
+    .with_l3(rocksdb)  // Convenience method
+    .build()
+    .await?;
+
+// Access per-tier stats
+if let Some(tier_stats) = cache.cache_manager().get_tier_stats() {
+    for stats in tier_stats {
+        println!("L{}: {} hits", stats.tier_level, stats.hit_count());
+    }
+}
+```
+
 ## [0.4.1] - 2025-01-05
 
 ### Added

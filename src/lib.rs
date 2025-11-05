@@ -65,7 +65,11 @@ pub mod invalidation;
 
 pub use l1_cache::L1Cache;
 pub use l2_cache::L2Cache;
-pub use cache_manager::{CacheManager, CacheStrategy, CacheManagerStats};
+pub use cache_manager::{
+    CacheManager, CacheStrategy, CacheManagerStats,
+    // Multi-tier support (v0.5.0+)
+    TierConfig, CacheTier, TierStats,
+};
 pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 pub use builder::CacheSystemBuilder;
 pub use invalidation::{
