@@ -34,7 +34,7 @@ anyhow = "1.0"
 async-trait = "0.1"
 
 # Concurrency
-dashmap = "5.5"
+dashmap = "6.1"
 
 [dev-dependencies]
 tokio = { version = "1.28", features = ["full"] }
