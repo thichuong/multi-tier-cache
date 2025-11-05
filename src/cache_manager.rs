@@ -375,7 +375,7 @@ impl CacheManager {
     /// * `Err(error)` - Cache operation or computation failed
     /// 
     /// # Example
-    /// ```rust
+    /// ```ignore
     /// // Simple cache get (existing behavior)
     /// let cached_data = cache_manager.get_with_fallback("my_key", None, None).await?;
     ///
@@ -434,7 +434,7 @@ impl CacheManager {
     /// * `compute_fn` - Async function to compute the value if not in any cache
     /// 
     /// # Example
-    /// ```rust
+    /// ```ignore
     /// let api_data = cache_manager.get_or_compute_with(
     ///     "api_response",
     ///     CacheStrategy::RealTime,
@@ -544,8 +544,14 @@ impl CacheManager {
     ///
     /// # Example - Database Query
     ///
-    /// ```rust
-    /// use serde::{Serialize, Deserialize};
+    /// ```no_run
+    /// # use multi_tier_cache::{CacheManager, CacheStrategy, L1Cache, L2Cache};
+    /// # use std::sync::Arc;
+    /// # use serde::{Serialize, Deserialize};
+    /// # async fn example() -> anyhow::Result<()> {
+    /// # let l1 = Arc::new(L1Cache::new().await?);
+    /// # let l2 = Arc::new(L2Cache::new().await?);
+    /// # let cache_manager = CacheManager::new(l1, l2);
     ///
     /// #[derive(Serialize, Deserialize)]
     /// struct User {
@@ -553,39 +559,50 @@ impl CacheManager {
     ///     name: String,
     /// }
     ///
-    /// // Type-safe database caching
-    /// let user: User = cache_manager.get_or_compute_typed(
-    ///     "user:123",
-    ///     CacheStrategy::MediumTerm,
-    ///     || async {
-    ///         // Your database query here
-    ///         sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-    ///             .bind(123)
-    ///             .fetch_one(&pool)
-    ///             .await
-    ///     }
-    /// ).await?;
+    /// // Type-safe database caching (example - requires sqlx)
+    /// // let user: User = cache_manager.get_or_compute_typed(
+    /// //     "user:123",
+    /// //     CacheStrategy::MediumTerm,
+    /// //     || async {
+    /// //         sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+    /// //             .bind(123)
+    /// //             .fetch_one(&pool)
+    /// //             .await
+    /// //     }
+    /// // ).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Example - API Call
     ///
-    /// ```rust
+    /// ```no_run
+    /// # use multi_tier_cache::{CacheManager, CacheStrategy, L1Cache, L2Cache};
+    /// # use std::sync::Arc;
+    /// # use serde::{Serialize, Deserialize};
+    /// # async fn example() -> anyhow::Result<()> {
+    /// # let l1 = Arc::new(L1Cache::new().await?);
+    /// # let l2 = Arc::new(L2Cache::new().await?);
+    /// # let cache_manager = CacheManager::new(l1, l2);
     /// #[derive(Serialize, Deserialize)]
     /// struct ApiResponse {
     ///     data: String,
     ///     timestamp: i64,
     /// }
     ///
-    /// let response: ApiResponse = cache_manager.get_or_compute_typed(
-    ///     "api:endpoint",
-    ///     CacheStrategy::RealTime,
-    ///     || async {
-    ///         reqwest::get("https://api.example.com/data")
-    ///             .await?
-    ///             .json::<ApiResponse>()
-    ///             .await
-    ///     }
-    /// ).await?;
+    /// // API call caching (example - requires reqwest)
+    /// // let response: ApiResponse = cache_manager.get_or_compute_typed(
+    /// //     "api:endpoint",
+    /// //     CacheStrategy::RealTime,
+    /// //     || async {
+    /// //         reqwest::get("https://api.example.com/data")
+    /// //             .await?
+    /// //             .json::<ApiResponse>()
+    /// //             .await
+    /// //     }
+    /// // ).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Performance

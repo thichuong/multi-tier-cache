@@ -146,12 +146,17 @@ impl L2Cache {
     /// Vector of matching key names
     ///
     /// # Examples
-    /// ```
+    /// ```no_run
+    /// # use multi_tier_cache::L2Cache;
+    /// # async fn example() -> anyhow::Result<()> {
+    /// # let cache = L2Cache::new().await?;
     /// // Find all user cache keys
     /// let keys = cache.scan_keys("user:*").await?;
     ///
     /// // Find specific user's cache keys
     /// let keys = cache.scan_keys("user:123:*").await?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
         let mut conn = self.conn_manager.clone();
