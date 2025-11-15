@@ -64,21 +64,31 @@ impl CacheStrategy {
 }
 
 /// Statistics for a single cache tier
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TierStats {
     /// Tier level (1 = L1, 2 = L2, 3 = L3, etc.)
     pub tier_level: usize,
     /// Number of cache hits at this tier
-    pub hits: Arc<AtomicU64>,
+    pub hits: AtomicU64,
     /// Backend name for identification
     pub backend_name: String,
+}
+
+impl Clone for TierStats {
+    fn clone(&self) -> Self {
+        Self {
+            tier_level: self.tier_level,
+            hits: AtomicU64::new(self.hits.load(Ordering::Relaxed)),
+            backend_name: self.backend_name.clone(),
+        }
+    }
 }
 
 impl TierStats {
     fn new(tier_level: usize, backend_name: String) -> Self {
         Self {
             tier_level,
-            hits: Arc::new(AtomicU64::new(0)),
+            hits: AtomicU64::new(0),
             backend_name,
         }
     }
@@ -269,12 +279,12 @@ pub struct CacheManager {
 
     /// Optional streaming backend (defaults to L2 if it implements StreamingBackend)
     streaming_backend: Option<Arc<dyn StreamingBackend>>,
-    /// Statistics
-    total_requests: Arc<AtomicU64>,
-    l1_hits: Arc<AtomicU64>,
-    l2_hits: Arc<AtomicU64>,
-    misses: Arc<AtomicU64>,
-    promotions: Arc<AtomicUsize>,
+    /// Statistics (AtomicU64 is already thread-safe, no Arc needed)
+    total_requests: AtomicU64,
+    l1_hits: AtomicU64,
+    l2_hits: AtomicU64,
+    misses: AtomicU64,
+    promotions: AtomicUsize,
     /// In-flight requests to prevent Cache Stampede on L2/compute operations
     in_flight_requests: Arc<DashMap<String, Arc<Mutex<()>>>>,
     /// Invalidation publisher (for broadcasting invalidation messages)
@@ -327,11 +337,11 @@ impl CacheManager {
             l2_cache,
             l2_cache_concrete: None,
             streaming_backend,
-            total_requests: Arc::new(AtomicU64::new(0)),
-            l1_hits: Arc::new(AtomicU64::new(0)),
-            l2_hits: Arc::new(AtomicU64::new(0)),
-            misses: Arc::new(AtomicU64::new(0)),
-            promotions: Arc::new(AtomicUsize::new(0)),
+            total_requests: AtomicU64::new(0),
+            l1_hits: AtomicU64::new(0),
+            l2_hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+            promotions: AtomicUsize::new(0),
             in_flight_requests: Arc::new(DashMap::new()),
             invalidation_publisher: None,
             invalidation_subscriber: None,
@@ -421,11 +431,11 @@ impl CacheManager {
             l2_cache: l2_backend,
             l2_cache_concrete: Some(l2_cache),
             streaming_backend: Some(streaming_backend),
-            total_requests: Arc::new(AtomicU64::new(0)),
-            l1_hits: Arc::new(AtomicU64::new(0)),
-            l2_hits: Arc::new(AtomicU64::new(0)),
-            misses: Arc::new(AtomicU64::new(0)),
-            promotions: Arc::new(AtomicUsize::new(0)),
+            total_requests: AtomicU64::new(0),
+            l1_hits: AtomicU64::new(0),
+            l2_hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+            promotions: AtomicUsize::new(0),
             in_flight_requests: Arc::new(DashMap::new()),
             invalidation_publisher: Some(Arc::new(Mutex::new(publisher))),
             invalidation_subscriber: Some(Arc::new(subscriber)),
@@ -519,11 +529,11 @@ impl CacheManager {
             l2_cache,
             l2_cache_concrete: None,
             streaming_backend,
-            total_requests: Arc::new(AtomicU64::new(0)),
-            l1_hits: Arc::new(AtomicU64::new(0)),
-            l2_hits: Arc::new(AtomicU64::new(0)),
-            misses: Arc::new(AtomicU64::new(0)),
-            promotions: Arc::new(AtomicUsize::new(0)),
+            total_requests: AtomicU64::new(0),
+            l1_hits: AtomicU64::new(0),
+            l2_hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+            promotions: AtomicUsize::new(0),
             in_flight_requests: Arc::new(DashMap::new()),
             invalidation_publisher: None,
             invalidation_subscriber: None,

@@ -26,12 +26,12 @@
 //!
 //!     // Retrieve data (L1 first, then L2 fallback)
 //!     if let Some(cached) = cache.cache_manager().get("user:1").await? {
-//!         println!("Cached data: {}", cached);
+//!         tracing::info!("Cached data: {}", cached);
 //!     }
 //!
 //!     // Get statistics
 //!     let stats = cache.cache_manager().get_stats();
-//!     println!("Hit rate: {:.2}%", stats.hit_rate);
+//!     tracing::info!("Hit rate: {:.2}%", stats.hit_rate);
 //!
 //!     Ok(())
 //! }
@@ -55,6 +55,7 @@
 
 use std::sync::Arc;
 use anyhow::Result;
+use tracing::{info, warn};
 
 pub mod backends;
 pub mod cache_manager;
@@ -112,14 +113,19 @@ pub use async_trait::async_trait;
 ///     Ok(())
 /// }
 /// ```
+///
+/// # Note on l1_cache and l2_cache Fields
+///
+/// When using multi-tier mode or custom backends, `l1_cache` and `l2_cache`
+/// may be `None`. Always use `cache_manager()` for cache operations.
 #[derive(Clone)]
 pub struct CacheSystem {
     /// Unified cache manager (primary interface)
     pub cache_manager: Arc<CacheManager>,
-    /// L1 Cache (in-memory, Moka)
-    pub l1_cache: Arc<L1Cache>,
-    /// L2 Cache (distributed, Redis)
-    pub l2_cache: Arc<L2Cache>,
+    /// L1 Cache (in-memory, Moka) - `None` when using custom backends
+    pub l1_cache: Option<Arc<L1Cache>>,
+    /// L2 Cache (distributed, Redis) - `None` when using custom backends
+    pub l2_cache: Option<Arc<L2Cache>>,
 }
 
 impl CacheSystem {
@@ -145,7 +151,7 @@ impl CacheSystem {
     /// }
     /// ```
     pub async fn new() -> Result<Self> {
-        println!("🏗️ Initializing Multi-Tier Cache System...");
+        info!("Initializing Multi-Tier Cache System");
 
         // Initialize L1 cache (Moka)
         let l1_cache = Arc::new(L1Cache::new().await?);
@@ -156,12 +162,12 @@ impl CacheSystem {
         // Initialize cache manager
         let cache_manager = Arc::new(CacheManager::new(l1_cache.clone(), l2_cache.clone()).await?);
 
-        println!("✅ Multi-Tier Cache System initialized successfully");
+        info!("Multi-Tier Cache System initialized successfully");
 
         Ok(Self {
             cache_manager,
-            l1_cache,
-            l2_cache,
+            l1_cache: Some(l1_cache),
+            l2_cache: Some(l2_cache),
         })
     }
 
@@ -183,9 +189,27 @@ impl CacheSystem {
     /// }
     /// ```
     pub async fn with_redis_url(redis_url: &str) -> Result<Self> {
-        // Temporarily set environment variable for L2Cache initialization
-        std::env::set_var("REDIS_URL", redis_url);
-        Self::new().await
+        info!(redis_url = %redis_url, "Initializing Multi-Tier Cache System with custom Redis URL");
+
+        // Initialize L1 cache (Moka)
+        let l1_cache = Arc::new(L1Cache::new().await?);
+
+        // Initialize L2 cache (Redis) with custom URL
+        let l2_cache = Arc::new(L2Cache::with_url(redis_url).await?);
+
+        // Initialize cache manager
+        let cache_manager = Arc::new(CacheManager::new(
+            Arc::clone(&l1_cache),
+            Arc::clone(&l2_cache)
+        ).await?);
+
+        info!("Multi-Tier Cache System initialized successfully");
+
+        Ok(Self {
+            cache_manager,
+            l1_cache: Some(l1_cache),
+            l2_cache: Some(l2_cache),
+        })
     }
 
     /// Perform health check on all cache tiers
@@ -210,14 +234,21 @@ impl CacheSystem {
     /// }
     /// ```
     pub async fn health_check(&self) -> bool {
-        let l1_ok = self.l1_cache.health_check().await;
-        let l2_ok = self.l2_cache.health_check().await;
+        let l1_ok = match &self.l1_cache {
+            Some(cache) => cache.health_check().await,
+            None => true, // If no L1 cache instance, assume OK (using custom backends)
+        };
+
+        let l2_ok = match &self.l2_cache {
+            Some(cache) => cache.health_check().await,
+            None => true, // If no L2 cache instance, assume OK (using custom backends)
+        };
 
         if l1_ok && l2_ok {
-            println!("  ✅ Multi-Tier Cache health check passed");
+            info!("Multi-Tier Cache health check passed");
             true
         } else {
-            println!("  ⚠️ Multi-Tier Cache health check - L1: {}, L2: {}", l1_ok, l2_ok);
+            warn!(l1_ok = %l1_ok, l2_ok = %l2_ok, "Multi-Tier Cache health check - partial failure");
             l1_ok // At minimum, L1 should work
         }
     }

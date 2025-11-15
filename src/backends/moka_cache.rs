@@ -8,6 +8,7 @@ use anyhow::Result;
 use serde_json;
 use moka::future::Cache;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::{info, debug};
 
 /// Cache entry with TTL information
 #[derive(Debug, Clone)]
@@ -53,7 +54,7 @@ pub struct MokaCache {
 impl MokaCache {
     /// Create new Moka cache
     pub async fn new() -> Result<Self> {
-        println!("  🚀 Initializing Moka Cache...");
+        info!("Initializing Moka Cache");
 
         let cache = Cache::builder()
             .max_capacity(2000) // 2000 entries max
@@ -61,7 +62,7 @@ impl MokaCache {
             .time_to_idle(Duration::from_secs(120)) // 2 minutes idle time
             .build();
 
-        println!("  ✅ Moka Cache initialized with 2000 capacity, per-key TTL support");
+        info!(capacity = 2000, "Moka Cache initialized with per-key TTL support");
 
         Ok(Self {
             cache,
@@ -72,8 +73,19 @@ impl MokaCache {
         })
     }
 
-    /// Get value from Moka cache
-    pub async fn get(&self, key: &str) -> Option<serde_json::Value> {
+}
+
+// ===== Trait Implementations =====
+
+use crate::traits::CacheBackend;
+use async_trait::async_trait;
+
+/// Implement CacheBackend trait for MokaCache
+///
+/// This allows MokaCache to be used as a pluggable backend in the multi-tier cache system.
+#[async_trait]
+impl CacheBackend for MokaCache {
+    async fn get(&self, key: &str) -> Option<serde_json::Value> {
         match self.cache.get(key).await {
             Some(entry) => {
                 if entry.is_expired() {
@@ -93,23 +105,25 @@ impl MokaCache {
         }
     }
 
-    /// Set value with custom TTL
-    pub async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
+    async fn set_with_ttl(
+        &self,
+        key: &str,
+        value: serde_json::Value,
+        ttl: Duration,
+    ) -> Result<()> {
         let entry = CacheEntry::new(value, ttl);
         self.cache.insert(key.to_string(), entry).await;
         self.sets.fetch_add(1, Ordering::Relaxed);
-        println!("💾 [Moka] Cached '{}' with TTL {:?}", key, ttl);
+        debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Moka] Cached key with TTL");
         Ok(())
     }
 
-    /// Remove value from cache
-    pub async fn remove(&self, key: &str) -> Result<()> {
+    async fn remove(&self, key: &str) -> Result<()> {
         self.cache.remove(key).await;
         Ok(())
     }
 
-    /// Health check
-    pub async fn health_check(&self) -> bool {
+    async fn health_check(&self) -> bool {
         // Test basic functionality with custom TTL
         let test_key = "health_check_moka";
         let test_value = serde_json::json!({"test": true});
@@ -126,38 +140,6 @@ impl MokaCache {
             }
             Err(_) => false
         }
-    }
-}
-
-// ===== Trait Implementations =====
-
-use crate::traits::CacheBackend;
-use async_trait::async_trait;
-
-/// Implement CacheBackend trait for MokaCache
-///
-/// This allows MokaCache to be used as a pluggable backend in the multi-tier cache system.
-#[async_trait]
-impl CacheBackend for MokaCache {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        MokaCache::get(self, key).await
-    }
-
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-        ttl: Duration,
-    ) -> Result<()> {
-        MokaCache::set_with_ttl(self, key, value, ttl).await
-    }
-
-    async fn remove(&self, key: &str) -> Result<()> {
-        MokaCache::remove(self, key).await
-    }
-
-    async fn health_check(&self) -> bool {
-        MokaCache::health_check(self).await
     }
 
     fn name(&self) -> &str {

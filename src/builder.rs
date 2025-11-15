@@ -34,6 +34,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use crate::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 use crate::{CacheManager, L1Cache, L2Cache, CacheSystem, CacheTier, TierConfig};
+use tracing::info;
 
 /// Builder for constructing CacheSystem with custom backends
 ///
@@ -306,11 +307,11 @@ impl CacheSystemBuilder {
     /// }
     /// ```
     pub async fn build(self) -> Result<CacheSystem> {
-        println!("🏗️ Building Multi-Tier Cache System...");
+        info!("Building Multi-Tier Cache System");
 
         // NEW: Multi-tier mode (v0.5.0+)
         if !self.tiers.is_empty() {
-            println!("  🚀 Initializing multi-tier architecture ({} tiers)...", self.tiers.len());
+            info!(tier_count = self.tiers.len(), "Initializing multi-tier architecture");
 
             // Sort tiers by tier_level (ascending: L1 first, L4 last)
             let mut tiers = self.tiers;
@@ -334,18 +335,13 @@ impl CacheSystemBuilder {
                 CacheManager::new_with_tiers(cache_tiers, self.streaming_backend).await?
             );
 
-            // Create placeholder concrete types for backward compatibility
-            let l1_placeholder = Arc::new(L1Cache::new().await?);
-            let l2_placeholder = Arc::new(L2Cache::new().await?);
-
-            println!("✅ Multi-Tier Cache System built successfully");
-            println!("  ⚠️ Note: Direct l1_cache/l2_cache fields are placeholders");
-            println!("  ⚠️ Use cache_manager() for all cache operations");
+            info!("Multi-Tier Cache System built successfully");
+            info!("Note: Using multi-tier mode - use cache_manager() for all operations");
 
             return Ok(CacheSystem {
                 cache_manager,
-                l1_cache: l1_placeholder,
-                l2_cache: l2_placeholder,
+                l1_cache: None, // Multi-tier mode doesn't use concrete types
+                l2_cache: None,
             });
         }
 
@@ -353,7 +349,7 @@ impl CacheSystemBuilder {
         // Handle default vs custom backends
         if self.l1_backend.is_none() && self.l2_backend.is_none() {
             // Default path: Create concrete types once and reuse them
-            println!("  🚀 Initializing default backends (Moka + Redis)...");
+            info!("Initializing default backends (Moka + Redis)");
 
             let l1_cache = Arc::new(L1Cache::new().await?);
             let l2_cache = Arc::new(L2Cache::new().await?);
@@ -361,35 +357,35 @@ impl CacheSystemBuilder {
             // Use legacy constructor that handles conversion to trait objects
             let cache_manager = Arc::new(CacheManager::new(l1_cache.clone(), l2_cache.clone()).await?);
 
-            println!("✅ Multi-Tier Cache System built successfully");
+            info!("Multi-Tier Cache System built successfully");
 
             Ok(CacheSystem {
                 cache_manager,
-                l1_cache,
-                l2_cache,
+                l1_cache: Some(l1_cache),
+                l2_cache: Some(l2_cache),
             })
         } else {
             // Custom backend path
-            println!("  ℹ️ Building with custom backends...");
+            info!("Building with custom backends");
 
             let l1_backend: Arc<dyn CacheBackend> = match self.l1_backend {
                 Some(backend) => {
-                    println!("  ✅ Using custom L1 backend: {}", backend.name());
+                    info!(backend = %backend.name(), "Using custom L1 backend");
                     backend
                 }
                 None => {
-                    println!("  🚀 Using default L1 backend (Moka)");
+                    info!("Using default L1 backend (Moka)");
                     Arc::new(L1Cache::new().await?)
                 }
             };
 
             let l2_backend: Arc<dyn L2CacheBackend> = match self.l2_backend {
                 Some(backend) => {
-                    println!("  ✅ Using custom L2 backend: {}", backend.name());
+                    info!(backend = %backend.name(), "Using custom L2 backend");
                     backend
                 }
                 None => {
-                    println!("  🔴 Using default L2 backend (Redis)");
+                    info!("Using default L2 backend (Redis)");
                     Arc::new(L2Cache::new().await?)
                 }
             };
@@ -405,20 +401,13 @@ impl CacheSystemBuilder {
                 ).await?
             );
 
-            // Create placeholder concrete types for backward compatibility
-            // Note: These are NOT the same instances as used by cache_manager
-            // Users must use cache_manager() for all operations
-            let l1_placeholder = Arc::new(L1Cache::new().await?);
-            let l2_placeholder = Arc::new(L2Cache::new().await?);
-
-            println!("✅ Multi-Tier Cache System built with custom backends");
-            println!("  ⚠️ Note: Direct l1_cache/l2_cache fields are placeholders");
-            println!("  ⚠️ Use cache_manager() for all cache operations");
+            info!("Multi-Tier Cache System built with custom backends");
+            info!("Note: Using custom backends - use cache_manager() for all operations");
 
             Ok(CacheSystem {
                 cache_manager,
-                l1_cache: l1_placeholder,
-                l2_cache: l2_placeholder,
+                l1_cache: None, // Custom backends mode doesn't use concrete types
+                l2_cache: None,
             })
         }
     }

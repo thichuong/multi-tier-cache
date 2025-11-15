@@ -9,6 +9,7 @@ use anyhow::Result;
 use serde_json;
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::{info, debug};
 
 /// Cache entry with expiration tracking
 #[derive(Debug, Clone)]
@@ -83,70 +84,13 @@ pub struct DashMapCache {
 impl DashMapCache {
     /// Create new DashMap cache
     pub fn new() -> Self {
-        println!("  🗺️  Initializing DashMap Cache...");
-        println!("  ✅ DashMap Cache initialized (concurrent HashMap)");
+        info!("Initializing DashMap Cache (concurrent HashMap)");
 
         Self {
             map: Arc::new(DashMap::new()),
             hits: Arc::new(AtomicU64::new(0)),
             misses: Arc::new(AtomicU64::new(0)),
             sets: Arc::new(AtomicU64::new(0)),
-        }
-    }
-
-    /// Get value from cache
-    pub async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        match self.map.get(key) {
-            Some(entry) => {
-                if entry.is_expired() {
-                    // Remove expired entry
-                    drop(entry); // Release read lock
-                    self.map.remove(key);
-                    self.misses.fetch_add(1, Ordering::Relaxed);
-                    None
-                } else {
-                    self.hits.fetch_add(1, Ordering::Relaxed);
-                    Some(entry.value.clone())
-                }
-            }
-            None => {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
-            }
-        }
-    }
-
-    /// Set value with TTL
-    pub async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let entry = CacheEntry::new(value, ttl);
-        self.map.insert(key.to_string(), entry);
-        self.sets.fetch_add(1, Ordering::Relaxed);
-        println!("💾 [DashMap] Cached '{}' with TTL {:?}", key, ttl);
-        Ok(())
-    }
-
-    /// Remove value from cache
-    pub async fn remove(&self, key: &str) -> Result<()> {
-        self.map.remove(key);
-        Ok(())
-    }
-
-    /// Health check
-    pub async fn health_check(&self) -> bool {
-        let test_key = "health_check_dashmap";
-        let test_value = serde_json::json!({"test": true});
-
-        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60)).await {
-            Ok(_) => {
-                match self.get(test_key).await {
-                    Some(retrieved) => {
-                        let _ = self.remove(test_key).await;
-                        retrieved == test_value
-                    }
-                    None => false
-                }
-            }
-            Err(_) => false
         }
     }
 
@@ -165,7 +109,7 @@ impl DashMapCache {
             }
         });
         if removed > 0 {
-            println!("🧹 [DashMap] Cleaned up {} expired entries", removed);
+            debug!(count = removed, "[DashMap] Cleaned up expired entries");
         }
         removed
     }
@@ -196,7 +140,24 @@ use async_trait::async_trait;
 #[async_trait]
 impl CacheBackend for DashMapCache {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        DashMapCache::get(self, key).await
+        match self.map.get(key) {
+            Some(entry) => {
+                if entry.is_expired() {
+                    // Remove expired entry
+                    drop(entry); // Release read lock
+                    self.map.remove(key);
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                } else {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    Some(entry.value.clone())
+                }
+            }
+            None => {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        }
     }
 
     async fn set_with_ttl(
@@ -205,15 +166,34 @@ impl CacheBackend for DashMapCache {
         value: serde_json::Value,
         ttl: Duration,
     ) -> Result<()> {
-        DashMapCache::set_with_ttl(self, key, value, ttl).await
+        let entry = CacheEntry::new(value, ttl);
+        self.map.insert(key.to_string(), entry);
+        self.sets.fetch_add(1, Ordering::Relaxed);
+        debug!(key = %key, ttl_secs = %ttl.as_secs(), "[DashMap] Cached key with TTL");
+        Ok(())
     }
 
     async fn remove(&self, key: &str) -> Result<()> {
-        DashMapCache::remove(self, key).await
+        self.map.remove(key);
+        Ok(())
     }
 
     async fn health_check(&self) -> bool {
-        DashMapCache::health_check(self).await
+        let test_key = "health_check_dashmap";
+        let test_value = serde_json::json!({"test": true});
+
+        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60)).await {
+            Ok(_) => {
+                match self.get(test_key).await {
+                    Some(retrieved) => {
+                        let _ = self.remove(test_key).await;
+                        retrieved == test_value
+                    }
+                    None => false
+                }
+            }
+            Err(_) => false
+        }
     }
 
     fn name(&self) -> &str {

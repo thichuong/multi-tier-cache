@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use serde_json;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::{info, debug};
 
 /// Memcached distributed cache
 ///
@@ -51,7 +52,7 @@ impl MemcachedCache {
     /// # }
     /// ```
     pub async fn new() -> Result<Self> {
-        println!("  🟣 Initializing Memcached Cache...");
+        info!("Initializing Memcached Cache");
 
         // Get Memcached URL from environment
         let memcached_url = std::env::var("MEMCACHED_URL")
@@ -64,8 +65,11 @@ impl MemcachedCache {
         // Test connection with version command
         match client.version() {
             Ok(versions) => {
-                println!("  ✅ Memcached Cache connected at {} ({} server(s))",
-                    memcached_url, versions.len());
+                info!(
+                    url = %memcached_url,
+                    server_count = versions.len(),
+                    "Memcached Cache connected successfully"
+                );
             }
             Err(e) => {
                 return Err(anyhow!("Memcached connection test failed: {}", e));
@@ -78,72 +82,6 @@ impl MemcachedCache {
             misses: Arc::new(AtomicU64::new(0)),
             sets: Arc::new(AtomicU64::new(0)),
         })
-    }
-
-    /// Get value from Memcached cache
-    pub async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        match self.client.get::<String>(key) {
-            Ok(Some(json_str)) => {
-                match serde_json::from_str(&json_str) {
-                    Ok(value) => {
-                        self.hits.fetch_add(1, Ordering::Relaxed);
-                        Some(value)
-                    }
-                    Err(_) => {
-                        self.misses.fetch_add(1, Ordering::Relaxed);
-                        None
-                    }
-                }
-            }
-            Ok(None) | Err(_) => {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
-            }
-        }
-    }
-
-    /// Set value with custom TTL
-    pub async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let json_str = serde_json::to_string(&value)?;
-
-        self.client
-            .set(key, json_str, ttl.as_secs() as u32)
-            .map_err(|e| anyhow!("Memcached SET failed: {}", e))?;
-
-        self.sets.fetch_add(1, Ordering::Relaxed);
-        println!("💾 [Memcached] Cached '{}' with TTL {:?}", key, ttl);
-        Ok(())
-    }
-
-    /// Remove value from cache
-    pub async fn remove(&self, key: &str) -> Result<()> {
-        self.client
-            .delete(key)
-            .map_err(|e| anyhow!("Memcached DELETE failed: {}", e))?;
-        Ok(())
-    }
-
-    /// Health check
-    pub async fn health_check(&self) -> bool {
-        let test_key = "health_check_memcached";
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or(Duration::from_secs(0))
-            .as_secs();
-        let test_value = serde_json::json!({"test": true, "timestamp": timestamp});
-
-        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10)).await {
-            Ok(_) => {
-                match self.get(test_key).await {
-                    Some(retrieved) => {
-                        let _ = self.remove(test_key).await;
-                        retrieved["test"].as_bool().unwrap_or(false)
-                    }
-                    None => false
-                }
-            }
-            Err(_) => false
-        }
     }
 
     /// Get cache statistics (from Memcached server)
@@ -168,7 +106,24 @@ use async_trait::async_trait;
 #[async_trait]
 impl CacheBackend for MemcachedCache {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        MemcachedCache::get(self, key).await
+        match self.client.get::<String>(key) {
+            Ok(Some(json_str)) => {
+                match serde_json::from_str(&json_str) {
+                    Ok(value) => {
+                        self.hits.fetch_add(1, Ordering::Relaxed);
+                        Some(value)
+                    }
+                    Err(_) => {
+                        self.misses.fetch_add(1, Ordering::Relaxed);
+                        None
+                    }
+                }
+            }
+            Ok(None) | Err(_) => {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        }
     }
 
     async fn set_with_ttl(
@@ -177,15 +132,44 @@ impl CacheBackend for MemcachedCache {
         value: serde_json::Value,
         ttl: Duration,
     ) -> Result<()> {
-        MemcachedCache::set_with_ttl(self, key, value, ttl).await
+        let json_str = serde_json::to_string(&value)?;
+
+        self.client
+            .set(key, json_str, ttl.as_secs() as u32)
+            .map_err(|e| anyhow!("Memcached SET failed: {}", e))?;
+
+        self.sets.fetch_add(1, Ordering::Relaxed);
+        debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Memcached] Cached key with TTL");
+        Ok(())
     }
 
     async fn remove(&self, key: &str) -> Result<()> {
-        MemcachedCache::remove(self, key).await
+        self.client
+            .delete(key)
+            .map_err(|e| anyhow!("Memcached DELETE failed: {}", e))?;
+        Ok(())
     }
 
     async fn health_check(&self) -> bool {
-        MemcachedCache::health_check(self).await
+        let test_key = "health_check_memcached";
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or(Duration::from_secs(0))
+            .as_secs();
+        let test_value = serde_json::json!({"test": true, "timestamp": timestamp});
+
+        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10)).await {
+            Ok(_) => {
+                match self.get(test_key).await {
+                    Some(retrieved) => {
+                        let _ = self.remove(test_key).await;
+                        retrieved["test"].as_bool().unwrap_or(false)
+                    }
+                    None => false
+                }
+            }
+            Err(_) => false
+        }
     }
 
     fn name(&self) -> &str {

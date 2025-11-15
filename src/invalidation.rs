@@ -154,32 +154,44 @@ impl InvalidationPublisher {
     async fn publish_to_audit_stream(&mut self, message: &InvalidationMessage) -> Result<()> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or(Duration::ZERO)
             .as_secs()
             .to_string();
 
-        let (type_str, key_str, extra_str) = match message {
+        // Use &str to avoid unnecessary allocations
+        let (type_str, key_str): (&str, &str);
+        let extra_str: String;
+
+        match message {
             InvalidationMessage::Remove { key } => {
-                ("remove".to_string(), key.clone(), String::new())
+                type_str = "remove";
+                key_str = key.as_str();
+                extra_str = String::new();
             }
             InvalidationMessage::Update { key, .. } => {
-                ("update".to_string(), key.clone(), String::new())
+                type_str = "update";
+                key_str = key.as_str();
+                extra_str = String::new();
             }
             InvalidationMessage::RemovePattern { pattern } => {
-                ("remove_pattern".to_string(), pattern.clone(), String::new())
+                type_str = "remove_pattern";
+                key_str = pattern.as_str();
+                extra_str = String::new();
             }
             InvalidationMessage::RemoveBulk { keys } => {
-                ("remove_bulk".to_string(), String::new(), keys.len().to_string())
+                type_str = "remove_bulk";
+                key_str = "";
+                extra_str = keys.len().to_string();
             }
-        };
+        }
 
         let mut fields = vec![
-            ("type", type_str.as_str()),
+            ("type", type_str),
             ("timestamp", timestamp.as_str()),
         ];
 
         if !key_str.is_empty() {
-            fields.push(("key", key_str.as_str()));
+            fields.push(("key", key_str));
         }
         if !extra_str.is_empty() {
             fields.push(("count", extra_str.as_str()));

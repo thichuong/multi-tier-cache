@@ -9,6 +9,7 @@ use serde_json;
 use quick_cache::sync::Cache;
 use std::sync::atomic::{AtomicU64, Ordering};
 use parking_lot::RwLock;
+use tracing::{info, debug};
 
 /// Cache entry with TTL information
 #[derive(Debug, Clone)]
@@ -74,11 +75,9 @@ impl QuickCacheBackend {
     /// # }
     /// ```
     pub async fn new(max_capacity: u64) -> Result<Self> {
-        println!("  ⚡ Initializing QuickCache...");
+        info!(capacity = max_capacity, "Initializing QuickCache");
 
         let cache = Cache::new(max_capacity as usize);
-
-        println!("  ✅ QuickCache initialized with {} capacity", max_capacity);
 
         Ok(Self {
             cache,
@@ -88,8 +87,25 @@ impl QuickCacheBackend {
         })
     }
 
-    /// Get value from QuickCache
-    pub async fn get(&self, key: &str) -> Option<serde_json::Value> {
+    /// Get current cache size
+    pub fn size(&self) -> usize {
+        // QuickCache doesn't expose size directly, so we estimate with stats
+        // In practice, this would need to be tracked separately
+        0 // Placeholder - quick_cache doesn't expose size
+    }
+}
+
+// ===== Trait Implementations =====
+
+use crate::traits::CacheBackend;
+use async_trait::async_trait;
+
+/// Implement CacheBackend trait for QuickCacheBackend
+///
+/// This allows QuickCacheBackend to be used as a pluggable backend in the multi-tier cache system.
+#[async_trait]
+impl CacheBackend for QuickCacheBackend {
+    async fn get(&self, key: &str) -> Option<serde_json::Value> {
         match self.cache.get(key) {
             Some(entry_lock) => {
                 let entry = entry_lock.read();
@@ -111,31 +127,25 @@ impl QuickCacheBackend {
         }
     }
 
-    /// Set value with custom TTL
-    pub async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
+    async fn set_with_ttl(
+        &self,
+        key: &str,
+        value: serde_json::Value,
+        ttl: Duration,
+    ) -> Result<()> {
         let entry = Arc::new(RwLock::new(CacheEntry::new(value, ttl)));
         self.cache.insert(key.to_string(), entry);
         self.sets.fetch_add(1, Ordering::Relaxed);
-        println!("💾 [QuickCache] Cached '{}' with TTL {:?}", key, ttl);
+        debug!(key = %key, ttl_secs = %ttl.as_secs(), "[QuickCache] Cached key with TTL");
         Ok(())
     }
 
-    /// Remove value from cache
-    pub async fn remove(&self, key: &str) -> Result<()> {
+    async fn remove(&self, key: &str) -> Result<()> {
         self.cache.remove(key);
         Ok(())
     }
 
-    /// Get current cache size
-    pub fn size(&self) -> usize {
-        // QuickCache doesn't expose size directly, so we estimate with stats
-        // In practice, this would need to be tracked separately
-        0 // Placeholder - quick_cache doesn't expose size
-    }
-
-    /// Health check
-    pub async fn health_check(&self) -> bool {
-        // Test basic functionality with custom TTL
+    async fn health_check(&self) -> bool {
         let test_key = "health_check_quickcache";
         let test_value = serde_json::json!({"test": true});
 
@@ -151,38 +161,6 @@ impl QuickCacheBackend {
             }
             Err(_) => false
         }
-    }
-}
-
-// ===== Trait Implementations =====
-
-use crate::traits::CacheBackend;
-use async_trait::async_trait;
-
-/// Implement CacheBackend trait for QuickCacheBackend
-///
-/// This allows QuickCacheBackend to be used as a pluggable backend in the multi-tier cache system.
-#[async_trait]
-impl CacheBackend for QuickCacheBackend {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        QuickCacheBackend::get(self, key).await
-    }
-
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-        ttl: Duration,
-    ) -> Result<()> {
-        QuickCacheBackend::set_with_ttl(self, key, value, ttl).await
-    }
-
-    async fn remove(&self, key: &str) -> Result<()> {
-        QuickCacheBackend::remove(self, key).await
-    }
-
-    async fn health_check(&self) -> bool {
-        QuickCacheBackend::health_check(self).await
     }
 
     fn name(&self) -> &str {
