@@ -8,7 +8,7 @@ use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::StreamExt;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, error};
 
 /// Invalidation message types sent across cache instances via Redis Pub/Sub
 #[derive(Debug, Clone, Serialize, Deserialize)]

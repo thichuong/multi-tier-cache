@@ -43,7 +43,7 @@
 use anyhow::Result;
 use redis::aio::ConnectionManager;
 use async_trait::async_trait;
-use tracing::{info, debug};
+use tracing::debug;
 use crate::traits::StreamingBackend;
 
 /// Redis Streams client for event-driven architectures

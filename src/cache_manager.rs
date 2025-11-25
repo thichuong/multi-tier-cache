@@ -928,9 +928,7 @@ impl CacheManager {
                 if let Some((value, ttl)) = tier.get_with_ttl(key).await {
                     tier.record_hit();
 
-                    // Promote to L1 (first tier)
-                    let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
-                    // Promote to L1 (first tier)
+
                     let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
                     if let Err(e) = tiers[0].set_with_ttl(key, value.clone(), promotion_ttl).await {
                         warn!("Failed to promote '{}' from L{} to L1: {}", key, tier.tier_level, e);
