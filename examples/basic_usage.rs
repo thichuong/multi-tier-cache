@@ -10,7 +10,7 @@ use multi_tier_cache::{CacheSystem, CacheStrategy};
 async fn main() -> anyhow::Result<()> {
     println!("=== Multi-Tier Cache: Basic Usage ===\n");
 
-    // 1. Initialize cache system
+    // 1. Initialize cache system (Default: L1 Moka + L2 Redis)
     let cache = CacheSystem::new().await?;
     println!();
 

@@ -313,5 +313,38 @@ async fn main() -> Result<()> {
 
     println!("\n✅ Custom backends example completed!");
 
+    // Example 4: Custom Tier Configuration (v0.5.0+)
+    println!("\n📦 Example 4: Custom Tier Configuration (using with_tier)");
+    println!("──────────────────────────────────────────────────────\n");
+
+    use multi_tier_cache::TierConfig;
+
+    // Create a custom L2 backend
+    let custom_l2_tier = Arc::new(InMemoryL2Cache::new());
+
+    // Configure it as Tier 2 with custom settings
+    let tier_config = TierConfig::as_l2()
+        .with_promotion(true)
+        .with_ttl_scale(1.5); // 1.5x TTL scaling
+
+    let tiered_cache = CacheSystemBuilder::new()
+        // We can mix default L1 with custom L2 tier
+        .with_l1(Arc::new(multi_tier_cache::MokaCache::new().await?))
+        .with_tier(custom_l2_tier, tier_config)
+        .build()
+        .await?;
+
+    println!("✅ Tiered cache system initialized");
+    
+    tiered_cache.cache_manager().set_with_strategy(
+        "tiered:key",
+        serde_json::json!("value"),
+        multi_tier_cache::CacheStrategy::ShortTerm
+    ).await?;
+    
+    println!("   Stored 'tiered:key' with 1.5x TTL in L2");
+
+    println!("\n✅ Custom backends example completed!");
+
     Ok(())
 }

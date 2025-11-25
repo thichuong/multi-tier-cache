@@ -15,6 +15,8 @@ async fn main() -> anyhow::Result<()> {
     println!();
 
     // Scenario 1: L2-to-L1 Promotion
+    // Note: In multi-tier systems (L1+L2+L3...), promotion happens from any lower tier
+    // to all upper tiers (e.g., L3 -> L2 and L1).
     println!("=== Scenario 1: L2-to-L1 Cache Promotion ===\n");
 
     // Store data in L2 cache only (by first clearing L1)
