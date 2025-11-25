@@ -43,6 +43,7 @@
 use anyhow::Result;
 use redis::aio::ConnectionManager;
 use async_trait::async_trait;
+use tracing::{info, debug};
 use crate::traits::StreamingBackend;
 
 /// Redis Streams client for event-driven architectures
@@ -72,7 +73,7 @@ impl RedisStreams {
         let client = redis::Client::open(redis_url)?;
         let conn_manager = ConnectionManager::new(client).await?;
 
-        println!("🌊 Redis Streams initialized at {}", redis_url);
+        debug!("Redis Streams initialized at {}", redis_url);
 
         Ok(Self { conn_manager })
     }
@@ -132,7 +133,7 @@ impl RedisStreams {
 
         let entry_id: String = cmd.query_async(&mut conn).await?;
 
-        println!("📤 [Stream] Published to '{}' (ID: {}, fields: {})", stream_key, entry_id, fields.len());
+        debug!("[Stream] Published to '{}' (ID: {}, fields: {})", stream_key, entry_id, fields.len());
         Ok(entry_id)
     }
 
@@ -177,7 +178,7 @@ impl RedisStreams {
 
         let entries = Self::parse_stream_response(raw_result)?;
 
-        println!("📥 [Stream] Read {} entries from '{}'", entries.len(), stream_key);
+        debug!("[Stream] Read {} entries from '{}'", entries.len(), stream_key);
         Ok(entries)
     }
 
@@ -230,7 +231,7 @@ impl RedisStreams {
         // XREAD returns [[stream_name, [[id, [field, value, ...]], ...]]]
         let entries = Self::parse_xread_response(raw_result)?;
 
-        println!("📥 [Stream] XREAD retrieved {} entries from '{}'", entries.len(), stream_key);
+        debug!("[Stream] XREAD retrieved {} entries from '{}'", entries.len(), stream_key);
         Ok(entries)
     }
 

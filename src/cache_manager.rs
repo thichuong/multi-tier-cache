@@ -11,6 +11,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use dashmap::DashMap;
 use tokio::sync::Mutex;
 
+use tracing::{info, warn, error, debug};
+
 use crate::backends::{L1Cache, L2Cache};
 use crate::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 use super::invalidation::{
@@ -18,10 +20,13 @@ use super::invalidation::{
     InvalidationMessage, AtomicInvalidationStats, InvalidationStats,
 };
 
+/// Type alias for the in-flight requests map
+type InFlightMap = DashMap<String, Arc<Mutex<()>>>;
+
 /// RAII cleanup guard for in-flight request tracking
 /// Ensures that entries are removed from DashMap even on early return or panic
 struct CleanupGuard<'a> {
-    map: &'a DashMap<String, Arc<Mutex<()>>>,
+    map: &'a InFlightMap,
     key: String,
 }
 
@@ -286,7 +291,7 @@ pub struct CacheManager {
     misses: AtomicU64,
     promotions: AtomicUsize,
     /// In-flight requests to prevent Cache Stampede on L2/compute operations
-    in_flight_requests: Arc<DashMap<String, Arc<Mutex<()>>>>,
+    in_flight_requests: Arc<InFlightMap>,
     /// Invalidation publisher (for broadcasting invalidation messages)
     invalidation_publisher: Option<Arc<Mutex<InvalidationPublisher>>>,
     /// Invalidation subscriber (for receiving invalidation messages)
@@ -322,13 +327,13 @@ impl CacheManager {
         l2_cache: Arc<dyn L2CacheBackend>,
         streaming_backend: Option<Arc<dyn StreamingBackend>>,
     ) -> Result<Self> {
-        println!("  🎯 Initializing Cache Manager with custom backends...");
-        println!("    L1: {}", l1_cache.name());
-        println!("    L2: {}", l2_cache.name());
+        debug!("Initializing Cache Manager with custom backends...");
+        debug!("  L1: {}", l1_cache.name());
+        debug!("  L2: {}", l2_cache.name());
         if streaming_backend.is_some() {
-            println!("    Streaming: enabled");
+            debug!("  Streaming: enabled");
         } else {
-            println!("    Streaming: disabled");
+            debug!("  Streaming: disabled");
         }
 
         Ok(Self {
@@ -359,7 +364,7 @@ impl CacheManager {
     /// * `l1_cache` - Moka L1 cache instance
     /// * `l2_cache` - Redis L2 cache instance
     pub async fn new(l1_cache: Arc<L1Cache>, l2_cache: Arc<L2Cache>) -> Result<Self> {
-        println!("  🎯 Initializing Cache Manager...");
+        debug!("Initializing Cache Manager...");
 
         // Convert concrete types to trait objects
         let l1_backend: Arc<dyn CacheBackend> = l1_cache.clone();
@@ -405,8 +410,8 @@ impl CacheManager {
         redis_url: &str,
         config: InvalidationConfig,
     ) -> Result<Self> {
-        println!("  🎯 Initializing Cache Manager with Invalidation...");
-        println!("    Pub/Sub channel: {}", config.channel);
+        debug!("Initializing Cache Manager with Invalidation...");
+        debug!("  Pub/Sub channel: {}", config.channel);
 
         // Convert concrete types to trait objects
         let l1_backend: Arc<dyn CacheBackend> = l1_cache.clone();
@@ -445,7 +450,7 @@ impl CacheManager {
         // Start subscriber with handler
         manager.start_invalidation_subscriber();
 
-        println!("  ✅ Cache Manager initialized with invalidation support");
+        info!("Cache Manager initialized with invalidation support");
 
         Ok(manager)
     }
@@ -483,11 +488,11 @@ impl CacheManager {
         tiers: Vec<CacheTier>,
         streaming_backend: Option<Arc<dyn StreamingBackend>>,
     ) -> Result<Self> {
-        println!("  🎯 Initializing Multi-Tier Cache Manager...");
-        println!("    Tier count: {}", tiers.len());
+        debug!("Initializing Multi-Tier Cache Manager...");
+        debug!("  Tier count: {}", tiers.len());
         for tier in &tiers {
-            println!(
-                "    L{}: {} (promotion={}, ttl_scale={})",
+            debug!(
+                "  L{}: {} (promotion={}, ttl_scale={})",
                 tier.tier_level,
                 tier.stats.backend_name,
                 tier.promotion_enabled,
@@ -556,7 +561,7 @@ impl CacheManager {
                         InvalidationMessage::Remove { key } => {
                             // Remove from L1
                             l1.remove(&key).await?;
-                            println!("🗑️  [Invalidation] Removed '{}' from L1", key);
+                            debug!("Invalidation: Removed '{}' from L1", key);
                         }
                         InvalidationMessage::Update { key, value, ttl_secs } => {
                             // Update L1 with new value
@@ -564,29 +569,29 @@ impl CacheManager {
                                 .map(Duration::from_secs)
                                 .unwrap_or_else(|| Duration::from_secs(300));
                             l1.set_with_ttl(&key, value, ttl).await?;
-                            println!("🔄 [Invalidation] Updated '{}' in L1", key);
+                            debug!("Invalidation: Updated '{}' in L1", key);
                         }
                         InvalidationMessage::RemovePattern { pattern } => {
                             // For pattern-based invalidation, we can't easily iterate L1 cache
                             // So we just log it. The pattern invalidation is mainly for L2.
                             // L1 entries will naturally expire via TTL.
-                            println!("🔍 [Invalidation] Pattern '{}' invalidated (L1 will expire naturally)", pattern);
+                            debug!("Invalidation: Pattern '{}' invalidated (L1 will expire naturally)", pattern);
                         }
                         InvalidationMessage::RemoveBulk { keys } => {
                             // Remove multiple keys from L1
                             for key in keys {
                                 if let Err(e) = l1.remove(&key).await {
-                                    eprintln!("⚠️  Failed to remove '{}' from L1: {}", key, e);
+                                    warn!("Failed to remove '{}' from L1: {}", key, e);
                                 }
                             }
-                            println!("🗑️  [Invalidation] Bulk removed keys from L1");
+                            debug!("Invalidation: Bulk removed keys from L1");
                         }
                     }
                     Ok(())
                 }
             });
 
-            println!("📡 Invalidation subscriber started");
+            info!("Invalidation subscriber started");
         }
     }
 
@@ -610,14 +615,14 @@ impl CacheManager {
                     // Promote to all tiers above this one
                     for upper_tier in tiers[..tier_index].iter().rev() {
                         if let Err(e) = upper_tier.set_with_ttl(key, value.clone(), promotion_ttl).await {
-                            eprintln!(
-                                "⚠️  Failed to promote '{}' from L{} to L{}: {}",
+                            warn!(
+                                "Failed to promote '{}' from L{} to L{}: {}",
                                 key, tier.tier_level, upper_tier.tier_level, e
                             );
                         } else {
                             self.promotions.fetch_add(1, Ordering::Relaxed);
-                            println!(
-                                "⬆️  Promoted '{}' from L{} to L{} (TTL: {:?})",
+                            debug!(
+                                "Promoted '{}' from L{} to L{} (TTL: {:?})",
                                 key, tier.tier_level, upper_tier.tier_level, promotion_ttl
                             );
                         }
@@ -739,10 +744,10 @@ impl CacheManager {
 
             if let Err(_) = self.l1_cache.set_with_ttl(key, value.clone(), promotion_ttl).await {
                 // L1 promotion failed, but we still have the data
-                eprintln!("⚠️ Failed to promote key '{}' to L1 cache", key);
+                warn!("Failed to promote key '{}' to L1 cache", key);
             } else {
                 self.promotions.fetch_add(1, Ordering::Relaxed);
-                println!("⬆️ Promoted '{}' from L2 to L1 with TTL {:?} (via get)", key, promotion_ttl);
+                debug!("Promoted '{}' from L2 to L1 with TTL {:?} (via get)", key, promotion_ttl);
             }
 
             // cleanup_guard will auto-remove entry on drop
@@ -806,14 +811,14 @@ impl CacheManager {
                         success_count += 1;
                     }
                     Err(e) => {
-                        eprintln!("⚠️ L{} cache set failed for key '{}': {}", tier.tier_level, key, e);
+                        error!("L{} cache set failed for key '{}': {}", tier.tier_level, key, e);
                         last_error = Some(e);
                     }
                 }
             }
 
             if success_count > 0 {
-                println!("💾 [Multi-Tier] Cached '{}' in {}/{} tiers (base TTL: {:?})",
+                debug!("[Multi-Tier] Cached '{}' in {}/{} tiers (base TTL: {:?})",
                          key, success_count, tiers.len(), ttl);
                 return Ok(());
             } else {
@@ -830,19 +835,19 @@ impl CacheManager {
         match (l1_result, l2_result) {
             (Ok(_), Ok(_)) => {
                 // Both succeeded
-                println!("💾 [L1+L2] Cached '{}' with TTL {:?}", key, ttl);
+                debug!("[L1+L2] Cached '{}' with TTL {:?}", key, ttl);
                 Ok(())
             }
             (Ok(_), Err(_)) => {
                 // L1 succeeded, L2 failed
-                eprintln!("⚠️ L2 cache set failed for key '{}', continuing with L1", key);
-                println!("💾 [L1] Cached '{}' with TTL {:?}", key, ttl);
+                warn!("L2 cache set failed for key '{}', continuing with L1", key);
+                debug!("[L1] Cached '{}' with TTL {:?}", key, ttl);
                 Ok(())
             }
             (Err(_), Ok(_)) => {
                 // L1 failed, L2 succeeded
-                eprintln!("⚠️ L1 cache set failed for key '{}', continuing with L2", key);
-                println!("💾 [L2] Cached '{}' with TTL {:?}", key, ttl);
+                warn!("L1 cache set failed for key '{}', continuing with L2", key);
+                debug!("[L2] Cached '{}' with TTL {:?}", key, ttl);
                 Ok(())
             }
             (Err(e1), Err(_e2)) => {
@@ -925,11 +930,13 @@ impl CacheManager {
 
                     // Promote to L1 (first tier)
                     let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
+                    // Promote to L1 (first tier)
+                    let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
                     if let Err(e) = tiers[0].set_with_ttl(key, value.clone(), promotion_ttl).await {
-                        eprintln!("⚠️ Failed to promote '{}' from L{} to L1: {}", key, tier.tier_level, e);
+                        warn!("Failed to promote '{}' from L{} to L1: {}", key, tier.tier_level, e);
                     } else {
                         self.promotions.fetch_add(1, Ordering::Relaxed);
-                        println!("⬆️ Promoted '{}' from L{} to L1 with TTL {:?} (Stampede protected)",
+                        debug!("Promoted '{}' from L{} to L1 with TTL {:?} (Stampede protected)",
                                 key, tier.tier_level, promotion_ttl);
                     }
 
@@ -946,10 +953,10 @@ impl CacheManager {
                 let promotion_ttl = redis_ttl.unwrap_or_else(|| strategy.to_duration());
 
                 if let Err(e) = self.l1_cache.set_with_ttl(key, value.clone(), promotion_ttl).await {
-                    eprintln!("⚠️ Failed to promote key '{}' to L1: {}", key, e);
+                    warn!("Failed to promote key '{}' to L1: {}", key, e);
                 } else {
                     self.promotions.fetch_add(1, Ordering::Relaxed);
-                    println!("⬆️ Promoted '{}' from L2 to L1 with TTL {:?}", key, promotion_ttl);
+                    debug!("Promoted '{}' from L2 to L1 with TTL {:?}", key, promotion_ttl);
                 }
 
                 // _cleanup_guard will auto-remove entry on drop
@@ -958,12 +965,12 @@ impl CacheManager {
         }
 
         // 5. Cache miss across all tiers - compute fresh data
-        println!("💻 Computing fresh data for key: '{}' (Cache Stampede protected)", key);
+        debug!("Computing fresh data for key: '{}' (Cache Stampede protected)", key);
         let fresh_data = compute_fn().await?;
         
         // 6. Store in both caches
         if let Err(e) = self.set_with_strategy(key, fresh_data.clone(), strategy).await {
-            eprintln!("⚠️ Failed to cache computed data for key '{}': {}", key, e);
+            warn!("Failed to cache computed data for key '{}': {}", key, e);
         }
         
         // 7. _cleanup_guard will auto-remove entry on drop
@@ -1093,12 +1100,12 @@ impl CacheManager {
             // Attempt to deserialize from JSON to type T
             match serde_json::from_value::<T>(cached_json) {
                 Ok(typed_value) => {
-                    println!("✅ [L1 HIT] Deserialized '{}' to type {}", key, std::any::type_name::<T>());
+                    debug!("[L1 HIT] Deserialized '{}' to type {}", key, std::any::type_name::<T>());
                     return Ok(typed_value);
                 }
                 Err(e) => {
                     // Deserialization failed - cache data may be stale or corrupt
-                    eprintln!("⚠️ L1 cache deserialization failed for key '{}': {}. Will recompute.", key, e);
+                    warn!("L1 cache deserialization failed for key '{}': {}. Will recompute.", key, e);
                     // Fall through to recompute
                 }
             }
@@ -1124,7 +1131,7 @@ impl CacheManager {
         if let Some(cached_json) = self.l1_cache.get(key).await {
             self.l1_hits.fetch_add(1, Ordering::Relaxed);
             if let Ok(typed_value) = serde_json::from_value::<T>(cached_json) {
-                println!("✅ [L1 HIT] Deserialized '{}' after lock acquisition", key);
+                debug!("[L1 HIT] Deserialized '{}' after lock acquisition", key);
                 return Ok(typed_value);
             }
         }
@@ -1139,24 +1146,24 @@ impl CacheManager {
                     // Attempt to deserialize
                     match serde_json::from_value::<T>(cached_json.clone()) {
                         Ok(typed_value) => {
-                            println!("✅ [L{} HIT] Deserialized '{}' to type {}",
+                            debug!("[L{} HIT] Deserialized '{}' to type {}",
                                     tier.tier_level, key, std::any::type_name::<T>());
 
                             // Promote to L1 (first tier)
                             let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
                             if let Err(e) = tiers[0].set_with_ttl(key, cached_json, promotion_ttl).await {
-                                eprintln!("⚠️ Failed to promote '{}' from L{} to L1: {}",
+                                warn!("Failed to promote '{}' from L{} to L1: {}",
                                          key, tier.tier_level, e);
                             } else {
                                 self.promotions.fetch_add(1, Ordering::Relaxed);
-                                println!("⬆️ Promoted '{}' from L{} to L1 with TTL {:?} (Stampede protected)",
+                                debug!("Promoted '{}' from L{} to L1 with TTL {:?} (Stampede protected)",
                                         key, tier.tier_level, promotion_ttl);
                             }
 
                             return Ok(typed_value);
                         }
                         Err(e) => {
-                            eprintln!("⚠️ L{} cache deserialization failed for key '{}': {}. Trying next tier.",
+                            warn!("L{} cache deserialization failed for key '{}': {}. Trying next tier.",
                                      tier.tier_level, key, e);
                             // Continue to next tier
                         }
@@ -1171,22 +1178,22 @@ impl CacheManager {
                 // Attempt to deserialize
                 match serde_json::from_value::<T>(cached_json.clone()) {
                     Ok(typed_value) => {
-                        println!("✅ [L2 HIT] Deserialized '{}' from Redis", key);
+                        debug!("[L2 HIT] Deserialized '{}' from Redis", key);
 
                         // Promote to L1 using Redis TTL (or strategy TTL as fallback)
                         let promotion_ttl = redis_ttl.unwrap_or_else(|| strategy.to_duration());
 
                         if let Err(e) = self.l1_cache.set_with_ttl(key, cached_json, promotion_ttl).await {
-                            eprintln!("⚠️ Failed to promote key '{}' to L1: {}", key, e);
+                            warn!("Failed to promote key '{}' to L1: {}", key, e);
                         } else {
                             self.promotions.fetch_add(1, Ordering::Relaxed);
-                            println!("⬆️ Promoted '{}' from L2 to L1 with TTL {:?}", key, promotion_ttl);
+                            debug!("Promoted '{}' from L2 to L1 with TTL {:?}", key, promotion_ttl);
                         }
 
                         return Ok(typed_value);
                     }
                     Err(e) => {
-                        eprintln!("⚠️ L2 cache deserialization failed for key '{}': {}. Will recompute.", key, e);
+                        warn!("L2 cache deserialization failed for key '{}': {}. Will recompute.", key, e);
                         // Fall through to recompute
                     }
                 }
@@ -1194,7 +1201,7 @@ impl CacheManager {
         }
 
         // 5. Cache miss across all tiers (or deserialization failed) - compute fresh data
-        println!("💻 Computing fresh typed data for key: '{}' (Cache Stampede protected)", key);
+        debug!("Computing fresh typed data for key: '{}' (Cache Stampede protected)", key);
         let typed_value = compute_fn().await?;
 
         // 6. Serialize to JSON for storage
@@ -1203,9 +1210,9 @@ impl CacheManager {
 
         // 7. Store in both L1 and L2 caches
         if let Err(e) = self.set_with_strategy(key, json_value, strategy).await {
-            eprintln!("⚠️ Failed to cache computed typed data for key '{}': {}", key, e);
+            warn!("Failed to cache computed typed data for key '{}': {}", key, e);
         } else {
-            println!("💾 Cached typed value for '{}' (type: {})", key, std::any::type_name::<T>());
+            debug!("Cached typed value for '{}' (type: {})", key, std::any::type_name::<T>());
         }
 
         // 8. _cleanup_guard will auto-remove entry on drop
@@ -1360,7 +1367,7 @@ impl CacheManager {
             // Remove from ALL tiers
             for tier in tiers {
                 if let Err(e) = tier.remove(key).await {
-                    eprintln!("⚠️ Failed to remove '{}' from L{}: {}", key, tier.tier_level, e);
+                    warn!("Failed to remove '{}' from L{}: {}", key, tier.tier_level, e);
                 }
             }
         } else {
@@ -1377,7 +1384,7 @@ impl CacheManager {
             self.invalidation_stats.messages_sent.fetch_add(1, Ordering::Relaxed);
         }
 
-        println!("🗑️  Invalidated '{}' across all instances", key);
+        debug!("Invalidated '{}' across all instances", key);
         Ok(())
     }
 
@@ -1412,7 +1419,7 @@ impl CacheManager {
             // Update ALL tiers with their respective TTL scaling
             for tier in tiers {
                 if let Err(e) = tier.set_with_ttl(key, value.clone(), ttl).await {
-                    eprintln!("⚠️ Failed to update '{}' in L{}: {}", key, tier.tier_level, e);
+                    warn!("Failed to update '{}' in L{}: {}", key, tier.tier_level, e);
                 }
             }
         } else {
@@ -1429,7 +1436,7 @@ impl CacheManager {
             self.invalidation_stats.messages_sent.fetch_add(1, Ordering::Relaxed);
         }
 
-        println!("🔄 Updated '{}' across all instances", key);
+        debug!("Updated '{}' across all instances", key);
         Ok(())
     }
 
@@ -1464,7 +1471,7 @@ impl CacheManager {
         };
 
         if keys.is_empty() {
-            println!("🔍 No keys found matching pattern '{}'", pattern);
+            debug!("No keys found matching pattern '{}'", pattern);
             return Ok(());
         }
 
@@ -1474,7 +1481,7 @@ impl CacheManager {
             for key in &keys {
                 for tier in tiers {
                     if let Err(e) = tier.remove(key).await {
-                        eprintln!("⚠️ Failed to remove '{}' from L{}: {}", key, tier.tier_level, e);
+                        warn!("Failed to remove '{}' from L{}: {}", key, tier.tier_level, e);
                     }
                 }
             }
@@ -1493,7 +1500,7 @@ impl CacheManager {
             self.invalidation_stats.messages_sent.fetch_add(1, Ordering::Relaxed);
         }
 
-        println!("🔍 Invalidated {} keys matching pattern '{}'", keys.len(), pattern);
+        debug!("Invalidated {} keys matching pattern '{}'", keys.len(), pattern);
         Ok(())
     }
 

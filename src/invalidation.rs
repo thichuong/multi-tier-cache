@@ -8,6 +8,7 @@ use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use futures_util::StreamExt;
+use tracing::{info, warn, error, debug};
 
 /// Invalidation message types sent across cache instances via Redis Pub/Sub
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -143,7 +144,7 @@ impl InvalidationPublisher {
         if self.config.enable_audit_stream {
             if let Err(e) = self.publish_to_audit_stream(message).await {
                 // Don't fail the invalidation if audit logging fails
-                eprintln!("Warning: Failed to publish to audit stream: {}", e);
+                warn!("Failed to publish to audit stream: {}", e);
             }
         }
 
@@ -341,7 +342,7 @@ impl InvalidationSubscriber {
             loop {
                 // Check for shutdown signal
                 if shutdown_rx.try_recv().is_ok() {
-                    println!("🛑 Invalidation subscriber shutting down...");
+                    info!("Invalidation subscriber shutting down...");
                     break;
                 }
 
@@ -354,18 +355,18 @@ impl InvalidationSubscriber {
                     &mut shutdown_rx,
                 ).await {
                     Ok(_) => {
-                        println!("✅ Invalidation subscriber loop completed normally");
+                        info!("Invalidation subscriber loop completed normally");
                         break;
                     }
                     Err(e) => {
-                        eprintln!("⚠️  Invalidation subscriber error: {}. Reconnecting in 5s...", e);
+                        error!("Invalidation subscriber error: {}. Reconnecting in 5s...", e);
                         stats.processing_errors.fetch_add(1, Ordering::Relaxed);
 
                         // Wait before reconnecting
                         tokio::select! {
                             _ = tokio::time::sleep(Duration::from_secs(5)) => {},
                             _ = shutdown_rx.recv() => {
-                                println!("🛑 Invalidation subscriber shutting down...");
+                                info!("Invalidation subscriber shutting down...");
                                 break;
                             }
                         }
@@ -395,7 +396,7 @@ impl InvalidationSubscriber {
         pubsub.subscribe(channel).await
             .context("Failed to subscribe to channel")?;
 
-        println!("📡 Subscribed to invalidation channel: {}", channel);
+        info!("Subscribed to invalidation channel: {}", channel);
 
         // Get message stream
         let mut stream = pubsub.on_message();
@@ -410,7 +411,7 @@ impl InvalidationSubscriber {
                             let payload: String = match msg.get_payload() {
                                 Ok(p) => p,
                                 Err(e) => {
-                                    eprintln!("⚠️  Failed to get message payload: {}", e);
+                                    warn!("Failed to get message payload: {}", e);
                                     stats.processing_errors.fetch_add(1, Ordering::Relaxed);
                                     continue;
                                 }
@@ -420,7 +421,7 @@ impl InvalidationSubscriber {
                             let invalidation_msg = match InvalidationMessage::from_json(&payload) {
                                 Ok(m) => m,
                                 Err(e) => {
-                                    eprintln!("⚠️  Failed to deserialize invalidation message: {}", e);
+                                    warn!("Failed to deserialize invalidation message: {}", e);
                                     stats.processing_errors.fetch_add(1, Ordering::Relaxed);
                                     continue;
                                 }
@@ -445,7 +446,7 @@ impl InvalidationSubscriber {
 
                             // Call handler
                             if let Err(e) = handler(invalidation_msg).await {
-                                eprintln!("⚠️  Invalidation handler error: {}", e);
+                                error!("Invalidation handler error: {}", e);
                                 stats.processing_errors.fetch_add(1, Ordering::Relaxed);
                             }
                         }
