@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use multi_tier_cache::CacheStrategy;
+use multi_tier_cache::{CacheStrategy, CacheBackend};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use tokio::task::JoinSet;
@@ -49,7 +49,7 @@ async fn test_concurrent_cache_miss() {
     );
 
     // Cleanup
-    let _ = cache.l2_cache.remove(&key).await;
+    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
 }
 
 /// Test concurrent reads (all should be fast)
@@ -85,7 +85,7 @@ async fn test_concurrent_cache_hits() {
     }
 
     // Cleanup
-    let _ = cache.l2_cache.remove(&key).await;
+    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
 }
 
 /// Test that stampede protection reduces latency
@@ -118,5 +118,5 @@ async fn test_stampede_latency_reduction() {
     );
 
     // Cleanup
-    let _ = cache.l2_cache.remove(&key).await;
+    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
 }

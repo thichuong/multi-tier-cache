@@ -1,0 +1,288 @@
+   Compiling regex-automata v0.4.13
+   Compiling regex v1.12.2
+   Compiling matchers v0.2.0
+   Compiling tracing-subscriber v0.3.20
+   Compiling criterion v0.5.1
+   Compiling multi-tier-cache v0.5.4 (/home/tchuong/Màn hình nền/multi-tier-cache)
+warning: unused import: `CacheManagerStats`
+ --> tests/integration_basic.rs:8:39
+  |
+8 | use multi_tier_cache::{CacheStrategy, CacheManagerStats};
+  |                                       ^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `cache`
+  --> tests/common/mod.rs:57:9
+   |
+57 |     let cache = setup_cache_system().await?;
+   |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_cache`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+  --> tests/integration_stampede.rs:52:46
+   |
+52 |     let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+   |                                              ^^^^^^
+   |
+   = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+   |
+ 5 + use multi_tier_cache::CacheBackend;
+   |
+help: there is a method `remove_bulk` with a similar name
+   |
+52 |     let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+   |                                                    +++++
+
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+  --> tests/integration_basic.rs:35:46
+   |
+35 |     let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+   |                                              ^^^^^^
+   |
+   = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+   |
+ 5 + use multi_tier_cache::CacheBackend;
+   |
+help: there is a method `remove_bulk` with a similar name
+   |
+35 |     let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+   |                                                    +++++
+
+warning: function `test_key_prefix` is never used
+  --> tests/common/mod.rs:19:8
+   |
+19 | pub fn test_key_prefix() -> String {
+   |        ^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `setup_cache_with_invalidation` is never used
+  --> tests/common/mod.rs:40:14
+   |
+40 | pub async fn setup_cache_with_invalidation() -> Result<Arc<CacheManager>> {
+   |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `cleanup_test_keys` is never used
+  --> tests/common/mod.rs:56:14
+   |
+56 | pub async fn cleanup_test_keys(prefix: &str) -> Result<()> {
+   |              ^^^^^^^^^^^^^^^^^
+
+warning: function `wait_for` is never used
+   --> tests/common/mod.rs:133:14
+    |
+133 | pub async fn wait_for<F>(mut condition: F, timeout_ms: u64) -> bool
+    |              ^^^^^^^^
+
+warning: struct `Product` is never constructed
+  --> tests/common/mod.rs:94:16
+   |
+94 |     pub struct Product {
+   |                ^^^^^^^
+
+warning: associated function `new` is never used
+   --> tests/common/mod.rs:102:16
+    |
+101 |     impl Product {
+    |     ------------ associated function in this implementation
+102 |         pub fn new(id: u64) -> Self {
+    |                ^^^
+
+warning: function `json_user` is never used
+   --> tests/common/mod.rs:113:12
+    |
+113 |     pub fn json_user(id: u64) -> serde_json::Value {
+    |            ^^^^^^^^^
+
+warning: function `json_data_sized` is never used
+   --> tests/common/mod.rs:123:12
+    |
+123 |     pub fn json_data_sized(size_kb: usize) -> serde_json::Value {
+    |            ^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+  --> tests/integration_stampede.rs:88:46
+   |
+88 |     let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+   |                                              ^^^^^^
+   |
+   = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+   |
+ 5 + use multi_tier_cache::CacheBackend;
+   |
+help: there is a method `remove_bulk` with a similar name
+   |
+88 |     let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+   |                                                    +++++
+
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+  --> tests/integration_basic.rs:64:46
+   |
+64 |     let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+   |                                              ^^^^^^
+   |
+   = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+   |
+ 5 + use multi_tier_cache::CacheBackend;
+   |
+help: there is a method `remove_bulk` with a similar name
+   |
+64 |     let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+   |                                                    +++++
+
+error[E0599]: no method named `set_with_ttl` found for reference `&Arc<RedisCache>` in the current scope
+   --> tests/integration_basic.rs:79:10
+    |
+ 75 | /     cache
+ 76 | |         .l2_cache
+ 77 | |         .as_ref()
+ 78 | |         .unwrap()
+ 79 | |         .set_with_ttl(&key, value.clone(), Duration::from_secs(300))
+    | |_________-^^^^^^^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: there is a method `get_with_ttl` with a similar name, but with different arguments
+   --> /home/tchuong/Màn hình nền/multi-tier-cache/src/traits.rs:189:5
+    |
+189 | /     async fn get_with_ttl(
+190 | |         &self,
+191 | |         key: &str,
+192 | |     ) -> Option<(serde_json::Value, Option<Duration>)>;
+    | |_______________________________________________________^
+help: trait `CacheBackend` which provides `set_with_ttl` is implemented but not in scope; perhaps you want to import it
+    |
+  5 + use multi_tier_cache::CacheBackend;
+    |
+
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+   --> tests/integration_stampede.rs:121:46
+    |
+121 |     let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    |                                              ^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+    |
+  5 + use multi_tier_cache::CacheBackend;
+    |
+help: there is a method `remove_bulk` with a similar name
+    |
+121 |     let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+    |                                                    +++++
+
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+  --> tests/integration_basic.rs:96:46
+   |
+96 |     let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+   |                                              ^^^^^^
+   |
+   = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+   |
+ 5 + use multi_tier_cache::CacheBackend;
+   |
+help: there is a method `remove_bulk` with a similar name
+   |
+96 |     let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+   |                                                    +++++
+
+warning: function `setup_cache_system` is never used
+  --> tests/common/mod.rs:34:14
+   |
+34 | pub async fn setup_cache_system() -> Result<CacheSystem> {
+   |              ^^^^^^^^^^^^^^^^^^
+
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+   --> tests/integration_basic.rs:138:46
+    |
+138 |     let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    |                                              ^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+    |
+  5 + use multi_tier_cache::CacheBackend;
+    |
+help: there is a method `remove_bulk` with a similar name
+    |
+138 |     let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+    |                                                    +++++
+
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+   --> tests/integration_basic.rs:172:46
+    |
+172 |     let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    |                                              ^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+    |
+  5 + use multi_tier_cache::CacheBackend;
+    |
+help: there is a method `remove_bulk` with a similar name
+    |
+172 |     let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+    |                                                    +++++
+
+For more information about this error, try `rustc --explain E0599`.
+warning: `multi-tier-cache` (test "integration_stampede") generated 1 warning (1 duplicate)
+error: could not compile `multi-tier-cache` (test "integration_stampede") due to 3 previous errors; 1 warning emitted
+warning: build failed, waiting for other jobs to finish...
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+   --> tests/integration_basic.rs:201:46
+    |
+201 |     let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    |                                              ^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+    |
+  5 + use multi_tier_cache::CacheBackend;
+    |
+help: there is a method `remove_bulk` with a similar name
+    |
+201 |     let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+    |                                                    +++++
+
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+   --> tests/integration_basic.rs:231:46
+    |
+231 |     let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    |                                              ^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+    |
+  5 + use multi_tier_cache::CacheBackend;
+    |
+help: there is a method `remove_bulk` with a similar name
+    |
+231 |     let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+    |                                                    +++++
+
+error[E0599]: no method named `remove` found for reference `&Arc<RedisCache>` in the current scope
+   --> tests/integration_basic.rs:275:50
+    |
+275 |         let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    |                                                  ^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `CacheBackend` which provides `remove` is implemented but not in scope; perhaps you want to import it
+    |
+  5 + use multi_tier_cache::CacheBackend;
+    |
+help: there is a method `remove_bulk` with a similar name
+    |
+275 |         let _ = cache.l2_cache.as_ref().unwrap().remove_bulk(&key).await;
+    |                                                        +++++
+
+warning: `multi-tier-cache` (test "integration_basic") generated 2 warnings (1 duplicate)
+error: could not compile `multi-tier-cache` (test "integration_basic") due to 9 previous errors; 2 warnings emitted
+warning: `multi-tier-cache` (test "integration_streams") generated 9 warnings
+warning: `multi-tier-cache` (test "integration_invalidation") generated 8 warnings (7 duplicates)

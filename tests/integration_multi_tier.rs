@@ -1,6 +1,6 @@
 //! Integration tests for multi-tier cache architecture (v0.5.0+)
 
-use multi_tier_cache::{CacheSystemBuilder, CacheStrategy, TierConfig, L2Cache};
+use multi_tier_cache::{CacheSystemBuilder, CacheStrategy, TierConfig, L2Cache, CacheBackend};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;

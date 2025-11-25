@@ -5,7 +5,7 @@
 //! Run with: cargo run --example multi_tier_usage
 
 use multi_tier_cache::{
-    CacheSystemBuilder, CacheBackend, L2CacheBackend, TierConfig, async_trait
+    CacheSystemBuilder, CacheBackend, L2CacheBackend, async_trait
 };
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
     let cache = CacheSystemBuilder::new()
         //.with_l1(...) // Optional: Custom L1
         //.with_l2(...) // Optional: Custom L2
-        .with_l3(l3_backend) // Add L3 tier (automatically configures as Tier 3)
+        .with_l3(l3_backend.clone()) // Add L3 tier (automatically configures as Tier 3)
         .build()
         .await?;
 

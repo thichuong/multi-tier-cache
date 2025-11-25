@@ -1,0 +1,60 @@
+    Checking multi-tier-cache v0.5.4 (/home/tchuong/Màn hình nền/multi-tier-cache)
+warning: unused import: `TierConfig`
+ --> examples/multi_tier_usage.rs:8:55
+  |
+8 |     CacheSystemBuilder, CacheBackend, L2CacheBackend, TierConfig, async_trait
+  |                                                       ^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0432]: unresolved import `tracing_subscriber::EnvFilter`
+   --> examples/tracing_demo.rs:2:5
+    |
+  2 | use tracing_subscriber::EnvFilter;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `EnvFilter` in the root
+    |
+note: found an item that was configured out
+   --> /home/tchuong/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tracing-subscriber-0.3.20/src/lib.rs:235:21
+    |
+234 |     #![all(feature = "env-filter", feature = "std")]
+    |            ---------------------- the item is gated behind the `env-filter` feature
+235 |     pub use filter::EnvFilter;
+    |                     ^^^^^^^^^
+
+error[E0599]: no method named `with_env_filter` found for struct `SubscriberBuilder<N, E, F, W>` in the current scope
+ --> examples/tracing_demo.rs:8:10
+  |
+7 | /     tracing_subscriber::fmt()
+8 | |         .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+  | |_________-^^^^^^^^^^^^^^^
+  |
+help: there is a method `with_file` with a similar name
+  |
+8 -         .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+8 +         .with_file(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+  |
+
+error[E0382]: borrow of moved value: `l3_backend`
+   --> examples/multi_tier_usage.rs:162:18
+    |
+112 |     let l3_backend = Arc::new(MockL3Cache::new("Mock L3 (Disk)"));
+    |         ---------- move occurs because `l3_backend` has type `Arc<MockL3Cache>`, which does not implement the `Copy` trait
+...
+118 |         .with_l3(l3_backend) // Add L3 tier (automatically configures as Tier 3)
+    |                  ---------- value moved here
+...
+162 |     let l3_ref = l3_backend.as_ref(); 
+    |                  ^^^^^^^^^^ value borrowed here after move
+    |
+help: clone the value to increment its reference count
+    |
+118 |         .with_l3(l3_backend.clone()) // Add L3 tier (automatically configures as Tier 3)
+    |                            ++++++++
+
+Some errors have detailed explanations: E0432, E0599.
+For more information about an error, try `rustc --explain E0432`.
+error: could not compile `multi-tier-cache` (example "tracing_demo") due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+For more information about this error, try `rustc --explain E0382`.
+warning: `multi-tier-cache` (example "multi_tier_usage") generated 1 warning
+error: could not compile `multi-tier-cache` (example "multi_tier_usage") due to 1 previous error; 1 warning emitted

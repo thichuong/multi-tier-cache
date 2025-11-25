@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use multi_tier_cache::{CacheStrategy, CacheManagerStats};
+use multi_tier_cache::{CacheStrategy, CacheManagerStats, CacheBackend};
 use std::time::Duration;
 
 /// Test basic cache set and get operations
@@ -32,7 +32,7 @@ async fn test_basic_set_and_get() {
     assert_eq!(cached, Some(value));
 
     // Cleanup
-    let _ = cache.l2_cache.remove(&key).await;
+    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
 }
 
 /// Test L1 hit path
@@ -61,7 +61,7 @@ async fn test_l1_cache_hit() {
     assert!(stats.l1_hits >= 1, "Expected at least 1 L1 hit");
 
     // Cleanup
-    let _ = cache.l2_cache.remove(&key).await;
+    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
 }
 
 /// Test L2-to-L1 promotion
@@ -74,6 +74,8 @@ async fn test_l2_to_l1_promotion() {
     // Set directly in L2 (bypass L1)
     cache
         .l2_cache
+        .as_ref()
+        .unwrap()
         .set_with_ttl(&key, value.clone(), Duration::from_secs(300))
         .await
         .unwrap();
@@ -91,7 +93,7 @@ async fn test_l2_to_l1_promotion() {
     assert_eq!(cached2, Some(value));
 
     // Cleanup
-    let _ = cache.l2_cache.remove(&key).await;
+    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
 }
 
 /// Test cache miss behavior
@@ -133,7 +135,7 @@ async fn test_compute_on_miss() {
     assert_eq!(cached, Some(expected_value));
 
     // Cleanup
-    let _ = cache.l2_cache.remove(&key).await;
+    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
 }
 
 /// Test type-safe caching
@@ -167,7 +169,7 @@ async fn test_type_safe_caching() {
     assert_eq!(user2, expected_user);
 
     // Cleanup
-    let _ = cache.l2_cache.remove(&key).await;
+    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
 }
 
 /// Test TTL expiration
@@ -196,7 +198,7 @@ async fn test_ttl_expiration() {
     assert_eq!(cached2, None);
 
     // Cleanup
-    let _ = cache.l2_cache.remove(&key).await;
+    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
 }
 
 /// Test cache statistics tracking
@@ -226,7 +228,7 @@ async fn test_statistics_tracking() {
     assert!(stats_after.misses > stats_before.misses);
 
     // Cleanup
-    let _ = cache.l2_cache.remove(&key).await;
+    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
 }
 
 /// Test health check functionality
@@ -270,6 +272,6 @@ async fn test_cache_strategies() {
         assert_eq!(cached, Some(value));
 
         // Cleanup
-        let _ = cache.l2_cache.remove(&key).await;
+        let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
     }
 }
