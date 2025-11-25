@@ -23,7 +23,7 @@ Before publishing, ensure:
 
 ## 🔧 Step 1: Update Cargo.toml Metadata
 
-Edit `/home/thichuong/Desktop/multi-tier-cache/Cargo.toml`:
+Edit `./Desktop/multi-tier-cache/Cargo.toml`:
 
 ```toml
 [package]
@@ -48,7 +48,7 @@ Replace:
 ## 🐙 Step 2: Initialize Git Repository
 
 ```bash
-cd /home/thichuong/Desktop/multi-tier-cache
+cd ./Desktop/multi-tier-cache
 
 # Initialize Git
 git init
@@ -106,7 +106,7 @@ gh repo create multi-tier-cache --public --description "High-performance multi-t
 
 4. **Push your code**:
    ```bash
-   cd /home/thichuong/Desktop/multi-tier-cache
+   cd ./Desktop/multi-tier-cache
 
    # Add GitHub remote
    git remote add origin https://github.com/YOURUSERNAME/multi-tier-cache.git
@@ -177,7 +177,7 @@ Full documentation available at [docs.rs/multi-tier-cache](https://docs.rs/multi
 Create `.github/workflows/ci.yml`:
 
 ```bash
-mkdir -p /home/thichuong/Desktop/multi-tier-cache/.github/workflows
+mkdir -p Desktop/multi-tier-cache/.github/workflows
 ```
 
 ```yaml
@@ -296,7 +296,7 @@ git push
 ### 6.2 Pre-Publish Verification
 
 ```bash
-cd /home/thichuong/Desktop/multi-tier-cache
+cd ./multi-tier-cache
 
 # Check package contents
 cargo package --list
@@ -346,7 +346,7 @@ multi-tier-cache = "0.1"
 Create contribution guidelines:
 
 ```bash
-cd /home/thichuong/Desktop/multi-tier-cache
+cd ./Desktop/multi-tier-cache
 ```
 
 ```markdown

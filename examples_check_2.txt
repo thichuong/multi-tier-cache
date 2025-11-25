@@ -1,9 +1,0 @@
-     Locking 1 package to latest compatible version
-      Adding matchers v0.2.0
-    Checking regex-automata v0.4.13
-    Checking regex v1.12.2
-    Checking matchers v0.2.0
-    Checking tracing-subscriber v0.3.20
-    Checking criterion v0.5.1
-    Checking multi-tier-cache v0.5.4 (/home/tchuong/Màn hình nền/multi-tier-cache)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.69s

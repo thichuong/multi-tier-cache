@@ -1,2 +1,0 @@
-    Checking multi-tier-cache v0.5.3 (/home/tchuong/Màn hình nền/multi-tier-cache)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.56s
