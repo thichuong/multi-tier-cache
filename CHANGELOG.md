@@ -8,7 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
+
 - Metrics export (Prometheus format)
+
+## [0.5.4] - 2025-01-06
+
+### Changed
+
+- **Documentation & Examples**: Comprehensive update to examples
+  - Added `examples/multi_tier_usage.rs` demonstrating 3-tier architecture (L1+L2+L3)
+  - Updated `examples/custom_backends.rs` with `with_tier` usage for custom tiers
+  - Updated `examples/basic_usage.rs` and `examples/advanced_usage.rs` to reflect multi-tier capabilities
+  - Fixed outdated comments and patterns in examples
 
 ## [0.5.3] - 2025-01-06
 
