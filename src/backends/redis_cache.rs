@@ -251,10 +251,11 @@ impl L2CacheBackend for RedisCache {
         };
 
         // Get TTL (in seconds, -1 = no expiry, -2 = key doesn't exist)
-        let ttl_secs: i64 = match redis::cmd("TTL").arg(key).query_async(&mut conn).await {
-            Ok(ttl) => ttl,
-            Err(_) => -1, // Fallback: treat as no expiry
-        };
+        let ttl_secs: i64 = redis::cmd("TTL")
+            .arg(key)
+            .query_async(&mut conn)
+            .await
+            .unwrap_or(-1);
 
         self.hits.fetch_add(1, Ordering::Relaxed);
 

@@ -742,7 +742,7 @@ impl CacheManager {
             // Promote to L1 with same TTL as Redis (or default if no TTL)
             let promotion_ttl = ttl.unwrap_or_else(|| CacheStrategy::Default.to_duration());
 
-            if let Err(_) = self.l1_cache.set_with_ttl(key, value.clone(), promotion_ttl).await {
+            if self.l1_cache.set_with_ttl(key, value.clone(), promotion_ttl).await.is_err() {
                 // L1 promotion failed, but we still have the data
                 warn!("Failed to promote key '{}' to L1 cache", key);
             } else {

@@ -46,6 +46,9 @@ use async_trait::async_trait;
 use tracing::debug;
 use crate::traits::StreamingBackend;
 
+/// Type alias for Redis Stream entry: (ID, Field-Value Pairs)
+pub type StreamEntry = (String, Vec<(String, String)>);
+
 /// Redis Streams client for event-driven architectures
 ///
 /// Wraps Redis ConnectionManager to provide high-level streaming operations.
@@ -163,7 +166,7 @@ impl RedisStreams {
         &self,
         stream_key: &str,
         count: usize
-    ) -> Result<Vec<(String, Vec<(String, String)>)>> {
+    ) -> Result<Vec<StreamEntry>> {
         let mut conn = self.conn_manager.clone();
 
         // XREVRANGE returns a raw Value that we need to parse manually
@@ -213,7 +216,7 @@ impl RedisStreams {
         last_id: &str,
         count: usize,
         block_ms: Option<usize>
-    ) -> Result<Vec<(String, Vec<(String, String)>)>> {
+    ) -> Result<Vec<StreamEntry>> {
         let mut conn = self.conn_manager.clone();
 
         let mut cmd = redis::cmd("XREAD");
@@ -237,7 +240,7 @@ impl RedisStreams {
 
     /// Helper function to parse Redis stream response from XREVRANGE/XRANGE
     /// Format: [[id, [field, value, field, value, ...]], ...]
-    fn parse_stream_response(value: redis::Value) -> Result<Vec<(String, Vec<(String, String)>)>> {
+    fn parse_stream_response(value: redis::Value) -> Result<Vec<StreamEntry>> {
         match value {
             redis::Value::Array(entries) => {
                 let mut result = Vec::new();
@@ -276,7 +279,7 @@ impl RedisStreams {
 
     /// Helper function to parse XREAD response
     /// Format: [[stream_name, [[id, [field, value, ...]], ...]], ...]
-    fn parse_xread_response(value: redis::Value) -> Result<Vec<(String, Vec<(String, String)>)>> {
+    fn parse_xread_response(value: redis::Value) -> Result<Vec<StreamEntry>> {
         match value {
             redis::Value::Array(streams) => {
                 let mut all_entries = Vec::new();
@@ -351,7 +354,12 @@ impl StreamingBackend for RedisStreams {
         stream_key: &str,
         count: usize,
     ) -> Result<Vec<(String, Vec<(String, String)>)>> {
-        RedisStreams::stream_read_latest(self, stream_key, count).await
+        let entries = RedisStreams::stream_read_latest(self, stream_key, count).await?;
+        // Convert StreamEntry to the trait's expected type if they match, or just return
+        // Since StreamEntry IS (String, Vec<(String, String)>), this is fine.
+        // However, the trait definition in traits.rs might not use the alias.
+        // Let's check traits.rs first or just return the result since the types are identical.
+        Ok(entries)
     }
 
     async fn stream_read(
@@ -361,6 +369,7 @@ impl StreamingBackend for RedisStreams {
         count: usize,
         block_ms: Option<usize>,
     ) -> Result<Vec<(String, Vec<(String, String)>)>> {
-        RedisStreams::stream_read(self, stream_key, last_id, count, block_ms).await
+        let entries = RedisStreams::stream_read(self, stream_key, last_id, count, block_ms).await?;
+        Ok(entries)
     }
 }
