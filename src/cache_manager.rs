@@ -763,35 +763,7 @@ impl CacheManager {
         Ok(None)
     }
     
-    /// Get value from cache with fallback computation (enhanced backward compatibility)
-    /// 
-    /// This is a convenience method that combines `get()` with optional computation.
-    /// If the value is not found in cache, it will execute the compute function
-    /// and cache the result automatically.
-    /// 
-    /// # Arguments
-    /// * `key` - Cache key
-    /// * `compute_fn` - Optional function to compute value if not in cache
-    /// * `strategy` - Cache strategy for storing computed value (default: ShortTerm)
-    /// 
-    /// # Returns
-    /// * `Ok(Some(value))` - Value found in cache or computed successfully
-    /// * `Ok(None)` - Value not in cache and no compute function provided
-    /// * `Err(error)` - Cache operation or computation failed
-    /// 
-    /// # Example
-    /// ```ignore
-    /// // Simple cache get (existing behavior)
-    /// let cached_data = cache_manager.get_with_fallback("my_key", None, None).await?;
-    ///
-    /// // Get with computation fallback (new enhanced behavior)
-    /// let api_data = cache_manager.get_with_fallback(
-    ///     "api_response",
-    ///     Some(|| async { fetch_data_from_api().await }),
-    ///     Some(CacheStrategy::RealTime)
-    /// ).await?;
-    /// ```
-    
+
     /// Set value with specific cache strategy (all tiers)
     ///
     /// Supports both legacy 2-tier mode and new multi-tier mode (v0.5.0+).

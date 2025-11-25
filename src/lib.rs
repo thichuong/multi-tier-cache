@@ -227,7 +227,7 @@ impl CacheSystem {
     ///     let cache = CacheSystem::new().await?;
     ///
     ///     if cache.health_check().await {
-    ///         println!("Cache system healthy");
+    ///         tracing::info!("Cache system healthy");
     ///     }
     ///
     ///     Ok(())

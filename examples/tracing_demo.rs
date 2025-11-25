@@ -10,18 +10,13 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("Starting tracing verification...");
 
-    // Initialize cache system (should log debug messages)
+    // Initialize cache system
     let cache = CacheSystem::new().await?;
 
-    // Perform some operations
+    // Perform a simple operation
     let manager = cache.cache_manager();
+    manager.set_with_strategy("test_key", serde_json::json!("value"), multi_tier_cache::CacheStrategy::ShortTerm).await?;
     
-    tracing::info!("Setting value...");
-    manager.set_with_strategy("test_key", serde_json::json!("test_value"), multi_tier_cache::CacheStrategy::ShortTerm).await?;
-
-    tracing::info!("Getting value...");
-    let value = manager.get("test_key").await?;
-    tracing::info!("Got value: {:?}", value);
-
+    tracing::info!("Operation complete");
     Ok(())
 }
