@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Metrics export (Prometheus format)
 
+## [0.5.5] - 2025-01-06
+
+### Changed
+
+- **Code Quality**: Enforced strict `cargo clippy` lints
+  - Enabled `pedantic`, `unwrap_used`, `expect_used`, and `indexing_slicing` as warnings
+  - Resolved all resulting warnings for a cleaner, safer codebase
+
 ## [0.5.4] - 2025-01-06
 
 ### Changed

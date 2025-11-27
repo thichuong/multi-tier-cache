@@ -1,7 +1,7 @@
 //! Benchmarks for multi-tier cache operations (v0.5.0+)
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use multi_tier_cache::{CacheStrategy, CacheSystemBuilder, L2Cache, TierConfig};
+use multi_tier_cache::{CacheStrategy, CacheSystem, CacheSystemBuilder, L2Cache, TierConfig};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,17 +17,9 @@ fn test_data(size_bytes: usize) -> serde_json::Value {
     })
 }
 
-/// Benchmark 2-tier vs 3-tier vs 4-tier write performance
-fn bench_multi_tier_write(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
-
-    let mut group = c.benchmark_group("multi_tier_write");
-    group.measurement_time(Duration::from_secs(10));
-
-    let test_val = test_data(1024);
-
-    // 2-tier benchmark (baseline)
-    let cache_2tier = rt.block_on(async {
+/// Helper to build a 2-tier cache system
+fn build_2tier_cache(rt: &Runtime) -> CacheSystem {
+    rt.block_on(async {
         let l1 = Arc::new(
             L2Cache::new()
                 .await
@@ -45,23 +37,12 @@ fn bench_multi_tier_write(c: &mut Criterion) {
             .build()
             .await
             .unwrap_or_else(|_| panic!("Failed to build cache system"))
-    });
+    })
+}
 
-    group.bench_function("2_tiers", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let key = format!("bench:mt2:{}", rand::random::<u32>());
-                cache_2tier
-                    .cache_manager()
-                    .set_with_strategy(&key, black_box(test_val.clone()), CacheStrategy::ShortTerm)
-                    .await
-                    .unwrap_or_else(|_| panic!("Failed to set cache"));
-            });
-        });
-    });
-
-    // 3-tier benchmark
-    let cache_3tier = rt.block_on(async {
+/// Helper to build a 3-tier cache system
+fn build_3tier_cache(rt: &Runtime) -> CacheSystem {
+    rt.block_on(async {
         let l1 = Arc::new(
             L2Cache::new()
                 .await
@@ -85,23 +66,12 @@ fn bench_multi_tier_write(c: &mut Criterion) {
             .build()
             .await
             .unwrap_or_else(|_| panic!("Failed to build cache system"))
-    });
+    })
+}
 
-    group.bench_function("3_tiers", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let key = format!("bench:mt3:{}", rand::random::<u32>());
-                cache_3tier
-                    .cache_manager()
-                    .set_with_strategy(&key, black_box(test_val.clone()), CacheStrategy::ShortTerm)
-                    .await
-                    .unwrap_or_else(|_| panic!("Failed to set cache"));
-            });
-        });
-    });
-
-    // 4-tier benchmark
-    let cache_4tier = rt.block_on(async {
+/// Helper to build a 4-tier cache system
+fn build_4tier_cache(rt: &Runtime) -> CacheSystem {
+    rt.block_on(async {
         let l1 = Arc::new(
             L2Cache::new()
                 .await
@@ -131,7 +101,52 @@ fn bench_multi_tier_write(c: &mut Criterion) {
             .build()
             .await
             .unwrap_or_else(|_| panic!("Failed to build cache system"))
+    })
+}
+
+/// Benchmark 2-tier vs 3-tier vs 4-tier write performance
+fn bench_multi_tier_write(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
+
+    let mut group = c.benchmark_group("multi_tier_write");
+    group.measurement_time(Duration::from_secs(10));
+
+    let test_val = test_data(1024);
+
+    // 2-tier benchmark (baseline)
+    let cache_2tier = build_2tier_cache(&rt);
+
+    group.bench_function("2_tiers", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let key = format!("bench:mt2:{}", rand::random::<u32>());
+                cache_2tier
+                    .cache_manager()
+                    .set_with_strategy(&key, black_box(test_val.clone()), CacheStrategy::ShortTerm)
+                    .await
+                    .unwrap_or_else(|_| panic!("Failed to set cache"));
+            });
+        });
     });
+
+    // 3-tier benchmark
+    let cache_3tier = build_3tier_cache(&rt);
+
+    group.bench_function("3_tiers", |b| {
+        b.iter(|| {
+            rt.block_on(async {
+                let key = format!("bench:mt3:{}", rand::random::<u32>());
+                cache_3tier
+                    .cache_manager()
+                    .set_with_strategy(&key, black_box(test_val.clone()), CacheStrategy::ShortTerm)
+                    .await
+                    .unwrap_or_else(|_| panic!("Failed to set cache"));
+            });
+        });
+    });
+
+    // 4-tier benchmark
+    let cache_4tier = build_4tier_cache(&rt);
 
     group.bench_function("4_tiers", |b| {
         b.iter(|| {

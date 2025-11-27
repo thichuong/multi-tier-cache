@@ -112,7 +112,7 @@ Have an idea? Open an issue with:
 3. **Test your changes:**
    ```bash
    cargo test
-   cargo clippy
+   cargo clippy --all-targets --all-features -- -D warnings
    cargo fmt --check
    cargo doc --no-deps
    ```
@@ -151,6 +151,9 @@ Have an idea? Open an issue with:
 - **Fix clippy warnings:**
   ```bash
   cargo clippy --all-targets --all-features -- -D warnings
+  ```
+
+  **Note:** We enforce strict lints including `pedantic`, `unwrap_used`, `expect_used`, and `indexing_slicing`. Please ensure your code is free of warnings.
   ```
 
 - **Follow Rust API Guidelines**: https://rust-lang.github.io/api-guidelines/
