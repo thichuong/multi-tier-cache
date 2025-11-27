@@ -489,7 +489,7 @@ impl CacheManager {
     /// use std::sync::Arc;
     ///
     /// // L1 + L2 + L3 setup
-    /// let l1 = Arc::new(L1Cache::new().await?);
+    /// let l1 = Arc::new(L1Cache::new()?);
     /// let l2 = Arc::new(L2Cache::new().await?);
     /// let l3 = Arc::new(RocksDBCache::new("/tmp/cache").await?);
     ///
@@ -1098,7 +1098,7 @@ impl CacheManager {
     /// # use std::sync::Arc;
     /// # use serde::{Serialize, Deserialize};
     /// # async fn example() -> anyhow::Result<()> {
-    /// # let l1 = Arc::new(L1Cache::new().await?);
+    /// # let l1 = Arc::new(L1Cache::new()?);
     /// # let l2 = Arc::new(L2Cache::new().await?);
     /// # let cache_manager = CacheManager::new(l1, l2);
     ///
@@ -1130,7 +1130,7 @@ impl CacheManager {
     /// # use std::sync::Arc;
     /// # use serde::{Serialize, Deserialize};
     /// # async fn example() -> anyhow::Result<()> {
-    /// # let l1 = Arc::new(L1Cache::new().await?);
+    /// # let l1 = Arc::new(L1Cache::new()?);
     /// # let l2 = Arc::new(L2Cache::new().await?);
     /// # let cache_manager = CacheManager::new(l1, l2);
     /// #[derive(Serialize, Deserialize)]

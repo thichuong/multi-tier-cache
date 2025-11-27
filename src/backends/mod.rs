@@ -23,12 +23,12 @@
 //!
 //! # async fn example() -> anyhow::Result<()> {
 //! // Explicit backend selection
-//! let moka = MokaCache::new().await?;
+//! let moka = MokaCache::new()?;
 //! let redis = RedisCache::new().await?;
 //!
 //! // Or use type aliases for backward compatibility
 //! use multi_tier_cache::backends::{L1Cache, L2Cache};
-//! let l1 = L1Cache::new().await?;  // MokaCache
+//! let l1 = L1Cache::new()?;  // MokaCache
 //! let l2 = L2Cache::new().await?;  // RedisCache
 //! # Ok(())
 //! # }
