@@ -90,13 +90,17 @@ impl MemcachedCache {
     /// Get cache statistics (from Memcached server)
     ///
     /// Returns server statistics like hits, misses, uptime, etc.
-    /// Each tuple contains (`server_address`, stats_map)
+    /// Each tuple contains (`server_address`, `stats_map`)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Memcached client fails to retrieve statistics.
     pub fn get_server_stats(
         &self,
     ) -> Result<Vec<(String, std::collections::HashMap<String, String>)>> {
         self.client
             .stats()
-            .map_err(|e| anyhow!("Failed to get Memcached stats: {}", e))
+            .map_err(|e| anyhow!("Failed to get Memcached stats: {e}"))
     }
 }
 
@@ -105,27 +109,23 @@ impl MemcachedCache {
 use crate::traits::CacheBackend;
 use async_trait::async_trait;
 
-/// Implement CacheBackend trait for MemcachedCache
+/// Implement `CacheBackend` trait for `MemcachedCache`
 ///
-/// This allows MemcachedCache to be used as a pluggable backend in the multi-tier cache system.
+/// This allows `MemcachedCache` to be used as a pluggable backend in the multi-tier cache system.
 #[async_trait]
 impl CacheBackend for MemcachedCache {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        match self.client.get::<String>(key) {
-            Ok(Some(json_str)) => match serde_json::from_str(&json_str) {
-                Ok(value) => {
-                    self.hits.fetch_add(1, Ordering::Relaxed);
-                    Some(value)
-                }
-                Err(_) => {
-                    self.misses.fetch_add(1, Ordering::Relaxed);
-                    None
-                }
-            },
-            Ok(None) | Err(_) => {
+        if let Ok(Some(json_str)) = self.client.get::<String>(key) {
+            if let Ok(value) = serde_json::from_str(&json_str) {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                Some(value)
+            } else {
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 None
             }
+        } else {
+            self.misses.fetch_add(1, Ordering::Relaxed);
+            None
         }
     }
 
@@ -133,8 +133,12 @@ impl CacheBackend for MemcachedCache {
         let json_str = serde_json::to_string(&value)?;
 
         self.client
-            .set(key, json_str, ttl.as_secs() as u32)
-            .map_err(|e| anyhow!("Memcached SET failed: {}", e))?;
+            .set(
+                key,
+                json_str,
+                u32::try_from(ttl.as_secs()).unwrap_or(u32::MAX),
+            )
+            .map_err(|e| anyhow!("Memcached SET failed: {e}"))?;
 
         self.sets.fetch_add(1, Ordering::Relaxed);
         debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Memcached] Cached key with TTL");
@@ -144,7 +148,7 @@ impl CacheBackend for MemcachedCache {
     async fn remove(&self, key: &str) -> Result<()> {
         self.client
             .delete(key)
-            .map_err(|e| anyhow!("Memcached DELETE failed: {}", e))?;
+            .map_err(|e| anyhow!("Memcached DELETE failed: {e}"))?;
         Ok(())
     }
 
@@ -160,10 +164,13 @@ impl CacheBackend for MemcachedCache {
             .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10))
             .await
         {
-            Ok(_) => match self.get(test_key).await {
+            Ok(()) => match self.get(test_key).await {
                 Some(retrieved) => {
                     let _ = self.remove(test_key).await;
-                    retrieved["test"].as_bool().unwrap_or(false)
+                    retrieved
+                        .get("test")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
                 }
                 None => false,
             },
@@ -171,7 +178,7 @@ impl CacheBackend for MemcachedCache {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Memcached"
     }
 }

@@ -2,7 +2,7 @@
 //!
 //! Demonstrates health checks and monitoring of cache tiers.
 //!
-//! Run with: cargo run --example health_monitoring
+//! Run with: cargo run --example `health_monitoring`
 
 use multi_tier_cache::CacheSystem;
 use std::time::Duration;
@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Starting health monitoring (10 checks)...\n");
 
     for i in 1..=10 {
-        println!("Health Check #{}", i);
+        println!("Health Check #{i}");
 
         // Check overall cache system health
         let is_healthy = cache.health_check().await;

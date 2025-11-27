@@ -383,26 +383,20 @@ impl CacheSystemBuilder {
             // Custom backend path
             info!("Building with custom backends");
 
-            let l1_backend: Arc<dyn CacheBackend> = match self.l1_backend {
-                Some(backend) => {
-                    info!(backend = %backend.name(), "Using custom L1 backend");
-                    backend
-                }
-                None => {
-                    info!("Using default L1 backend (Moka)");
-                    Arc::new(L1Cache::new()?)
-                }
+            let l1_backend: Arc<dyn CacheBackend> = if let Some(backend) = self.l1_backend {
+                info!(backend = %backend.name(), "Using custom L1 backend");
+                backend
+            } else {
+                info!("Using default L1 backend (Moka)");
+                Arc::new(L1Cache::new()?)
             };
 
-            let l2_backend: Arc<dyn L2CacheBackend> = match self.l2_backend {
-                Some(backend) => {
-                    info!(backend = %backend.name(), "Using custom L2 backend");
-                    backend
-                }
-                None => {
-                    info!("Using default L2 backend (Redis)");
-                    Arc::new(L2Cache::new().await?)
-                }
+            let l2_backend: Arc<dyn L2CacheBackend> = if let Some(backend) = self.l2_backend {
+                info!(backend = %backend.name(), "Using custom L2 backend");
+                backend
+            } else {
+                info!("Using default L2 backend (Redis)");
+                Arc::new(L2Cache::new().await?)
             };
 
             let streaming_backend = self.streaming_backend;

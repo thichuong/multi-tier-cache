@@ -165,15 +165,12 @@ impl CacheBackend for RedisCache {
         let mut conn = self.conn_manager.clone();
 
         if let Ok(json_str) = conn.get::<_, String>(key).await {
-            match serde_json::from_str(&json_str) {
-                Ok(value) => {
-                    self.hits.fetch_add(1, Ordering::Relaxed);
-                    Some(value)
-                }
-                Err(_) => {
-                    self.misses.fetch_add(1, Ordering::Relaxed);
-                    None
-                }
+            if let Ok(value) = serde_json::from_str(&json_str) {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                Some(value)
+            } else {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
             }
         } else {
             self.misses.fetch_add(1, Ordering::Relaxed);

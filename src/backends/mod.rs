@@ -59,13 +59,13 @@ pub use quickcache_cache::QuickCacheBackend;
 
 // Type aliases for backward compatibility
 // These allow existing code to continue working without changes
-/// Type alias for MokaCache (default L1 backend)
+/// Type alias for `MokaCache` (default L1 backend)
 ///
 /// **Note**: This is a type alias for backward compatibility.
 /// Consider using `MokaCache` directly in new code.
 pub type L1Cache = MokaCache;
 
-/// Type alias for RedisCache (default L2 backend)
+/// Type alias for `RedisCache` (default L2 backend)
 ///
 /// **Note**: This is a type alias for backward compatibility.
 /// Consider using `RedisCache` directly in new code.

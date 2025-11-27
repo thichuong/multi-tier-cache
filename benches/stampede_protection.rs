@@ -8,12 +8,12 @@ use std::time::Duration;
 use tokio::runtime::Runtime;
 
 fn setup_cache() -> (CacheSystem, Runtime) {
-    let rt = Runtime::new().unwrap();
+    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
     let cache = rt.block_on(async {
         std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
         CacheSystem::new()
             .await
-            .expect("Failed to create cache system")
+            .unwrap_or_else(|_| panic!("Failed to create cache system"))
     });
     (cache, rt)
 }
@@ -40,15 +40,15 @@ fn bench_stampede_protection(c: &mut Criterion) {
                                 Ok(json!({"computed": true}))
                             })
                             .await
-                            .unwrap()
+                            .unwrap_or_else(|_| panic!("Failed to compute"))
                     });
                     handles.push(handle);
                 }
 
                 for handle in handles {
-                    black_box(handle.await.unwrap());
+                    black_box(handle.await.unwrap_or_else(|_| panic!("Task failed")));
                 }
-            })
+            });
         });
     });
 }

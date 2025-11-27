@@ -49,24 +49,33 @@ impl InvalidationMessage {
         }
     }
 
-    /// Create a RemovePattern message
+    /// Create a `RemovePattern` message
     pub fn remove_pattern(pattern: impl Into<String>) -> Self {
         Self::RemovePattern {
             pattern: pattern.into(),
         }
     }
 
-    /// Create a RemoveBulk message
+    /// Create a `RemoveBulk` message
+    #[must_use]
     pub fn remove_bulk(keys: Vec<String>) -> Self {
         Self::RemoveBulk { keys }
     }
 
     /// Serialize to JSON for transmission
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization fails.
     pub fn to_json(&self) -> Result<String> {
         serde_json::to_string(self).context("Failed to serialize invalidation message")
     }
 
     /// Deserialize from JSON
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if deserialization fails.
     pub fn from_json(json: &str) -> Result<Self> {
         serde_json::from_str(json).context("Failed to deserialize invalidation message")
     }
@@ -119,11 +128,16 @@ pub struct InvalidationPublisher {
 
 impl InvalidationPublisher {
     /// Create a new publisher
+    #[must_use]
     pub fn new(connection: redis::aio::ConnectionManager, config: InvalidationConfig) -> Self {
         Self { connection, config }
     }
 
     /// Publish an invalidation message to all subscribers
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization or publishing fails.
     pub async fn publish(&mut self, message: &InvalidationMessage) -> Result<()> {
         let json = message.to_json()?;
 
@@ -226,10 +240,10 @@ pub struct InvalidationStats {
     /// Number of Update operations performed
     pub updates_received: u64,
 
-    /// Number of RemovePattern operations performed
+    /// Number of `RemovePattern` operations performed
     pub patterns_received: u64,
 
-    /// Number of RemoveBulk operations performed
+    /// Number of `RemoveBulk` operations performed
     pub bulk_removes_received: u64,
 
     /// Number of failed message processing attempts
@@ -288,6 +302,9 @@ impl InvalidationSubscriber {
     /// # Arguments
     /// * `redis_url` - Redis connection URL
     /// * `config` - Invalidation configuration
+    /// # Errors
+    ///
+    /// Returns an error if Redis client creation fails.
     pub fn new(redis_url: &str, config: InvalidationConfig) -> Result<Self> {
         let client = redis::Client::open(redis_url)
             .context("Failed to create Redis client for subscriber")?;
@@ -303,6 +320,7 @@ impl InvalidationSubscriber {
     }
 
     /// Get a snapshot of current statistics
+    #[must_use]
     pub fn stats(&self) -> InvalidationStats {
         self.stats.snapshot()
     }
@@ -344,7 +362,7 @@ impl InvalidationSubscriber {
                 )
                 .await
                 {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Invalidation subscriber loop completed normally");
                         break;
                     }
@@ -357,7 +375,7 @@ impl InvalidationSubscriber {
 
                         // Wait before reconnecting
                         tokio::select! {
-                            _ = tokio::time::sleep(Duration::from_secs(5)) => {},
+                            () = tokio::time::sleep(Duration::from_secs(5)) => {},
                             _ = shutdown_rx.recv() => {
                                 info!("Invalidation subscriber shutting down...");
                                 break;
@@ -471,11 +489,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_invalidation_message_serialization() {
+    fn test_invalidation_message_serialization() -> Result<()> {
         // Test Remove
         let msg = InvalidationMessage::remove("test_key");
-        let json = msg.to_json().unwrap();
-        let parsed = InvalidationMessage::from_json(&json).unwrap();
+        let json = msg.to_json()?;
+        let parsed = InvalidationMessage::from_json(&json)?;
         match parsed {
             InvalidationMessage::Remove { key } => assert_eq!(key, "test_key"),
             _ => panic!("Wrong message type"),
@@ -487,8 +505,8 @@ mod tests {
             serde_json::json!({"value": 123}),
             Some(Duration::from_secs(300)),
         );
-        let json = msg.to_json().unwrap();
-        let parsed = InvalidationMessage::from_json(&json).unwrap();
+        let json = msg.to_json()?;
+        let parsed = InvalidationMessage::from_json(&json)?;
         match parsed {
             InvalidationMessage::Update {
                 key,
@@ -504,8 +522,8 @@ mod tests {
 
         // Test RemovePattern
         let msg = InvalidationMessage::remove_pattern("user:*");
-        let json = msg.to_json().unwrap();
-        let parsed = InvalidationMessage::from_json(&json).unwrap();
+        let json = msg.to_json()?;
+        let parsed = InvalidationMessage::from_json(&json)?;
         match parsed {
             InvalidationMessage::RemovePattern { pattern } => assert_eq!(pattern, "user:*"),
             _ => panic!("Wrong message type"),
@@ -513,19 +531,20 @@ mod tests {
 
         // Test RemoveBulk
         let msg = InvalidationMessage::remove_bulk(vec!["key1".to_string(), "key2".to_string()]);
-        let json = msg.to_json().unwrap();
-        let parsed = InvalidationMessage::from_json(&json).unwrap();
+        let json = msg.to_json()?;
+        let parsed = InvalidationMessage::from_json(&json)?;
         match parsed {
             InvalidationMessage::RemoveBulk { keys } => assert_eq!(keys, vec!["key1", "key2"]),
             _ => panic!("Wrong message type"),
         }
+        Ok(())
     }
 
     #[test]
     fn test_invalidation_config_default() {
         let config = InvalidationConfig::default();
         assert_eq!(config.channel, "cache:invalidate");
-        assert_eq!(config.auto_broadcast_on_write, false);
-        assert_eq!(config.enable_audit_stream, false);
+        assert!(!config.auto_broadcast_on_write);
+        assert!(!config.enable_audit_stream);
     }
 }

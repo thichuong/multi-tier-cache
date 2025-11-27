@@ -29,27 +29,28 @@ struct Product {
 
 /// Simulate database query (in real world, use sqlx)
 async fn fetch_user_from_db(user_id: i64) -> anyhow::Result<User> {
-    println!("  🗄️  Simulating database query for user {}", user_id);
+    println!("  🗄️  Simulating database query for user {user_id}");
     tokio::time::sleep(Duration::from_millis(100)).await; // Simulate DB latency
 
     Ok(User {
         id: user_id,
-        name: format!("User {}", user_id),
-        email: format!("user{}@example.com", user_id),
-        created_at: 1704326400, // 2024-01-04
+        name: format!("User {user_id}"),
+        email: format!("user{user_id}@example.com"),
+        created_at: 1_704_326_400, // 2024-01-04
     })
 }
 
 /// Simulate product query
 async fn fetch_product_from_db(product_id: i64) -> anyhow::Result<Product> {
-    println!("  🗄️  Simulating database query for product {}", product_id);
+    println!("  🗄️  Simulating database query for product {product_id}");
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     Ok(Product {
         id: product_id,
-        title: format!("Product #{}", product_id),
+        title: format!("Product #{product_id}"),
+        #[allow(clippy::cast_precision_loss)]
         price: 99.99 + (product_id as f64),
-        stock: (product_id * 10) as i32,
+        stock: i32::try_from(product_id * 10).unwrap_or(0),
     })
 }
 
@@ -80,11 +81,8 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     let elapsed = start.elapsed();
 
-    println!("✅ Retrieved user: {:?}", user);
-    println!(
-        "⏱️  Time taken: {:?} (includes DB query + caching)\n",
-        elapsed
-    );
+    println!("✅ Retrieved user: {user:?}");
+    println!("⏱️  Time taken: {elapsed:?} (includes DB query + caching)\n",);
 
     // ========================================
     // Example 2: Second Request (Cache Hit)
@@ -101,8 +99,8 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     let elapsed = start.elapsed();
 
-    println!("✅ Retrieved user: {:?}", user);
-    println!("⏱️  Time taken: {:?} (sub-millisecond from L1!)\n", elapsed);
+    println!("✅ Retrieved user: {user:?}");
+    println!("⏱️  Time taken: {elapsed:?} (sub-millisecond from L1!)\n");
 
     // ========================================
     // Example 3: Different Type (Product)
@@ -119,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
 
-    println!("✅ Retrieved product: {:?}\n", product);
+    println!("✅ Retrieved product: {product:?}\n");
 
     // ========================================
     // Example 4: Multiple Concurrent Requests
@@ -140,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
                         fetch_user_from_db(999).await
                     })
                     .await
-                    .unwrap();
+                    .unwrap_or_else(|_| panic!("Failed to get user"));
                 let elapsed = start.elapsed();
                 println!("  🎯 Request {} completed in {:?}", i + 1, elapsed);
                 user

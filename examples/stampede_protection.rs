@@ -3,11 +3,24 @@
 //! Demonstrates how the library prevents cache stampede by coalescing
 //! concurrent requests for the same cache key.
 //!
-//! Run with: cargo run --example stampede_protection
+//! Run with: cargo run --example `stampede_protection`
 
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+/// Simulate expensive computation
+async fn expensive_computation(id: u32) -> anyhow::Result<serde_json::Value> {
+    println!("  💻 [Worker {id}] Starting expensive computation...");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    println!("  ✅ [Worker {id}] Computation complete");
+
+    Ok(serde_json::json!({
+        "result": "computed_value",
+        "timestamp": 1_234_567_890,
+        "worker_id": id
+    }))
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -16,22 +29,6 @@ async fn main() -> anyhow::Result<()> {
     // Initialize cache system
     let cache = Arc::new(CacheSystem::new().await?);
     println!();
-
-    // Simulate expensive computation
-    async fn expensive_computation(id: u32) -> anyhow::Result<serde_json::Value> {
-        println!("  💻 [Worker {}] Starting expensive computation...", id);
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        println!("  ✅ [Worker {}] Computation complete", id);
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or(Duration::from_secs(0))
-            .as_secs();
-        Ok(serde_json::json!({
-            "computed_by": id,
-            "result": "expensive data",
-            "timestamp": timestamp
-        }))
-    }
 
     // Scenario: 10 concurrent requests for the same missing cache key
     println!("Scenario: 10 concurrent workers requesting same cache key\n");
@@ -53,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
                 .await;
 
             let elapsed = worker_start.elapsed();
-            println!("  [Worker {}] Completed in {:?}", i, elapsed);
+            println!("  [Worker {i}] Completed in {elapsed:?}");
             result
         });
         handles.push(handle);
@@ -67,7 +64,7 @@ async fn main() -> anyhow::Result<()> {
     let total_elapsed = start.elapsed();
 
     println!("\n=== Results ===");
-    println!("Total time: {:?}", total_elapsed);
+    println!("Total time: {total_elapsed:?}");
     println!("Expected time WITHOUT stampede protection: ~5000ms (10 workers × 500ms)");
     println!("Expected time WITH stampede protection: ~500ms (1 computation shared by all)");
 

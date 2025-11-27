@@ -2,7 +2,7 @@
 //!
 //! Demonstrates how to configure a 3-tier cache system (L1 + L2 + L3).
 //!
-//! Run with: cargo run --example multi_tier_usage
+//! Run with: cargo run --example `multi_tier_usage`
 
 use anyhow::Result;
 use multi_tier_cache::{async_trait, CacheBackend, CacheSystemBuilder, L2CacheBackend};
@@ -13,10 +13,12 @@ use std::time::{Duration, Instant};
 
 // ==================== Mock L3 Cache (Simulated Disk/Cold Storage) ====================
 
-/// A simulated "slow" cache backend to represent L3 (e.g., Disk, S3, RocksDB)
+/// A simulated "slow" cache backend to represent L3 (e.g., Disk, S3, `RocksDB`)
+type L3Store = Arc<RwLock<HashMap<String, (Value, Instant, Duration)>>>;
+
 struct MockL3Cache {
     name: String,
-    store: Arc<RwLock<HashMap<String, (Value, Instant, Duration)>>>,
+    store: L3Store,
 }
 
 impl MockL3Cache {
@@ -34,7 +36,10 @@ impl CacheBackend for MockL3Cache {
         // Simulate latency for "disk" access
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let store = self.store.read().unwrap();
+        let store = self
+            .store
+            .read()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         store.get(key).and_then(|(value, expiry, _)| {
             if *expiry > Instant::now() {
                 Some(value.clone())
@@ -48,7 +53,10 @@ impl CacheBackend for MockL3Cache {
         // Simulate latency
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut store = self.store.write().unwrap();
+        let mut store = self
+            .store
+            .write()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         let expiry = Instant::now() + ttl;
         store.insert(key.to_string(), (value, expiry, ttl));
         println!("💾 [{}] Cached '{}' with TTL {:?}", self.name, key, ttl);
@@ -56,7 +64,10 @@ impl CacheBackend for MockL3Cache {
     }
 
     async fn remove(&self, key: &str) -> Result<()> {
-        let mut store = self.store.write().unwrap();
+        let mut store = self
+            .store
+            .write()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         store.remove(key);
         Ok(())
     }
@@ -65,8 +76,8 @@ impl CacheBackend for MockL3Cache {
         true
     }
 
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &'static str {
+        "MockL3"
     }
 }
 
@@ -76,7 +87,10 @@ impl L2CacheBackend for MockL3Cache {
         // Simulate latency
         tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let store = self.store.read().unwrap();
+        let store = self
+            .store
+            .read()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         store.get(key).and_then(|(value, expiry, _)| {
             let now = Instant::now();
             if *expiry > now {
@@ -173,7 +187,7 @@ async fn main() -> Result<()> {
 
     let start = Instant::now();
     if let Some(val) = cache.cache_manager().get("archive:doc1").await? {
-        println!("✅ Found value: {}", val);
+        println!("✅ Found value: {val}");
         println!("   Latency: {:?}", start.elapsed());
     } else {
         println!("❌ Value not found!");
@@ -183,7 +197,7 @@ async fn main() -> Result<()> {
     println!("Requesting 'archive:doc1' again (should hit L1)...");
     let start = Instant::now();
     if let Some(val) = cache.cache_manager().get("archive:doc1").await? {
-        println!("✅ Found value: {}", val);
+        println!("✅ Found value: {val}");
         println!("   Latency: {:?}", start.elapsed());
     }
 

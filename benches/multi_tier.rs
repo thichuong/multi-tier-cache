@@ -19,7 +19,7 @@ fn test_data(size_bytes: usize) -> serde_json::Value {
 
 /// Benchmark 2-tier vs 3-tier vs 4-tier write performance
 fn bench_multi_tier_write(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
 
     let mut group = c.benchmark_group("multi_tier_write");
     group.measurement_time(Duration::from_secs(10));
@@ -28,15 +28,23 @@ fn bench_multi_tier_write(c: &mut Criterion) {
 
     // 2-tier benchmark (baseline)
     let cache_2tier = rt.block_on(async {
-        let l1 = Arc::new(L2Cache::new().await.unwrap());
-        let l2 = Arc::new(L2Cache::new().await.unwrap());
+        let l1 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L1")),
+        );
+        let l2 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L2")),
+        );
 
         CacheSystemBuilder::new()
             .with_tier(l1, TierConfig::as_l1())
             .with_tier(l2, TierConfig::as_l2())
             .build()
             .await
-            .unwrap()
+            .unwrap_or_else(|_| panic!("Failed to build cache system"))
     });
 
     group.bench_function("2_tiers", |b| {
@@ -47,16 +55,28 @@ fn bench_multi_tier_write(c: &mut Criterion) {
                     .cache_manager()
                     .set_with_strategy(&key, black_box(test_val.clone()), CacheStrategy::ShortTerm)
                     .await
-                    .unwrap();
-            })
+                    .unwrap_or_else(|_| panic!("Failed to set cache"));
+            });
         });
     });
 
     // 3-tier benchmark
     let cache_3tier = rt.block_on(async {
-        let l1 = Arc::new(L2Cache::new().await.unwrap());
-        let l2 = Arc::new(L2Cache::new().await.unwrap());
-        let l3 = Arc::new(L2Cache::new().await.unwrap());
+        let l1 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L1")),
+        );
+        let l2 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L2")),
+        );
+        let l3 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L3")),
+        );
 
         CacheSystemBuilder::new()
             .with_tier(l1, TierConfig::as_l1())
@@ -64,7 +84,7 @@ fn bench_multi_tier_write(c: &mut Criterion) {
             .with_tier(l3, TierConfig::as_l3())
             .build()
             .await
-            .unwrap()
+            .unwrap_or_else(|_| panic!("Failed to build cache system"))
     });
 
     group.bench_function("3_tiers", |b| {
@@ -75,17 +95,33 @@ fn bench_multi_tier_write(c: &mut Criterion) {
                     .cache_manager()
                     .set_with_strategy(&key, black_box(test_val.clone()), CacheStrategy::ShortTerm)
                     .await
-                    .unwrap();
-            })
+                    .unwrap_or_else(|_| panic!("Failed to set cache"));
+            });
         });
     });
 
     // 4-tier benchmark
     let cache_4tier = rt.block_on(async {
-        let l1 = Arc::new(L2Cache::new().await.unwrap());
-        let l2 = Arc::new(L2Cache::new().await.unwrap());
-        let l3 = Arc::new(L2Cache::new().await.unwrap());
-        let l4 = Arc::new(L2Cache::new().await.unwrap());
+        let l1 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L1")),
+        );
+        let l2 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L2")),
+        );
+        let l3 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L3")),
+        );
+        let l4 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L4")),
+        );
 
         CacheSystemBuilder::new()
             .with_tier(l1, TierConfig::as_l1())
@@ -94,7 +130,7 @@ fn bench_multi_tier_write(c: &mut Criterion) {
             .with_tier(l4, TierConfig::as_l4())
             .build()
             .await
-            .unwrap()
+            .unwrap_or_else(|_| panic!("Failed to build cache system"))
     });
 
     group.bench_function("4_tiers", |b| {
@@ -105,8 +141,8 @@ fn bench_multi_tier_write(c: &mut Criterion) {
                     .cache_manager()
                     .set_with_strategy(&key, black_box(test_val.clone()), CacheStrategy::ShortTerm)
                     .await
-                    .unwrap();
-            })
+                    .unwrap_or_else(|_| panic!("Failed to set cache"));
+            });
         });
     });
 
@@ -115,12 +151,24 @@ fn bench_multi_tier_write(c: &mut Criterion) {
 
 /// Benchmark multi-tier read performance (L1 hits)
 fn bench_multi_tier_read(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
 
     let cache = rt.block_on(async {
-        let l1 = Arc::new(L2Cache::new().await.unwrap());
-        let l2 = Arc::new(L2Cache::new().await.unwrap());
-        let l3 = Arc::new(L2Cache::new().await.unwrap());
+        let l1 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L1")),
+        );
+        let l2 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L2")),
+        );
+        let l3 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L3")),
+        );
 
         CacheSystemBuilder::new()
             .with_tier(l1, TierConfig::as_l1())
@@ -128,18 +176,18 @@ fn bench_multi_tier_read(c: &mut Criterion) {
             .with_tier(l3, TierConfig::as_l3())
             .build()
             .await
-            .unwrap()
+            .unwrap_or_else(|_| panic!("Failed to build cache system"))
     });
 
     // Pre-populate cache
     rt.block_on(async {
         for i in 0..100 {
-            let key = format!("bench:read:{}", i);
+            let key = format!("bench:read:{i}");
             cache
                 .cache_manager()
                 .set_with_strategy(&key, test_data(1024), CacheStrategy::ShortTerm)
                 .await
-                .unwrap();
+                .unwrap_or_else(|_| panic!("Failed to set cache"));
         }
     });
 
@@ -147,15 +195,21 @@ fn bench_multi_tier_read(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let key = format!("bench:read:{}", rand::random::<u8>() % 100);
-                black_box(cache.cache_manager().get(&key).await.unwrap());
-            })
+                black_box(
+                    cache
+                        .cache_manager()
+                        .get(&key)
+                        .await
+                        .unwrap_or_else(|_| panic!("Failed to get cache")),
+                );
+            });
         });
     });
 }
 
 /// Benchmark TTL scaling impact
 fn bench_ttl_scaling(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
 
     let mut group = c.benchmark_group("ttl_scaling");
 
@@ -163,9 +217,21 @@ fn bench_ttl_scaling(c: &mut Criterion) {
 
     // Without scaling (all 1.0x)
     let cache_no_scale = rt.block_on(async {
-        let l1 = Arc::new(L2Cache::new().await.unwrap());
-        let l2 = Arc::new(L2Cache::new().await.unwrap());
-        let l3 = Arc::new(L2Cache::new().await.unwrap());
+        let l1 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L1")),
+        );
+        let l2 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L2")),
+        );
+        let l3 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L3")),
+        );
 
         CacheSystemBuilder::new()
             .with_tier(l1, TierConfig::as_l1())
@@ -173,7 +239,7 @@ fn bench_ttl_scaling(c: &mut Criterion) {
             .with_tier(l3, TierConfig::new(3).with_ttl_scale(1.0))
             .build()
             .await
-            .unwrap()
+            .unwrap_or_else(|_| panic!("Failed to build cache system"))
     });
 
     group.bench_function("no_scaling", |b| {
@@ -184,17 +250,33 @@ fn bench_ttl_scaling(c: &mut Criterion) {
                     .cache_manager()
                     .set_with_strategy(&key, black_box(test_val.clone()), CacheStrategy::ShortTerm)
                     .await
-                    .unwrap();
-            })
+                    .unwrap_or_else(|_| panic!("Failed to set cache"));
+            });
         });
     });
 
     // With scaling (L3 = 2x, L4 = 8x)
     let cache_with_scale = rt.block_on(async {
-        let l1 = Arc::new(L2Cache::new().await.unwrap());
-        let l2 = Arc::new(L2Cache::new().await.unwrap());
-        let l3 = Arc::new(L2Cache::new().await.unwrap());
-        let l4 = Arc::new(L2Cache::new().await.unwrap());
+        let l1 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L1")),
+        );
+        let l2 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L2")),
+        );
+        let l3 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L3")),
+        );
+        let l4 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L4")),
+        );
 
         CacheSystemBuilder::new()
             .with_tier(l1, TierConfig::as_l1())
@@ -203,7 +285,7 @@ fn bench_ttl_scaling(c: &mut Criterion) {
             .with_tier(l4, TierConfig::as_l4()) // 8x
             .build()
             .await
-            .unwrap()
+            .unwrap_or_else(|_| panic!("Failed to build cache system"))
     });
 
     group.bench_function("with_scaling", |b| {
@@ -214,8 +296,8 @@ fn bench_ttl_scaling(c: &mut Criterion) {
                     .cache_manager()
                     .set_with_strategy(&key, black_box(test_val.clone()), CacheStrategy::ShortTerm)
                     .await
-                    .unwrap();
-            })
+                    .unwrap_or_else(|_| panic!("Failed to set cache"));
+            });
         });
     });
 
@@ -224,12 +306,24 @@ fn bench_ttl_scaling(c: &mut Criterion) {
 
 /// Benchmark different data sizes across multi-tier
 fn bench_data_size_multi_tier(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
 
     let cache = rt.block_on(async {
-        let l1 = Arc::new(L2Cache::new().await.unwrap());
-        let l2 = Arc::new(L2Cache::new().await.unwrap());
-        let l3 = Arc::new(L2Cache::new().await.unwrap());
+        let l1 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L1")),
+        );
+        let l2 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L2")),
+        );
+        let l3 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L3")),
+        );
 
         CacheSystemBuilder::new()
             .with_tier(l1, TierConfig::as_l1())
@@ -237,13 +331,13 @@ fn bench_data_size_multi_tier(c: &mut Criterion) {
             .with_tier(l3, TierConfig::as_l3())
             .build()
             .await
-            .unwrap()
+            .unwrap_or_else(|_| panic!("Failed to build cache system"))
     });
 
     let mut group = c.benchmark_group("data_size_multi_tier");
     group.measurement_time(Duration::from_secs(10));
 
-    for size in [100, 1024, 10240, 102400].iter() {
+    for size in &[100, 1024, 10240, 102_400] {
         let data = test_data(*size);
 
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, _| {
@@ -254,10 +348,16 @@ fn bench_data_size_multi_tier(c: &mut Criterion) {
                         .cache_manager()
                         .set_with_strategy(&key, black_box(data.clone()), CacheStrategy::ShortTerm)
                         .await
-                        .unwrap();
+                        .unwrap_or_else(|_| panic!("Failed to set cache"));
 
-                    black_box(cache.cache_manager().get(&key).await.unwrap());
-                })
+                    black_box(
+                        cache
+                            .cache_manager()
+                            .get(&key)
+                            .await
+                            .unwrap_or_else(|_| panic!("Failed to get cache")),
+                    );
+                });
             });
         });
     }
@@ -267,12 +367,24 @@ fn bench_data_size_multi_tier(c: &mut Criterion) {
 
 /// Benchmark tier statistics overhead
 fn bench_tier_stats(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
 
     let cache = rt.block_on(async {
-        let l1 = Arc::new(L2Cache::new().await.unwrap());
-        let l2 = Arc::new(L2Cache::new().await.unwrap());
-        let l3 = Arc::new(L2Cache::new().await.unwrap());
+        let l1 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L1")),
+        );
+        let l2 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L2")),
+        );
+        let l3 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L3")),
+        );
 
         CacheSystemBuilder::new()
             .with_tier(l1, TierConfig::as_l1())
@@ -280,18 +392,18 @@ fn bench_tier_stats(c: &mut Criterion) {
             .with_tier(l3, TierConfig::as_l3())
             .build()
             .await
-            .unwrap()
+            .unwrap_or_else(|_| panic!("Failed to build cache system"))
     });
 
     // Pre-populate
     rt.block_on(async {
         for i in 0..100 {
-            let key = format!("bench:stats:{}", i);
+            let key = format!("bench:stats:{i}");
             cache
                 .cache_manager()
                 .set_with_strategy(&key, test_data(1024), CacheStrategy::ShortTerm)
                 .await
-                .unwrap();
+                .unwrap_or_else(|_| panic!("Failed to set cache"));
         }
     });
 

@@ -14,9 +14,21 @@ async fn test_multi_tier_basic_operations() {
     // Create 3-tier cache: L1 + L2 + L3 (all using L2Cache for testing)
     // Note: In production, L1 would be Moka-based, but for multi-tier mode,
     // all backends must implement L2CacheBackend for TTL support
-    let l1 = Arc::new(L2Cache::new().await.unwrap());
-    let l2 = Arc::new(L2Cache::new().await.unwrap());
-    let l3 = Arc::new(L2Cache::new().await.unwrap());
+    let l1 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L1")),
+    );
+    let l2 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L2")),
+    );
+    let l3 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L3")),
+    );
 
     let cache = CacheSystemBuilder::new()
         .with_tier(l1, TierConfig::as_l1())
@@ -24,7 +36,7 @@ async fn test_multi_tier_basic_operations() {
         .with_tier(l3, TierConfig::as_l3())
         .build()
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to build cache system"));
 
     let manager = cache.cache_manager();
 
@@ -33,10 +45,13 @@ async fn test_multi_tier_basic_operations() {
     manager
         .set_with_strategy("test:multi:1", test_data.clone(), CacheStrategy::ShortTerm)
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // Test get - should hit L1
-    let result = manager.get("test:multi:1").await.unwrap();
+    let result = manager
+        .get("test:multi:1")
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(result, Some(test_data.clone()));
 
     // Verify tier stats
@@ -61,9 +76,21 @@ async fn test_multi_tier_basic_operations() {
 /// Test multi-tier statistics tracking
 #[tokio::test]
 async fn test_multi_tier_stats() {
-    let l1 = Arc::new(L2Cache::new().await.unwrap());
-    let l2 = Arc::new(L2Cache::new().await.unwrap());
-    let l3 = Arc::new(L2Cache::new().await.unwrap());
+    let l1 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L1")),
+    );
+    let l2 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L2")),
+    );
+    let l3 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L3")),
+    );
 
     let cache = CacheSystemBuilder::new()
         .with_tier(l1.clone(), TierConfig::as_l1())
@@ -71,7 +98,7 @@ async fn test_multi_tier_stats() {
         .with_tier(l3.clone(), TierConfig::as_l3())
         .build()
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to build cache system"));
 
     let manager = cache.cache_manager();
 
@@ -80,11 +107,14 @@ async fn test_multi_tier_stats() {
     manager
         .set_with_strategy("test:stats:1", test_data.clone(), CacheStrategy::ShortTerm)
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // Retrieve data multiple times
     for _ in 0..5 {
-        let _result = manager.get("test:stats:1").await.unwrap();
+        let _result = manager
+            .get("test:stats:1")
+            .await
+            .unwrap_or_else(|_| panic!("Failed to get cache"));
     }
 
     // Verify tier-specific stats
@@ -92,7 +122,10 @@ async fn test_multi_tier_stats() {
         assert_eq!(tier_stats.len(), 3, "Should have 3 tiers");
 
         // L1 should have most hits
-        let l1_stats = tier_stats.iter().find(|s| s.tier_level == 1).unwrap();
+        let l1_stats = tier_stats
+            .iter()
+            .find(|s| s.tier_level == 1)
+            .unwrap_or_else(|| panic!("L1 stats missing"));
         assert!(
             l1_stats.hit_count() >= 4,
             "L1 should have at least 4 hits from repeated gets"
@@ -116,7 +149,10 @@ async fn test_multi_tier_stats() {
 #[tokio::test]
 async fn test_backward_compatibility_legacy_mode() {
     // Use old-style constructor (no tiers)
-    let cache = CacheSystemBuilder::new().build().await.unwrap();
+    let cache = CacheSystemBuilder::new()
+        .build()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to build cache system"));
 
     let manager = cache.cache_manager();
 
@@ -125,9 +161,12 @@ async fn test_backward_compatibility_legacy_mode() {
     manager
         .set_with_strategy("test:legacy:1", test_data.clone(), CacheStrategy::ShortTerm)
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to set cache"));
 
-    let result = manager.get("test:legacy:1").await.unwrap();
+    let result = manager
+        .get("test:legacy:1")
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(result, Some(test_data));
 
     // Tier stats should be None for legacy mode
@@ -146,9 +185,21 @@ async fn test_backward_compatibility_legacy_mode() {
 /// Test TTL scaling across tiers
 #[tokio::test]
 async fn test_multi_tier_ttl_scaling() {
-    let l1 = Arc::new(L2Cache::new().await.unwrap());
-    let l2 = Arc::new(L2Cache::new().await.unwrap());
-    let l3 = Arc::new(L2Cache::new().await.unwrap());
+    let l1 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L1")),
+    );
+    let l2 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L2")),
+    );
+    let l3 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L3")),
+    );
 
     let cache = CacheSystemBuilder::new()
         .with_tier(l1, TierConfig::as_l1())
@@ -159,7 +210,7 @@ async fn test_multi_tier_ttl_scaling() {
         )
         .build()
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to build cache system"));
 
     let manager = cache.cache_manager();
 
@@ -172,12 +223,15 @@ async fn test_multi_tier_ttl_scaling() {
             CacheStrategy::Custom(Duration::from_secs(10)),
         )
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // L1 and L2 should have 10s TTL, L3 should have 20s TTL (2x multiplier)
     // We can't directly verify TTL from outside, but the operation should succeed
 
-    let result = manager.get("test:ttl:1").await.unwrap();
+    let result = manager
+        .get("test:ttl:1")
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert!(result.is_some(), "Should retrieve data with scaled TTL");
 
     println!("✅ Multi-tier TTL scaling test passed");
@@ -186,20 +240,31 @@ async fn test_multi_tier_ttl_scaling() {
 /// Test multi-tier cache miss
 #[tokio::test]
 async fn test_multi_tier_cache_miss() {
-    let l1 = Arc::new(L2Cache::new().await.unwrap());
-    let l2 = Arc::new(L2Cache::new().await.unwrap());
+    let l1 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L1")),
+    );
+    let l2 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L2")),
+    );
 
     let cache = CacheSystemBuilder::new()
         .with_tier(l1, TierConfig::as_l1())
         .with_tier(l2, TierConfig::as_l2())
         .build()
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to build cache system"));
 
     let manager = cache.cache_manager();
 
     // Try to get non-existent key
-    let result = manager.get("test:miss:nonexistent").await.unwrap();
+    let result = manager
+        .get("test:miss:nonexistent")
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert!(result.is_none(), "Should return None for cache miss");
 
     // Verify miss count
@@ -209,13 +274,29 @@ async fn test_multi_tier_cache_miss() {
     println!("✅ Multi-tier cache miss test passed");
 }
 
-/// Test convenience methods: with_l3() and with_l4()
+/// Test convenience methods: `with_l3()` and `with_l4()`
 #[tokio::test]
 async fn test_convenience_methods() {
-    let l1_backend = Arc::new(L2Cache::new().await.unwrap());
-    let l2_backend = Arc::new(L2Cache::new().await.unwrap());
-    let l3_backend = Arc::new(L2Cache::new().await.unwrap());
-    let l4_backend = Arc::new(L2Cache::new().await.unwrap());
+    let l1_backend = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L1")),
+    );
+    let l2_backend = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L2")),
+    );
+    let l3_backend = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L3")),
+    );
+    let l4_backend = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L4")),
+    );
 
     // Test with_l3() and with_l4() convenience methods
     let cache = CacheSystemBuilder::new()
@@ -225,7 +306,7 @@ async fn test_convenience_methods() {
         .with_l4(l4_backend)
         .build()
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to build cache system"));
 
     let manager = cache.cache_manager();
 
@@ -255,9 +336,21 @@ async fn test_multi_tier_stampede_protection() {
     use std::sync::atomic::{AtomicU32, Ordering};
     use tokio::task::JoinSet;
 
-    let l1 = Arc::new(L2Cache::new().await.unwrap());
-    let l2 = Arc::new(L2Cache::new().await.unwrap());
-    let l3 = Arc::new(L2Cache::new().await.unwrap());
+    let l1 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L1")),
+    );
+    let l2 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L2")),
+    );
+    let l3 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L3")),
+    );
 
     let cache = CacheSystemBuilder::new()
         .with_tier(l1, TierConfig::as_l1())
@@ -265,7 +358,7 @@ async fn test_multi_tier_stampede_protection() {
         .with_l3(l3)
         .build()
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to build cache system"));
 
     let manager = Arc::new(cache.cache_manager().clone());
     let key = test_key("stampede_multi_tier");
@@ -290,19 +383,23 @@ async fn test_multi_tier_stampede_protection() {
 
     // Wait for all tasks
     while let Some(result) = tasks.join_next().await {
-        result.expect("Task panicked").expect("Compute failed");
+        result
+            .unwrap_or_else(|_| panic!("Task panicked"))
+            .unwrap_or_else(|_| panic!("Compute failed"));
     }
 
     // Stampede protection: only ONE compute should have happened
     let compute_calls = compute_count.load(Ordering::SeqCst);
     assert_eq!(
         compute_calls, 1,
-        "Expected exactly 1 compute call with multi-tier stampede protection, got {}",
-        compute_calls
+        "Expected exactly 1 compute call with multi-tier stampede protection, got {compute_calls}",
     );
 
     // Verify data is in L1
-    let cached_in_l1 = manager.get(&key).await.unwrap();
+    let cached_in_l1 = manager
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert!(
         cached_in_l1.is_some(),
         "Data should be cached in L1 after stampede"
@@ -317,9 +414,21 @@ async fn test_stampede_retrieves_from_l3() {
     use std::sync::atomic::{AtomicU32, Ordering};
     use tokio::task::JoinSet;
 
-    let l1 = Arc::new(L2Cache::new().await.unwrap());
-    let l2 = Arc::new(L2Cache::new().await.unwrap());
-    let l3 = Arc::new(L2Cache::new().await.unwrap());
+    let l1 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L1")),
+    );
+    let l2 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L2")),
+    );
+    let l3 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L3")),
+    );
 
     let cache = CacheSystemBuilder::new()
         .with_tier(l1.clone(), TierConfig::as_l1())
@@ -327,7 +436,7 @@ async fn test_stampede_retrieves_from_l3() {
         .with_l3(l3.clone())
         .build()
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to build cache system"));
 
     let manager = Arc::new(cache.cache_manager().clone());
     let key = test_key("stampede_l3_hit");
@@ -336,7 +445,7 @@ async fn test_stampede_retrieves_from_l3() {
     // Pre-populate ONLY L3 (skip L1 and L2)
     l3.set_with_ttl(&key, data.clone(), std::time::Duration::from_secs(300))
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to set L3"));
 
     let compute_count = Arc::new(AtomicU32::new(0));
 
@@ -363,23 +472,22 @@ async fn test_stampede_retrieves_from_l3() {
     // Wait for all tasks
     while let Some(result) = tasks.join_next().await {
         result
-            .expect("Task panicked")
-            .expect("Should retrieve from L3");
+            .unwrap_or_else(|_| panic!("Task panicked"))
+            .unwrap_or_else(|_| panic!("Should retrieve from L3"));
     }
 
     // Should NOT have computed (data retrieved from L3)
     let compute_calls = compute_count.load(Ordering::SeqCst);
     assert_eq!(
         compute_calls, 0,
-        "Expected 0 compute calls (data should be retrieved from L3), got {}",
-        compute_calls
+        "Expected 0 compute calls (data should be retrieved from L3), got {compute_calls}",
     );
 
     // Verify data was promoted to L1
     let l1_data = l1.get(&key).await;
     assert!(l1_data.is_some(), "Data should be promoted from L3 to L1");
     assert_eq!(
-        l1_data.unwrap(),
+        l1_data.unwrap_or_else(|| panic!("L1 data missing")),
         data,
         "Promoted data should match original"
     );

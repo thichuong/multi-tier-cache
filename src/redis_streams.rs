@@ -51,17 +51,17 @@ pub type StreamEntry = (String, Vec<(String, String)>);
 
 /// Redis Streams client for event-driven architectures
 ///
-/// Wraps Redis ConnectionManager to provide high-level streaming operations.
+/// Wraps Redis `ConnectionManager` to provide high-level streaming operations.
 #[derive(Clone)]
 pub struct RedisStreams {
     conn_manager: ConnectionManager,
 }
 
 impl RedisStreams {
-    /// Create a new RedisStreams instance
+    /// Create a new `RedisStreams` instance
     ///
     /// # Arguments
-    /// * `redis_url` - Redis connection URL (e.g., "redis://127.0.0.1:6379")
+    /// * `redis_url` - Redis connection URL (e.g., `<redis://127.0.0.1:6379>`)
     ///
     /// # Example
     ///
@@ -72,6 +72,9 @@ impl RedisStreams {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Errors
+    ///
+    /// Returns an error if Redis connection fails.
     pub async fn new(redis_url: &str) -> Result<Self> {
         let client = redis::Client::open(redis_url)?;
         let conn_manager = ConnectionManager::new(client).await?;
@@ -84,7 +87,7 @@ impl RedisStreams {
     /// Publish data to Redis Stream using XADD
     ///
     /// # Arguments
-    /// * `stream_key` - Name of the Redis Stream (e.g., "events_stream")
+    /// * `stream_key` - Name of the Redis Stream (e.g., "`events_stream`")
     /// * `fields` - Vec of field-value pairs to add to the stream
     /// * `maxlen` - Optional maximum length for stream trimming (uses MAXLEN ~ for approximate trimming)
     ///
@@ -110,6 +113,9 @@ impl RedisStreams {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Errors
+    ///
+    /// Returns an error if the XADD command fails.
     pub async fn stream_add(
         &self,
         stream_key: &str,
@@ -152,7 +158,7 @@ impl RedisStreams {
     /// * `count` - Number of latest entries to retrieve
     ///
     /// # Returns
-    /// Vector of (entry_id, fields) tuples, ordered from newest to oldest
+    /// Vector of (`entry_id`, fields) tuples, ordered from newest to oldest
     ///
     /// # Example
     ///
@@ -167,6 +173,9 @@ impl RedisStreams {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Errors
+    ///
+    /// Returns an error if the XREVRANGE command fails.
     pub async fn stream_read_latest(
         &self,
         stream_key: &str,
@@ -203,7 +212,7 @@ impl RedisStreams {
     /// * `block_ms` - Optional blocking timeout in milliseconds (None for non-blocking)
     ///
     /// # Returns
-    /// Vector of (entry_id, fields) tuples
+    /// Vector of (`entry_id`, fields) tuples
     ///
     /// # Example
     ///
@@ -219,6 +228,9 @@ impl RedisStreams {
     /// # Ok(())
     /// # }
     /// ```
+    /// # Errors
+    ///
+    /// Returns an error if the XREAD command fails.
     pub async fn stream_read(
         &self,
         stream_key: &str,
@@ -262,22 +274,29 @@ impl RedisStreams {
                     if let redis::Value::Array(entry_parts) = entry {
                         if entry_parts.len() >= 2 {
                             // First element is the ID
-                            let id = Self::value_to_string(&entry_parts[0]);
+                            if let Some(id_val) = entry_parts.first() {
+                                let id = Self::value_to_string(id_val);
 
-                            // Second element is the field-value array
-                            if let redis::Value::Array(field_values) = &entry_parts[1] {
-                                let mut fields = Vec::new();
+                                // Second element is the field-value array
+                                if let Some(redis::Value::Array(field_values)) = entry_parts.get(1)
+                                {
+                                    let mut fields = Vec::new();
 
-                                // Process pairs of field-value
-                                for chunk in field_values.chunks(2) {
-                                    if chunk.len() == 2 {
-                                        let field = Self::value_to_string(&chunk[0]);
-                                        let value = Self::value_to_string(&chunk[1]);
-                                        fields.push((field, value));
+                                    // Process pairs of field-value
+                                    for chunk in field_values.chunks(2) {
+                                        if chunk.len() == 2 {
+                                            if let (Some(field_val), Some(value_val)) =
+                                                (chunk.first(), chunk.get(1))
+                                            {
+                                                let field = Self::value_to_string(field_val);
+                                                let value = Self::value_to_string(value_val);
+                                                fields.push((field, value));
+                                            }
+                                        }
                                     }
-                                }
 
-                                result.push((id, fields));
+                                    result.push((id, fields));
+                                }
                             }
                         }
                     }
@@ -291,7 +310,7 @@ impl RedisStreams {
     }
 
     /// Helper function to parse XREAD response
-    /// Format: [[stream_name, [[id, [field, value, ...]], ...]], ...]
+    /// Format: [[`stream_name`, [[id, [field, value, ...]], ...]], ...]
     fn parse_xread_response(value: redis::Value) -> Result<Vec<StreamEntry>> {
         match value {
             redis::Value::Array(streams) => {
@@ -301,28 +320,38 @@ impl RedisStreams {
                     if let redis::Value::Array(stream_parts) = stream {
                         if stream_parts.len() >= 2 {
                             // Second element contains the entries
-                            if let redis::Value::Array(entries) = &stream_parts[1] {
+                            if let Some(redis::Value::Array(entries)) = stream_parts.get(1) {
                                 for entry in entries {
                                     if let redis::Value::Array(entry_parts) = entry {
                                         if entry_parts.len() >= 2 {
-                                            let id = Self::value_to_string(&entry_parts[0]);
+                                            if let Some(id_val) = entry_parts.first() {
+                                                let id = Self::value_to_string(id_val);
 
-                                            if let redis::Value::Array(field_values) =
-                                                &entry_parts[1]
-                                            {
-                                                let mut fields = Vec::new();
+                                                if let Some(redis::Value::Array(field_values)) =
+                                                    entry_parts.get(1)
+                                                {
+                                                    let mut fields = Vec::new();
 
-                                                for chunk in field_values.chunks(2) {
-                                                    if chunk.len() == 2 {
-                                                        let field =
-                                                            Self::value_to_string(&chunk[0]);
-                                                        let value =
-                                                            Self::value_to_string(&chunk[1]);
-                                                        fields.push((field, value));
+                                                    for chunk in field_values.chunks(2) {
+                                                        if chunk.len() == 2 {
+                                                            if let (
+                                                                Some(field_val),
+                                                                Some(value_val),
+                                                            ) = (chunk.first(), chunk.get(1))
+                                                            {
+                                                                let field = Self::value_to_string(
+                                                                    field_val,
+                                                                );
+                                                                let value = Self::value_to_string(
+                                                                    value_val,
+                                                                );
+                                                                fields.push((field, value));
+                                                            }
+                                                        }
                                                     }
-                                                }
 
-                                                all_entries.push((id, fields));
+                                                    all_entries.push((id, fields));
+                                                }
                                             }
                                         }
                                     }
@@ -346,15 +375,14 @@ impl RedisStreams {
             redis::Value::SimpleString(s) => s.clone(),
             redis::Value::Int(i) => i.to_string(),
             redis::Value::Okay => "OK".to_string(),
-            redis::Value::Nil => String::new(),
             _ => String::new(),
         }
     }
 }
 
-/// Implement StreamingBackend trait for RedisStreams
+/// Implement `StreamingBackend` trait for `RedisStreams`
 ///
-/// This enables RedisStreams to be used as a pluggable streaming backend.
+/// This enables `RedisStreams` to be used as a pluggable streaming backend.
 #[async_trait]
 impl StreamingBackend for RedisStreams {
     async fn stream_add(

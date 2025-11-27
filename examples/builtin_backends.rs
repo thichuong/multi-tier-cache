@@ -5,13 +5,13 @@
 //!
 //! Available backends:
 //! - **L1 (In-Memory)**:
-//!   - MokaCache (default) - High-performance with automatic eviction
-//!   - DashMapCache - Simple concurrent HashMap-based cache
-//!   - QuickCacheBackend - Lightweight, optimized for maximum performance (requires `backend-quickcache` feature)
+//!   - `MokaCache` (default) - High-performance with automatic eviction
+//!   - `DashMapCache` - Simple concurrent HashMap-based cache
+//!   - `QuickCacheBackend` - Lightweight, optimized for maximum performance (requires `backend-quickcache` feature)
 //!
-//! - **L2 (Distributed)**:
-//!   - RedisCache (default) - Industry-standard with persistence
-//!   - MemcachedCache - Lightweight distributed cache (requires `backend-memcached` feature)
+//! L2 (Warm Tier):
+//!   - `RedisCache` (default) - Industry-standard with persistence
+//!   - `MemcachedCache` - Lightweight distributed cache (requires `backend-memcached` feature)
 //!
 //! Run with:
 //! ```bash
@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Demonstrate DashMapCache as L1 backend
+/// Demonstrate `DashMapCache` as L1 backend
 async fn demo_dashmap_backend() -> Result<()> {
     use multi_tier_cache::DashMapCache;
 
@@ -106,7 +106,7 @@ async fn demo_dashmap_backend() -> Result<()> {
         .await?;
 
     if let Some(cached) = manager.get("user:bob").await? {
-        println!("✅ Retrieved from DashMapCache: {}", cached);
+        println!("✅ Retrieved from DashMapCache: {cached}");
     }
 
     // Show statistics
@@ -119,12 +119,12 @@ async fn demo_dashmap_backend() -> Result<()> {
     // Demonstrate cleanup of expired entries
     println!("\n🧹 DashMapCache has manual cleanup (no automatic eviction)");
     let removed = dashmap_l1.cleanup_expired();
-    println!("   Cleaned up {} expired entries", removed);
+    println!("   Cleaned up {removed} expired entries");
 
     Ok(())
 }
 
-/// Demonstrate MemcachedCache standalone usage
+/// Demonstrate `MemcachedCache` standalone usage
 #[cfg(feature = "backend-memcached")]
 async fn demo_memcached_backend() -> Result<()> {
     use multi_tier_cache::MemcachedCache;
@@ -134,7 +134,7 @@ async fn demo_memcached_backend() -> Result<()> {
     println!("⚠️  Note: Requires Memcached server running at localhost:11211");
 
     // Try to create MemcachedCache (may fail if server not running)
-    match MemcachedCache::new().await {
+    match MemcachedCache::new() {
         Ok(memcached) => {
             println!("✅ Connected to Memcached");
 
@@ -156,25 +156,25 @@ async fn demo_memcached_backend() -> Result<()> {
 
             // Get the value
             if let Some(cached) = memcached.get("product:laptop").await {
-                println!("✅ Retrieved from MemcachedCache: {}", cached);
+                println!("✅ Retrieved from MemcachedCache: {cached}");
             }
 
             // Show server statistics
             if let Ok(server_stats) = memcached.get_server_stats() {
                 println!("\n📊 Memcached Server Stats:");
                 for (server, stats) in server_stats {
-                    println!("   Server: {}", server);
+                    println!("   Server: {server}");
                     if let Some(version) = stats.get("version") {
-                        println!("     Version: {}", version);
+                        println!("     Version: {version}");
                     }
                     if let Some(uptime) = stats.get("uptime") {
-                        println!("     Uptime: {}s", uptime);
+                        println!("     Uptime: {uptime}s");
                     }
                     if let Some(cmd_get) = stats.get("cmd_get") {
-                        println!("     Total GETs: {}", cmd_get);
+                        println!("     Total GETs: {cmd_get}");
                     }
                     if let Some(cmd_set) = stats.get("cmd_set") {
-                        println!("     Total SETs: {}", cmd_set);
+                        println!("     Total SETs: {cmd_set}");
                     }
                 }
             }
@@ -187,7 +187,7 @@ async fn demo_memcached_backend() -> Result<()> {
             println!("   You can use it standalone or wrap it in a custom backend that implements L2CacheBackend.");
         }
         Err(e) => {
-            println!("❌ Failed to connect to Memcached: {}", e);
+            println!("❌ Failed to connect to Memcached: {e}");
             println!("   Make sure Memcached is running: memcached -p 11211");
             println!("   Or set MEMCACHED_URL environment variable");
         }
@@ -196,7 +196,7 @@ async fn demo_memcached_backend() -> Result<()> {
     Ok(())
 }
 
-/// Demonstrate QuickCacheBackend as L1 backend
+/// Demonstrate `QuickCacheBackend` as L1 backend
 #[cfg(feature = "backend-quickcache")]
 async fn demo_quickcache_backend() -> Result<()> {
     use multi_tier_cache::QuickCacheBackend;
@@ -204,7 +204,7 @@ async fn demo_quickcache_backend() -> Result<()> {
     println!("Using QuickCacheBackend as L1 backend...");
 
     // Create QuickCacheBackend with custom capacity
-    let quickcache_l1 = Arc::new(QuickCacheBackend::new(5000).await?);
+    let quickcache_l1: Arc<QuickCacheBackend> = Arc::new(QuickCacheBackend::new(5000)?);
 
     // Build cache system with QuickCache as L1
     let cache = CacheSystemBuilder::new()
@@ -218,7 +218,7 @@ async fn demo_quickcache_backend() -> Result<()> {
     let test_data = serde_json::json!({
         "session_id": "abc123",
         "user_id": 42,
-        "expires_at": 1234567890
+        "expires_at": 1_234_567_890
     });
 
     manager
@@ -230,7 +230,7 @@ async fn demo_quickcache_backend() -> Result<()> {
         .await?;
 
     if let Some(cached) = manager.get("session:abc123").await? {
-        println!("✅ Retrieved from QuickCache: {}", cached);
+        println!("✅ Retrieved from QuickCache: {cached}");
     }
 
     // Show statistics

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Common utilities for integration tests
 //!
 //! This module provides shared test infrastructure including:
@@ -17,12 +18,12 @@ pub fn redis_url() -> String {
 
 /// Generate a unique test key prefix to avoid conflicts between tests
 pub fn test_key_prefix() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or(Duration::from_secs(0))
         .as_millis();
-    format!("test:{}:", timestamp)
+    format!("test:{timestamp}:")
 }
 
 /// Create a test key with unique prefix
@@ -53,7 +54,7 @@ pub async fn cleanup_test_keys(prefix: &str) -> Result<()> {
     let l2 = Arc::new(L2Cache::new().await?);
 
     // Find all test keys
-    let pattern = format!("{}*", prefix);
+    let pattern = format!("{prefix}*");
     let keys = l2.scan_keys(&pattern).await?;
 
     // Remove them
@@ -64,7 +65,6 @@ pub async fn cleanup_test_keys(prefix: &str) -> Result<()> {
     Ok(())
 }
 
-/// Generate test data of various types
 pub mod test_data {
     use serde::{Deserialize, Serialize};
 
@@ -79,8 +79,8 @@ pub mod test_data {
         pub fn new(id: u64) -> Self {
             Self {
                 id,
-                name: format!("User {}", id),
-                email: format!("user{}@example.com", id),
+                name: format!("User {id}"),
+                email: format!("user{id}@example.com"),
             }
         }
     }
@@ -97,7 +97,8 @@ pub mod test_data {
         pub fn new(id: u64) -> Self {
             Self {
                 id,
-                name: format!("Product {}", id),
+                name: format!("Product {id}"),
+                #[allow(clippy::cast_precision_loss)]
                 price: 99.99 + (id as f64),
                 category: format!("Category {}", id % 5),
             }

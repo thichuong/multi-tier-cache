@@ -128,7 +128,7 @@ pub trait CacheBackend: Send + Sync {
     /// # Returns
     ///
     /// A string identifying this cache backend (e.g., "Moka", "Redis", "Memcached")
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "unknown"
     }
 }
@@ -226,7 +226,7 @@ pub trait StreamingBackend: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `stream_key` - Name of the stream (e.g., "events_stream")
+    /// * `stream_key` - Name of the stream (e.g., "`events_stream`")
     /// * `fields` - Vector of field-value pairs to add
     /// * `maxlen` - Optional maximum stream length (older entries are trimmed)
     ///
@@ -255,7 +255,7 @@ pub trait StreamingBackend: Send + Sync {
     ///
     /// # Returns
     ///
-    /// * `Ok(entries)` - Vector of (entry_id, fields) tuples (newest first)
+    /// * `Ok(entries)` - Vector of (`entry_id`, fields) tuples (newest first)
     /// * `Err(e)` - Stream operation failed
     ///
     /// # Ordering
@@ -278,7 +278,7 @@ pub trait StreamingBackend: Send + Sync {
     ///
     /// # Returns
     ///
-    /// * `Ok(entries)` - Vector of (entry_id, fields) tuples
+    /// * `Ok(entries)` - Vector of (`entry_id`, fields) tuples
     /// * `Err(e)` - Stream operation failed
     ///
     /// # Blocking Behavior

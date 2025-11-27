@@ -6,18 +6,17 @@
 //! Run with: `cargo run --example custom_backends`
 
 use anyhow::Result;
-use multi_tier_cache::{async_trait, CacheBackend, CacheSystemBuilder, L2CacheBackend};
-use serde_json;
+use multi_tier_cache::{async_trait, CacheBackend, CacheSystemBuilder, L2CacheBackend, TierConfig};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 // ==================== Example 1: Simple HashMap L1 Cache ====================
 
-/// Simple in-memory cache using HashMap and RwLock
+/// Simple in-memory cache using `HashMap` and `RwLock`
 ///
 /// This is a basic example showing the minimum required implementation.
-/// In production, you might use DashMap or other concurrent data structures.
+/// In production, you might use `DashMap` or other concurrent data structures.
 struct HashMapCache {
     name: String,
     store: Arc<RwLock<HashMap<String, (serde_json::Value, Instant)>>>,
@@ -25,7 +24,7 @@ struct HashMapCache {
 
 impl HashMapCache {
     fn new(name: &str) -> Self {
-        println!("  🗺️ Initializing {} with HashMap backend...", name);
+        println!("  🗺️ Initializing {name} with HashMap backend...");
         Self {
             name: name.to_string(),
             store: Arc::new(RwLock::new(HashMap::new())),
@@ -33,7 +32,10 @@ impl HashMapCache {
     }
 
     fn cleanup_expired(&self) {
-        let mut store = self.store.write().unwrap();
+        let mut store = self
+            .store
+            .write()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         let now = Instant::now();
         store.retain(|_, (_, expiry)| *expiry > now);
     }
@@ -47,7 +49,10 @@ impl CacheBackend for HashMapCache {
             self.cleanup_expired();
         }
 
-        let store = self.store.read().unwrap();
+        let store = self
+            .store
+            .read()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         store.get(key).and_then(|(value, expiry)| {
             if *expiry > Instant::now() {
                 Some(value.clone())
@@ -58,7 +63,10 @@ impl CacheBackend for HashMapCache {
     }
 
     async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let mut store = self.store.write().unwrap();
+        let mut store = self
+            .store
+            .write()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         let expiry = Instant::now() + ttl;
         store.insert(key.to_string(), (value, expiry));
         println!("💾 [{}] Cached '{}' with TTL {:?}", self.name, key, ttl);
@@ -66,7 +74,10 @@ impl CacheBackend for HashMapCache {
     }
 
     async fn remove(&self, key: &str) -> Result<()> {
-        let mut store = self.store.write().unwrap();
+        let mut store = self
+            .store
+            .write()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         store.remove(key);
         Ok(())
     }
@@ -76,8 +87,8 @@ impl CacheBackend for HashMapCache {
         self.store.read().is_ok()
     }
 
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &'static str {
+        "HashMapCache"
     }
 }
 
@@ -85,9 +96,11 @@ impl CacheBackend for HashMapCache {
 
 /// In-memory L2 cache that simulates a distributed cache
 ///
-/// This demonstrates implementing L2CacheBackend which requires get_with_ttl().
+/// This demonstrates implementing `L2CacheBackend` which requires `get_with_ttl()`.
+type L2Store = Arc<RwLock<HashMap<String, (serde_json::Value, Instant, Duration)>>>;
+
 struct InMemoryL2Cache {
-    store: Arc<RwLock<HashMap<String, (serde_json::Value, Instant, Duration)>>>,
+    store: L2Store,
 }
 
 impl InMemoryL2Cache {
@@ -102,7 +115,10 @@ impl InMemoryL2Cache {
 #[async_trait]
 impl CacheBackend for InMemoryL2Cache {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        let store = self.store.read().unwrap();
+        let store = self
+            .store
+            .read()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         store.get(key).and_then(|(value, expiry, _)| {
             if *expiry > Instant::now() {
                 Some(value.clone())
@@ -113,15 +129,21 @@ impl CacheBackend for InMemoryL2Cache {
     }
 
     async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let mut store = self.store.write().unwrap();
+        let mut store = self
+            .store
+            .write()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         let expiry = Instant::now() + ttl;
         store.insert(key.to_string(), (value, expiry, ttl));
-        println!("💾 [InMemory L2] Cached '{}' with TTL {:?}", key, ttl);
+        println!("💾 [InMemory L2] Cached '{key}' with TTL {ttl:?}");
         Ok(())
     }
 
     async fn remove(&self, key: &str) -> Result<()> {
-        let mut store = self.store.write().unwrap();
+        let mut store = self
+            .store
+            .write()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         store.remove(key);
         Ok(())
     }
@@ -130,15 +152,18 @@ impl CacheBackend for InMemoryL2Cache {
         self.store.read().is_ok()
     }
 
-    fn name(&self) -> &str {
-        "InMemory (L2)"
+    fn name(&self) -> &'static str {
+        "InMemoryL2"
     }
 }
 
 #[async_trait]
 impl L2CacheBackend for InMemoryL2Cache {
     async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
-        let store = self.store.read().unwrap();
+        let store = self
+            .store
+            .read()
+            .unwrap_or_else(|_| panic!("Lock poisoned"));
         store.get(key).and_then(|(value, expiry, _original_ttl)| {
             let now = Instant::now();
             if *expiry > now {
@@ -163,7 +188,7 @@ struct NoOpCache {
 
 impl NoOpCache {
     fn new(name: &str) -> Self {
-        println!("  ⚠️ Initializing No-Op Cache for {}", name);
+        println!("  ⚠️ Initializing No-Op Cache for {name}");
         Self {
             name: name.to_string(),
         }
@@ -197,8 +222,8 @@ impl CacheBackend for NoOpCache {
         true
     }
 
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &'static str {
+        "NoOp"
     }
 }
 
@@ -234,7 +259,7 @@ async fn main() -> Result<()> {
     let test_data = serde_json::json!({
         "user": "alice",
         "score": 100,
-        "timestamp": 1234567890
+        "timestamp": 1_234_567_890
     });
 
     manager
@@ -246,7 +271,7 @@ async fn main() -> Result<()> {
         .await?;
 
     if let Some(cached) = manager.get("user:alice").await? {
-        println!("✅ Retrieved from cache: {}", cached);
+        println!("✅ Retrieved from cache: {cached}");
     }
 
     // Example 2: No-Op caches (for testing/development)
@@ -307,8 +332,6 @@ async fn main() -> Result<()> {
     // Example 4: Custom Tier Configuration (v0.5.0+)
     println!("\n📦 Example 4: Custom Tier Configuration (using with_tier)");
     println!("──────────────────────────────────────────────────────\n");
-
-    use multi_tier_cache::TierConfig;
 
     // Create a custom L2 backend
     let custom_l2_tier = Arc::new(InMemoryL2Cache::new());

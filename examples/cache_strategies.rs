@@ -2,7 +2,7 @@
 //!
 //! Demonstrates different caching strategies for various use cases.
 //!
-//! Run with: cargo run --example cache_strategies
+//! Run with: cargo run --example `cache_strategies`
 
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::time::Duration;
@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     println!("1. RealTime Strategy (10s TTL) - Fast-changing data");
     let live_data = serde_json::json!({
         "price": 42000.50,
-        "volume": 1000000,
+        "volume": 1_000_000,
         "last_updated": "2025-01-01T00:00:00Z"
     });
     cache
@@ -109,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
 
     for key in keys {
         if let Some(value) = cache.cache_manager().get(key).await? {
-            println!("✅ {}: {}", key, value);
+            println!("✅ {key}: {value}");
         }
     }
 

@@ -156,6 +156,9 @@ impl CacheSystem {
     ///     Ok(())
     /// }
     /// ```
+    /// # Errors
+    ///
+    /// Returns an error if cache initialization fails.
     pub async fn new() -> Result<Self> {
         info!("Initializing Multi-Tier Cache System");
 
@@ -194,6 +197,9 @@ impl CacheSystem {
     ///     Ok(())
     /// }
     /// ```
+    /// # Errors
+    ///
+    /// Returns an error if cache initialization fails.
     pub async fn with_redis_url(redis_url: &str) -> Result<Self> {
         info!(redis_url = %redis_url, "Initializing Multi-Tier Cache System with custom Redis URL");
 
@@ -260,6 +266,7 @@ impl CacheSystem {
     /// Get reference to cache manager (primary interface)
     ///
     /// Use this for all cache operations: get, set, streams, etc.
+    #[must_use]
     pub fn cache_manager(&self) -> &Arc<CacheManager> {
         &self.cache_manager
     }
