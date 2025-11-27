@@ -71,3 +71,14 @@ harness = false
 [[bench]]
 name = "multi_tier"
 harness = false
+
+[lints.clippy]
+
+pedantic = "warn"
+
+
+unwrap_used = "warn"
+
+expect_used = "warn"
+
+indexing_slicing = "warn" 
