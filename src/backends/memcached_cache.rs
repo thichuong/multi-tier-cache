@@ -51,7 +51,10 @@ impl MemcachedCache {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn new() -> Result<Self> {
+    /// # Errors
+    ///
+    /// Returns an error if the Memcached client cannot be created.
+    pub fn new() -> Result<Self> {
         info!("Initializing Memcached Cache");
 
         // Get Memcached URL from environment
@@ -60,7 +63,7 @@ impl MemcachedCache {
 
         // Create Memcached client
         let client = memcache::connect(memcached_url.as_str())
-            .map_err(|e| anyhow!("Failed to connect to Memcached: {}", e))?;
+            .map_err(|e| anyhow!("Failed to connect to Memcached: {e}"))?;
 
         // Test connection with version command
         match client.version() {
@@ -72,7 +75,7 @@ impl MemcachedCache {
                 );
             }
             Err(e) => {
-                return Err(anyhow!("Memcached connection test failed: {}", e));
+                return Err(anyhow!("Memcached connection test failed: {e}"));
             }
         }
 
@@ -87,7 +90,7 @@ impl MemcachedCache {
     /// Get cache statistics (from Memcached server)
     ///
     /// Returns server statistics like hits, misses, uptime, etc.
-    /// Each tuple contains (server_address, stats_map)
+    /// Each tuple contains (`server_address`, stats_map)
     pub fn get_server_stats(
         &self,
     ) -> Result<Vec<(String, std::collections::HashMap<String, String>)>> {

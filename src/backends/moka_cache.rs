@@ -53,7 +53,10 @@ pub struct MokaCache {
 
 impl MokaCache {
     /// Create new Moka cache
-    pub async fn new() -> Result<Self> {
+    /// # Errors
+    ///
+    /// Returns an error if the cache cannot be initialized.
+    pub fn new() -> Result<Self> {
         info!("Initializing Moka Cache");
 
         let cache = Cache::builder()
@@ -82,28 +85,25 @@ impl MokaCache {
 use crate::traits::CacheBackend;
 use async_trait::async_trait;
 
-/// Implement CacheBackend trait for MokaCache
+/// Implement `CacheBackend` trait for `MokaCache`
 ///
-/// This allows MokaCache to be used as a pluggable backend in the multi-tier cache system.
+/// This allows `MokaCache` to be used as a pluggable backend in the multi-tier cache system.
 #[async_trait]
 impl CacheBackend for MokaCache {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        match self.cache.get(key).await {
-            Some(entry) => {
-                if entry.is_expired() {
-                    // Remove expired entry
-                    let _ = self.cache.remove(key).await;
-                    self.misses.fetch_add(1, Ordering::Relaxed);
-                    None
-                } else {
-                    self.hits.fetch_add(1, Ordering::Relaxed);
-                    Some(entry.value)
-                }
-            }
-            None => {
+        if let Some(entry) = self.cache.get(key).await {
+            if entry.is_expired() {
+                // Remove expired entry
+                let _ = self.cache.remove(key).await;
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 None
+            } else {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                Some(entry.value)
             }
+        } else {
+            self.misses.fetch_add(1, Ordering::Relaxed);
+            None
         }
     }
 
@@ -129,7 +129,7 @@ impl CacheBackend for MokaCache {
             .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
             .await
         {
-            Ok(_) => match self.get(test_key).await {
+            Ok(()) => match self.get(test_key).await {
                 Some(retrieved) => {
                     let _ = self.remove(test_key).await;
                     retrieved == test_value
@@ -140,7 +140,7 @@ impl CacheBackend for MokaCache {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Moka"
     }
 }

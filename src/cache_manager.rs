@@ -322,7 +322,7 @@ impl CacheManager {
     ///
     /// let manager = CacheManager::new_with_backends(l1, l2, None).await?;
     /// ```
-    pub async fn new_with_backends(
+    pub fn new_with_backends(
         l1_cache: Arc<dyn CacheBackend>,
         l2_cache: Arc<dyn L2CacheBackend>,
         streaming_backend: Option<Arc<dyn StreamingBackend>>,
@@ -376,7 +376,7 @@ impl CacheManager {
         let redis_streams = crate::redis_streams::RedisStreams::new(&redis_url).await?;
         let streaming_backend: Arc<dyn StreamingBackend> = Arc::new(redis_streams);
 
-        Self::new_with_backends(l1_backend, l2_backend, Some(streaming_backend)).await
+        Self::new_with_backends(l1_backend, l2_backend, Some(streaming_backend))
     }
 
     /// Create new cache manager with invalidation support
@@ -484,7 +484,7 @@ impl CacheManager {
     ///
     /// let manager = CacheManager::new_with_tiers(tiers, None).await?;
     /// ```
-    pub async fn new_with_tiers(
+    pub fn new_with_tiers(
         tiers: Vec<CacheTier>,
         streaming_backend: Option<Arc<dyn StreamingBackend>>,
     ) -> Result<Self> {
@@ -822,10 +822,10 @@ impl CacheManager {
                     ttl
                 );
                 return Ok(());
-            } else {
-                return Err(last_error
-                    .unwrap_or_else(|| anyhow::anyhow!("All tiers failed for key '{}'", key)));
             }
+            return Err(
+                last_error.unwrap_or_else(|| anyhow::anyhow!("All tiers failed for key '{}'", key))
+            );
         }
 
         // LEGACY: 2-tier mode (L1 + L2)

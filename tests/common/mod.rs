@@ -38,7 +38,7 @@ pub async fn setup_cache_system() -> Result<CacheSystem> {
 
 /// Initialize cache manager with invalidation for testing
 pub async fn setup_cache_with_invalidation() -> Result<Arc<CacheManager>> {
-    let l1 = Arc::new(L1Cache::new().await?);
+    let l1 = Arc::new(L1Cache::new()?);
     let l2 = Arc::new(L2Cache::new().await?);
     let config = InvalidationConfig::default();
 
@@ -49,7 +49,7 @@ pub async fn setup_cache_with_invalidation() -> Result<Arc<CacheManager>> {
 
 /// Cleanup test keys from Redis
 pub async fn cleanup_test_keys(prefix: &str) -> Result<()> {
-    let cache = setup_cache_system().await?;
+    let _cache = setup_cache_system().await?;
     let l2 = Arc::new(L2Cache::new().await?);
 
     // Find all test keys

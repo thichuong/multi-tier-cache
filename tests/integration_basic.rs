@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use multi_tier_cache::{CacheBackend, CacheManagerStats, CacheStrategy};
+use multi_tier_cache::{CacheBackend, CacheStrategy};
 use std::time::Duration;
 
 /// Test basic cache set and get operations

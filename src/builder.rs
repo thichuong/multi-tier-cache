@@ -1,6 +1,6 @@
 //! Cache System Builder
 //!
-//! Provides a flexible builder pattern for constructing CacheSystem with custom backends.
+//! Provides a flexible builder pattern for constructing `CacheSystem` with custom backends.
 //!
 //! # Example: Using Default Backends
 //!
@@ -36,7 +36,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::info;
 
-/// Builder for constructing CacheSystem with custom backends
+/// Builder for constructing `CacheSystem` with custom backends
 ///
 /// This builder allows you to configure custom L1 (in-memory) and L2 (distributed)
 /// cache backends, enabling you to swap Moka and Redis with alternative implementations.
@@ -108,6 +108,7 @@ impl CacheSystemBuilder {
     ///
     /// By default, calling `.build()` will use Moka (L1) and Redis (L2).
     /// Use `.with_tier()` to configure multi-tier architecture (v0.5.0+).
+    #[must_use]
     pub fn new() -> Self {
         Self {
             l1_backend: None,
@@ -136,6 +137,7 @@ impl CacheSystemBuilder {
     ///     .build()
     ///     .await?;
     /// ```
+    #[must_use]
     pub fn with_l1(mut self, backend: Arc<dyn CacheBackend>) -> Self {
         self.l1_backend = Some(backend);
         self
@@ -160,6 +162,7 @@ impl CacheSystemBuilder {
     ///     .build()
     ///     .await?;
     /// ```
+    #[must_use]
     pub fn with_l2(mut self, backend: Arc<dyn L2CacheBackend>) -> Self {
         self.l2_backend = Some(backend);
         self
@@ -187,6 +190,7 @@ impl CacheSystemBuilder {
     ///     .build()
     ///     .await?;
     /// ```
+    #[must_use]
     pub fn with_streams(mut self, backend: Arc<dyn StreamingBackend>) -> Self {
         self.streaming_backend = Some(backend);
         self
@@ -195,7 +199,7 @@ impl CacheSystemBuilder {
     /// Configure a cache tier with custom settings (v0.5.0+)
     ///
     /// Add a cache tier to the multi-tier architecture. Tiers will be sorted
-    /// by tier_level during build.
+    /// by `tier_level` during build.
     ///
     /// # Arguments
     ///
@@ -219,6 +223,7 @@ impl CacheSystemBuilder {
     ///     .build()
     ///     .await?;
     /// ```
+    #[must_use]
     pub fn with_tier(mut self, backend: Arc<dyn L2CacheBackend>, config: TierConfig) -> Self {
         self.tiers.push((backend, config));
         self
@@ -230,7 +235,7 @@ impl CacheSystemBuilder {
     ///
     /// # Arguments
     ///
-    /// * `backend` - L3 backend (e.g., RocksDB, LevelDB)
+    /// * `backend` - L3 backend (e.g., `RocksDB`, `LevelDB`)
     ///
     /// # Example
     ///
@@ -244,6 +249,7 @@ impl CacheSystemBuilder {
     ///     .build()
     ///     .await?;
     /// ```
+    #[must_use]
     pub fn with_l3(mut self, backend: Arc<dyn L2CacheBackend>) -> Self {
         self.tiers.push((backend, TierConfig::as_l3()));
         self
@@ -269,12 +275,13 @@ impl CacheSystemBuilder {
     ///     .build()
     ///     .await?;
     /// ```
+    #[must_use]
     pub fn with_l4(mut self, backend: Arc<dyn L2CacheBackend>) -> Self {
         self.tiers.push((backend, TierConfig::as_l4()));
         self
     }
 
-    /// Build the CacheSystem with configured or default backends
+    /// Build the `CacheSystem` with configured or default backends
     ///
     /// If no custom backends were provided via `.with_l1()` or `.with_l2()`,
     /// this method creates default backends (Moka for L1, Redis for L2).
@@ -282,7 +289,7 @@ impl CacheSystemBuilder {
     /// # Multi-Tier Mode (v0.5.0+)
     ///
     /// If tiers were configured via `.with_tier()`, `.with_l3()`, or `.with_l4()`,
-    /// the builder creates a multi-tier CacheManager using `new_with_tiers()`.
+    /// the builder creates a multi-tier `CacheManager` using `new_with_tiers()`.
     ///
     /// # Returns
     ///
@@ -306,6 +313,9 @@ impl CacheSystemBuilder {
     ///     Ok(())
     /// }
     /// ```
+    /// # Errors
+    ///
+    /// Returns an error if the default backends cannot be initialized.
     pub async fn build(self) -> Result<CacheSystem> {
         info!("Building Multi-Tier Cache System");
 
@@ -334,8 +344,10 @@ impl CacheSystemBuilder {
                 .collect();
 
             // Create cache manager with multi-tier support
-            let cache_manager =
-                Arc::new(CacheManager::new_with_tiers(cache_tiers, self.streaming_backend).await?);
+            let cache_manager = Arc::new(CacheManager::new_with_tiers(
+                cache_tiers,
+                self.streaming_backend,
+            )?);
 
             info!("Multi-Tier Cache System built successfully");
             info!("Note: Using multi-tier mode - use cache_manager() for all operations");
@@ -353,7 +365,7 @@ impl CacheSystemBuilder {
             // Default path: Create concrete types once and reuse them
             info!("Initializing default backends (Moka + Redis)");
 
-            let l1_cache = Arc::new(L1Cache::new().await?);
+            let l1_cache = Arc::new(L1Cache::new()?);
             let l2_cache = Arc::new(L2Cache::new().await?);
 
             // Use legacy constructor that handles conversion to trait objects
@@ -378,7 +390,7 @@ impl CacheSystemBuilder {
                 }
                 None => {
                     info!("Using default L1 backend (Moka)");
-                    Arc::new(L1Cache::new().await?)
+                    Arc::new(L1Cache::new()?)
                 }
             };
 
@@ -396,9 +408,11 @@ impl CacheSystemBuilder {
             let streaming_backend = self.streaming_backend;
 
             // Create cache manager with trait objects
-            let cache_manager = Arc::new(
-                CacheManager::new_with_backends(l1_backend, l2_backend, streaming_backend).await?,
-            );
+            let cache_manager = Arc::new(CacheManager::new_with_backends(
+                l1_backend,
+                l2_backend,
+                streaming_backend,
+            )?);
 
             info!("Multi-Tier Cache System built with custom backends");
             info!("Note: Using custom backends - use cache_manager() for all operations");

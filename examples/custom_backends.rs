@@ -318,7 +318,7 @@ async fn main() -> Result<()> {
 
     let tiered_cache = CacheSystemBuilder::new()
         // We can mix default L1 with custom L2 tier
-        .with_l1(Arc::new(multi_tier_cache::MokaCache::new().await?))
+        .with_l1(Arc::new(multi_tier_cache::MokaCache::new()?))
         .with_tier(custom_l2_tier, tier_config)
         .build()
         .await?;

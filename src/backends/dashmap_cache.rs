@@ -1,6 +1,6 @@
-//! DashMap Cache - Simple Concurrent HashMap Backend
+//! `DashMap` Cache - Simple Concurrent `HashMap` Backend
 //!
-//! A lightweight in-memory cache using DashMap for concurrent access.
+//! A lightweight in-memory cache using `DashMap` for concurrent access.
 //! This is a reference implementation showing how to create custom cache backends.
 
 use anyhow::Result;
@@ -27,14 +27,12 @@ impl CacheEntry {
     }
 
     fn is_expired(&self) -> bool {
-        match self.expires_at {
-            Some(expires_at) => Instant::now() > expires_at,
-            None => false,
-        }
+        self.expires_at
+            .is_some_and(|expires_at| Instant::now() > expires_at)
     }
 }
 
-/// Simple concurrent cache using DashMap
+/// Simple concurrent cache using `DashMap`
 ///
 /// **Use Case**: Educational reference, simple concurrent scenarios
 ///
@@ -71,7 +69,7 @@ impl CacheEntry {
 /// # }
 /// ```
 pub struct DashMapCache {
-    /// Concurrent HashMap
+    /// Concurrent `HashMap`
     map: Arc<DashMap<String, CacheEntry>>,
     /// Hit counter
     hits: Arc<AtomicU64>,
@@ -82,7 +80,7 @@ pub struct DashMapCache {
 }
 
 impl DashMapCache {
-    /// Create new DashMap cache
+    /// Create new `DashMap` cache
     pub fn new() -> Self {
         info!("Initializing DashMap Cache (concurrent HashMap)");
 
@@ -96,7 +94,7 @@ impl DashMapCache {
 
     /// Cleanup expired entries (should be called periodically)
     ///
-    /// **Note**: DashMap doesn't have automatic eviction, so you need to
+    /// **Note**: `DashMap` doesn't have automatic eviction, so you need to
     /// call this method periodically to remove expired entries.
     pub fn cleanup_expired(&self) -> usize {
         let mut removed = 0;
@@ -115,11 +113,13 @@ impl DashMapCache {
     }
 
     /// Get current cache size
+    #[must_use]
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
     /// Check if cache is empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
@@ -136,27 +136,24 @@ impl Default for DashMapCache {
 use crate::traits::CacheBackend;
 use async_trait::async_trait;
 
-/// Implement CacheBackend trait for DashMapCache
+/// Implement `CacheBackend` trait for `DashMapCache`
 #[async_trait]
 impl CacheBackend for DashMapCache {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        match self.map.get(key) {
-            Some(entry) => {
-                if entry.is_expired() {
-                    // Remove expired entry
-                    drop(entry); // Release read lock
-                    self.map.remove(key);
-                    self.misses.fetch_add(1, Ordering::Relaxed);
-                    None
-                } else {
-                    self.hits.fetch_add(1, Ordering::Relaxed);
-                    Some(entry.value.clone())
-                }
-            }
-            None => {
+        if let Some(entry) = self.map.get(key) {
+            if entry.is_expired() {
+                // Remove expired entry
+                drop(entry); // Release read lock
+                self.map.remove(key);
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 None
+            } else {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                Some(entry.value.clone())
             }
+        } else {
+            self.misses.fetch_add(1, Ordering::Relaxed);
+            None
         }
     }
 
@@ -181,7 +178,7 @@ impl CacheBackend for DashMapCache {
             .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
             .await
         {
-            Ok(_) => match self.get(test_key).await {
+            Ok(()) => match self.get(test_key).await {
                 Some(retrieved) => {
                     let _ = self.remove(test_key).await;
                     retrieved == test_value
@@ -192,7 +189,7 @@ impl CacheBackend for DashMapCache {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "DashMap"
     }
 }

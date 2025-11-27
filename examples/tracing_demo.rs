@@ -1,5 +1,5 @@
 use multi_tier_cache::CacheSystem;
-use tracing_subscriber::{fmt, EnvFilter}; // Import fmt module
+use tracing_subscriber::EnvFilter; // Import fmt module
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

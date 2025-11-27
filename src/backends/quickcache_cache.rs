@@ -1,4 +1,4 @@
-//! QuickCache - Fast In-Memory Cache Backend
+//! `QuickCache` - Fast In-Memory Cache Backend
 //!
 //! Lightweight and extremely fast in-memory cache optimized for maximum performance.
 
@@ -31,7 +31,7 @@ impl CacheEntry {
     }
 }
 
-/// QuickCache in-memory cache with per-key TTL support
+/// `QuickCache` in-memory cache with per-key TTL support
 ///
 /// This is an alternative L1 (hot tier) cache backend optimized for maximum performance:
 /// - Extremely fast in-memory access (sub-microsecond latency)
@@ -40,11 +40,11 @@ impl CacheEntry {
 /// - Minimal memory overhead
 /// - Lock-free design for concurrent access
 ///
-/// **When to use QuickCache vs Moka**:
-/// - Use QuickCache when you need maximum throughput and minimal latency
+/// **When to use `QuickCache` vs Moka**:
+/// - Use `QuickCache` when you need maximum throughput and minimal latency
 /// - Use Moka when you need advanced features like time-to-idle or weight-based eviction
 pub struct QuickCacheBackend {
-    /// QuickCache instance
+    /// `QuickCache` instance
     cache: Cache<String, Arc<RwLock<CacheEntry>>>,
     /// Hit counter
     hits: Arc<AtomicU64>,
@@ -55,7 +55,7 @@ pub struct QuickCacheBackend {
 }
 
 impl QuickCacheBackend {
-    /// Create new QuickCache
+    /// Create new `QuickCache`
     ///
     /// # Arguments
     ///
@@ -74,10 +74,13 @@ impl QuickCacheBackend {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn new(max_capacity: u64) -> Result<Self> {
+    /// # Errors
+    ///
+    /// Returns an error if the cache cannot be initialized.
+    pub fn new(max_capacity: u64) -> Result<Self> {
         info!(capacity = max_capacity, "Initializing QuickCache");
 
-        let cache = Cache::new(max_capacity as usize);
+        let cache = Cache::new(usize::try_from(max_capacity)?);
 
         Ok(Self {
             cache,
@@ -88,7 +91,8 @@ impl QuickCacheBackend {
     }
 
     /// Get current cache size
-    pub fn size(&self) -> usize {
+    #[must_use]
+    pub const fn size(&self) -> usize {
         // QuickCache doesn't expose size directly, so we estimate with stats
         // In practice, this would need to be tracked separately
         0 // Placeholder - quick_cache doesn't expose size
@@ -100,30 +104,27 @@ impl QuickCacheBackend {
 use crate::traits::CacheBackend;
 use async_trait::async_trait;
 
-/// Implement CacheBackend trait for QuickCacheBackend
+/// Implement `CacheBackend` trait for `QuickCacheBackend`
 ///
-/// This allows QuickCacheBackend to be used as a pluggable backend in the multi-tier cache system.
+/// This allows `QuickCacheBackend` to be used as a pluggable backend in the multi-tier cache system.
 #[async_trait]
 impl CacheBackend for QuickCacheBackend {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        match self.cache.get(key) {
-            Some(entry_lock) => {
-                let entry = entry_lock.read();
-                if entry.is_expired() {
-                    // Remove expired entry
-                    drop(entry); // Release read lock before removing
-                    self.cache.remove(key);
-                    self.misses.fetch_add(1, Ordering::Relaxed);
-                    None
-                } else {
-                    self.hits.fetch_add(1, Ordering::Relaxed);
-                    Some(entry.value.clone())
-                }
-            }
-            None => {
+        if let Some(entry_lock) = self.cache.get(key) {
+            let entry = entry_lock.read();
+            if entry.is_expired() {
+                // Remove expired entry
+                drop(entry); // Release read lock before removing
+                self.cache.remove(key);
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 None
+            } else {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                Some(entry.value.clone())
             }
+        } else {
+            self.misses.fetch_add(1, Ordering::Relaxed);
+            None
         }
     }
 
@@ -148,7 +149,7 @@ impl CacheBackend for QuickCacheBackend {
             .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
             .await
         {
-            Ok(_) => match self.get(test_key).await {
+            Ok(()) => match self.get(test_key).await {
                 Some(retrieved) => {
                     let _ = self.remove(test_key).await;
                     retrieved == test_value
@@ -159,7 +160,7 @@ impl CacheBackend for QuickCacheBackend {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "QuickCache"
     }
 }

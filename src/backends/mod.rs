@@ -6,15 +6,15 @@
 //!
 //! ## In-Memory (L1 Tier)
 //! - **Moka** - High-performance concurrent cache with automatic eviction (default L1)
-//! - **DashMap** - Simple concurrent HashMap-based cache
-//! - **QuickCache** - Lightweight, optimized for maximum performance (feature: `backend-quickcache`)
+//! - **`DashMap`** - Simple concurrent HashMap-based cache
+//! - **`QuickCache`** - Lightweight, optimized for maximum performance (feature: `backend-quickcache`)
 //!
 //! ## Distributed (L2 Tier)
 //! - **Redis** - Industry-standard distributed cache with persistence (default L2)
 //! - **Memcached** - Lightweight distributed cache (feature: `backend-memcached`)
 //!
 //! ## On-Disk (L3/L4 Tier)
-//! - **RocksDB** - Embedded persistent key-value store (coming soon)
+//! - **`RocksDB`** - Embedded persistent key-value store (coming soon)
 //!
 //! # Usage
 //!

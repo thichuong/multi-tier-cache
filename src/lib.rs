@@ -3,7 +3,7 @@
 //! A high-performance, production-ready multi-tier caching library for Rust featuring:
 //! - **L1 Cache**: In-memory caching with Moka (sub-millisecond latency)
 //! - **L2 Cache**: Distributed caching with Redis (persistent storage)
-//! - **Cache Stampede Protection**: DashMap + Mutex request coalescing
+//! - **Cache Stampede Protection**: `DashMap` + Mutex request coalescing
 //! - **Redis Streams**: Built-in support for event streaming
 //! - **Automatic L2-to-L1 Promotion**: Intelligent cache tier promotion
 //! - **Comprehensive Statistics**: Hit rates, promotions, in-flight tracking
@@ -120,7 +120,7 @@ pub use async_trait::async_trait;
 /// }
 /// ```
 ///
-/// # Note on l1_cache and l2_cache Fields
+/// # Note on `l1_cache` and `l2_cache` Fields
 ///
 /// When using multi-tier mode or custom backends, `l1_cache` and `l2_cache`
 /// may be `None`. Always use `cache_manager()` for cache operations.
@@ -160,7 +160,7 @@ impl CacheSystem {
         info!("Initializing Multi-Tier Cache System");
 
         // Initialize L1 cache (Moka)
-        let l1_cache = Arc::new(L1Cache::new().await?);
+        let l1_cache = Arc::new(L1Cache::new()?);
 
         // Initialize L2 cache (Redis)
         let l2_cache = Arc::new(L2Cache::new().await?);
@@ -181,7 +181,7 @@ impl CacheSystem {
     ///
     /// # Arguments
     ///
-    /// * `redis_url` - Redis connection string (e.g., "redis://localhost:6379")
+    /// * `redis_url` - Redis connection string (e.g., `<redis://localhost:6379>`)
     ///
     /// # Example
     ///
@@ -198,7 +198,7 @@ impl CacheSystem {
         info!(redis_url = %redis_url, "Initializing Multi-Tier Cache System with custom Redis URL");
 
         // Initialize L1 cache (Moka)
-        let l1_cache = Arc::new(L1Cache::new().await?);
+        let l1_cache = Arc::new(L1Cache::new()?);
 
         // Initialize L2 cache (Redis) with custom URL
         let l2_cache = Arc::new(L2Cache::with_url(redis_url).await?);
