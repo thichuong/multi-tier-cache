@@ -40,11 +40,11 @@
 //! # }
 //! ```
 
-use anyhow::Result;
-use redis::aio::ConnectionManager;
-use async_trait::async_trait;
-use tracing::debug;
 use crate::traits::StreamingBackend;
+use anyhow::Result;
+use async_trait::async_trait;
+use redis::aio::ConnectionManager;
+use tracing::debug;
 
 /// Type alias for Redis Stream entry: (ID, Field-Value Pairs)
 pub type StreamEntry = (String, Vec<(String, String)>);
@@ -114,7 +114,7 @@ impl RedisStreams {
         &self,
         stream_key: &str,
         fields: Vec<(String, String)>,
-        maxlen: Option<usize>
+        maxlen: Option<usize>,
     ) -> Result<String> {
         let mut conn = self.conn_manager.clone();
 
@@ -127,7 +127,7 @@ impl RedisStreams {
             cmd.arg("MAXLEN").arg("~").arg(max);
         }
 
-        cmd.arg("*");  // Auto-generate ID
+        cmd.arg("*"); // Auto-generate ID
 
         // Add all field-value pairs
         for (field, value) in &fields {
@@ -136,7 +136,12 @@ impl RedisStreams {
 
         let entry_id: String = cmd.query_async(&mut conn).await?;
 
-        debug!("[Stream] Published to '{}' (ID: {}, fields: {})", stream_key, entry_id, fields.len());
+        debug!(
+            "[Stream] Published to '{}' (ID: {}, fields: {})",
+            stream_key,
+            entry_id,
+            fields.len()
+        );
         Ok(entry_id)
     }
 
@@ -165,15 +170,15 @@ impl RedisStreams {
     pub async fn stream_read_latest(
         &self,
         stream_key: &str,
-        count: usize
+        count: usize,
     ) -> Result<Vec<StreamEntry>> {
         let mut conn = self.conn_manager.clone();
 
         // XREVRANGE returns a raw Value that we need to parse manually
         let raw_result: redis::Value = redis::cmd("XREVRANGE")
             .arg(stream_key)
-            .arg("+")  // Start from the newest
-            .arg("-")  // To the oldest
+            .arg("+") // Start from the newest
+            .arg("-") // To the oldest
             .arg("COUNT")
             .arg(count)
             .query_async(&mut conn)
@@ -181,7 +186,11 @@ impl RedisStreams {
 
         let entries = Self::parse_stream_response(raw_result)?;
 
-        debug!("[Stream] Read {} entries from '{}'", entries.len(), stream_key);
+        debug!(
+            "[Stream] Read {} entries from '{}'",
+            entries.len(),
+            stream_key
+        );
         Ok(entries)
     }
 
@@ -215,7 +224,7 @@ impl RedisStreams {
         stream_key: &str,
         last_id: &str,
         count: usize,
-        block_ms: Option<usize>
+        block_ms: Option<usize>,
     ) -> Result<Vec<StreamEntry>> {
         let mut conn = self.conn_manager.clone();
 
@@ -234,7 +243,11 @@ impl RedisStreams {
         // XREAD returns [[stream_name, [[id, [field, value, ...]], ...]]]
         let entries = Self::parse_xread_response(raw_result)?;
 
-        debug!("[Stream] XREAD retrieved {} entries from '{}'", entries.len(), stream_key);
+        debug!(
+            "[Stream] XREAD retrieved {} entries from '{}'",
+            entries.len(),
+            stream_key
+        );
         Ok(entries)
     }
 
@@ -273,7 +286,7 @@ impl RedisStreams {
                 Ok(result)
             }
             redis::Value::Nil => Ok(Vec::new()),
-            _ => Err(anyhow::anyhow!("Unexpected Redis stream response format"))
+            _ => Err(anyhow::anyhow!("Unexpected Redis stream response format")),
         }
     }
 
@@ -294,13 +307,17 @@ impl RedisStreams {
                                         if entry_parts.len() >= 2 {
                                             let id = Self::value_to_string(&entry_parts[0]);
 
-                                            if let redis::Value::Array(field_values) = &entry_parts[1] {
+                                            if let redis::Value::Array(field_values) =
+                                                &entry_parts[1]
+                                            {
                                                 let mut fields = Vec::new();
 
                                                 for chunk in field_values.chunks(2) {
                                                     if chunk.len() == 2 {
-                                                        let field = Self::value_to_string(&chunk[0]);
-                                                        let value = Self::value_to_string(&chunk[1]);
+                                                        let field =
+                                                            Self::value_to_string(&chunk[0]);
+                                                        let value =
+                                                            Self::value_to_string(&chunk[1]);
                                                         fields.push((field, value));
                                                     }
                                                 }
@@ -318,7 +335,7 @@ impl RedisStreams {
                 Ok(all_entries)
             }
             redis::Value::Nil => Ok(Vec::new()),
-            _ => Err(anyhow::anyhow!("Unexpected XREAD response format"))
+            _ => Err(anyhow::anyhow!("Unexpected XREAD response format")),
         }
     }
 

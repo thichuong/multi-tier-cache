@@ -2,14 +2,14 @@
 //!
 //! Lightweight and extremely fast in-memory cache optimized for maximum performance.
 
+use anyhow::Result;
+use parking_lot::RwLock;
+use quick_cache::sync::Cache;
+use serde_json;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use anyhow::Result;
-use serde_json;
-use quick_cache::sync::Cache;
-use std::sync::atomic::{AtomicU64, Ordering};
-use parking_lot::RwLock;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// Cache entry with TTL information
 #[derive(Debug, Clone)]
@@ -127,12 +127,7 @@ impl CacheBackend for QuickCacheBackend {
         }
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-        ttl: Duration,
-    ) -> Result<()> {
+    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
         let entry = Arc::new(RwLock::new(CacheEntry::new(value, ttl)));
         self.cache.insert(key.to_string(), entry);
         self.sets.fetch_add(1, Ordering::Relaxed);
@@ -149,17 +144,18 @@ impl CacheBackend for QuickCacheBackend {
         let test_key = "health_check_quickcache";
         let test_value = serde_json::json!({"test": true});
 
-        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60)).await {
-            Ok(_) => {
-                match self.get(test_key).await {
-                    Some(retrieved) => {
-                        let _ = self.remove(test_key).await;
-                        retrieved == test_value
-                    }
-                    None => false
+        match self
+            .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
+            .await
+        {
+            Ok(_) => match self.get(test_key).await {
+                Some(retrieved) => {
+                    let _ = self.remove(test_key).await;
+                    retrieved == test_value
                 }
-            }
-            Err(_) => false
+                None => false,
+            },
+            Err(_) => false,
         }
     }
 

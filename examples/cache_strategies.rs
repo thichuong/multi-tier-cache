@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example cache_strategies
 
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::time::Duration;
 
 #[tokio::main]
@@ -21,7 +21,8 @@ async fn main() -> anyhow::Result<()> {
         "volume": 1000000,
         "last_updated": "2025-01-01T00:00:00Z"
     });
-    cache.cache_manager()
+    cache
+        .cache_manager()
         .set_with_strategy("live_price", live_data, CacheStrategy::RealTime)
         .await?;
     println!("   ✅ Stored live price data (expires in 10 seconds)\n");
@@ -33,7 +34,8 @@ async fn main() -> anyhow::Result<()> {
         "session_token": "abc123",
         "last_activity": "2025-01-01T00:00:00Z"
     });
-    cache.cache_manager()
+    cache
+        .cache_manager()
         .set_with_strategy("session:123", user_session, CacheStrategy::ShortTerm)
         .await?;
     println!("   ✅ Stored user session (expires in 5 minutes)\n");
@@ -45,8 +47,13 @@ async fn main() -> anyhow::Result<()> {
         "items": ["laptop", "phone", "tablet"],
         "updated": "2025-01-01"
     });
-    cache.cache_manager()
-        .set_with_strategy("catalog:electronics", product_catalog, CacheStrategy::MediumTerm)
+    cache
+        .cache_manager()
+        .set_with_strategy(
+            "catalog:electronics",
+            product_catalog,
+            CacheStrategy::MediumTerm,
+        )
         .await?;
     println!("   ✅ Stored product catalog (expires in 1 hour)\n");
 
@@ -57,7 +64,8 @@ async fn main() -> anyhow::Result<()> {
         "features": ["caching", "streaming", "analytics"],
         "maintenance_window": "Sunday 02:00 AM"
     });
-    cache.cache_manager()
+    cache
+        .cache_manager()
         .set_with_strategy("app_config", config_data, CacheStrategy::LongTerm)
         .await?;
     println!("   ✅ Stored application config (expires in 3 hours)\n");
@@ -69,11 +77,12 @@ async fn main() -> anyhow::Result<()> {
         "value": 45.2,
         "threshold": 80.0
     });
-    cache.cache_manager()
+    cache
+        .cache_manager()
         .set_with_strategy(
             "metrics:cpu",
             custom_data,
-            CacheStrategy::Custom(Duration::from_secs(30))
+            CacheStrategy::Custom(Duration::from_secs(30)),
         )
         .await?;
     println!("   ✅ Stored custom metrics (expires in 30 seconds)\n");
@@ -81,7 +90,8 @@ async fn main() -> anyhow::Result<()> {
     // 6. Default strategy (5 minutes)
     println!("6. Default Strategy (5 min TTL) - Fallback option");
     let generic_data = serde_json::json!({"key": "value"});
-    cache.cache_manager()
+    cache
+        .cache_manager()
         .set_with_strategy("generic_key", generic_data, CacheStrategy::Default)
         .await?;
     println!("   ✅ Stored generic data (expires in 5 minutes)\n");

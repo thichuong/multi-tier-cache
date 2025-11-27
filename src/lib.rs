@@ -53,22 +53,24 @@
 //!           Return            Promote to L1       Store in L1+L2
 //! ```
 
-use std::sync::Arc;
 use anyhow::Result;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 pub mod backends;
-pub mod cache_manager;
-pub mod traits;
 pub mod builder;
+pub mod cache_manager;
 pub mod invalidation;
 pub mod redis_streams;
+pub mod traits;
 
 // Re-export backend types (maintains backward compatibility)
 pub use backends::{
-    L1Cache, L2Cache,           // Type aliases
-    MokaCache, RedisCache,       // Default backends
-    DashMapCache,                // Additional backends
+    DashMapCache, // Additional backends
+    L1Cache,
+    L2Cache, // Type aliases
+    MokaCache,
+    RedisCache, // Default backends
 };
 
 // Optional backends (feature-gated)
@@ -77,18 +79,22 @@ pub use backends::MemcachedCache;
 
 #[cfg(feature = "backend-quickcache")]
 pub use backends::QuickCacheBackend;
-pub use cache_manager::{
-    CacheManager, CacheStrategy, CacheManagerStats,
-    // Multi-tier support (v0.5.0+)
-    TierConfig, CacheTier, TierStats,
-};
-pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 pub use builder::CacheSystemBuilder;
+pub use cache_manager::{
+    CacheManager,
+    CacheManagerStats,
+    CacheStrategy,
+    CacheTier,
+    // Multi-tier support (v0.5.0+)
+    TierConfig,
+    TierStats,
+};
 pub use invalidation::{
-    InvalidationConfig, InvalidationMessage, InvalidationStats,
-    InvalidationPublisher, InvalidationSubscriber,
+    InvalidationConfig, InvalidationMessage, InvalidationPublisher, InvalidationStats,
+    InvalidationSubscriber,
 };
 pub use redis_streams::RedisStreams;
+pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 
 // Re-export async_trait for user convenience
 pub use async_trait::async_trait;
@@ -198,10 +204,8 @@ impl CacheSystem {
         let l2_cache = Arc::new(L2Cache::with_url(redis_url).await?);
 
         // Initialize cache manager
-        let cache_manager = Arc::new(CacheManager::new(
-            Arc::clone(&l1_cache),
-            Arc::clone(&l2_cache)
-        ).await?);
+        let cache_manager =
+            Arc::new(CacheManager::new(Arc::clone(&l1_cache), Arc::clone(&l2_cache)).await?);
 
         info!("Multi-Tier Cache System initialized successfully");
 

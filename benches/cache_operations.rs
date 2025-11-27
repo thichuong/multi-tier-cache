@@ -7,8 +7,8 @@
 //! - Cache hit vs miss latency
 //! - Different data sizes
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use multi_tier_cache::{CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -18,7 +18,9 @@ fn setup_cache() -> (CacheSystem, Runtime) {
     let rt = Runtime::new().unwrap();
     let cache = rt.block_on(async {
         std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
-        CacheSystem::new().await.expect("Failed to create cache system")
+        CacheSystem::new()
+            .await
+            .expect("Failed to create cache system")
     });
     (cache, rt)
 }
@@ -47,7 +49,8 @@ fn bench_cache_set(c: &mut Criterion) {
             b.iter(|| {
                 rt.block_on(async {
                     let key = format!("bench:set:{}", rand::random::<u32>());
-                    cache.cache_manager()
+                    cache
+                        .cache_manager()
                         .set_with_strategy(&key, black_box(data.clone()), CacheStrategy::ShortTerm)
                         .await
                         .unwrap();
@@ -59,7 +62,8 @@ fn bench_cache_set(c: &mut Criterion) {
             b.iter(|| {
                 rt.block_on(async {
                     let key = format!("bench:set:{}", rand::random::<u32>());
-                    cache.cache_manager()
+                    cache
+                        .cache_manager()
                         .set_with_strategy(&key, black_box(data.clone()), CacheStrategy::LongTerm)
                         .await
                         .unwrap();
@@ -79,7 +83,8 @@ fn bench_l1_hit(c: &mut Criterion) {
     rt.block_on(async {
         for i in 0..100 {
             let key = format!("bench:l1:{}", i);
-            cache.cache_manager()
+            cache
+                .cache_manager()
                 .set_with_strategy(&key, test_data(1024), CacheStrategy::ShortTerm)
                 .await
                 .unwrap();
@@ -106,7 +111,8 @@ fn bench_l2_hit(c: &mut Criterion) {
     rt.block_on(async {
         for i in 0..100 {
             let key = format!("bench:l2:{}", i);
-            cache.l2_cache
+            cache
+                .l2_cache
                 .set_with_ttl(&key, test_data(1024), Duration::from_secs(300))
                 .await
                 .unwrap();
@@ -155,7 +161,8 @@ fn bench_compute_on_miss(c: &mut Criterion) {
                     let key = format!("bench:compute:{}", rand::random::<u32>());
                     let data = test_data(1024);
 
-                    cache.cache_manager()
+                    cache
+                        .cache_manager()
                         .get_or_compute_with(&key, CacheStrategy::ShortTerm, || {
                             let d = data.clone();
                             async move {
@@ -199,7 +206,8 @@ fn bench_typed_cache(c: &mut Criterion) {
                 };
 
                 // Set
-                cache.cache_manager()
+                cache
+                    .cache_manager()
                     .get_or_compute_typed(&key, CacheStrategy::ShortTerm, || {
                         let u = user.clone();
                         async move { Ok(u) }
@@ -209,12 +217,17 @@ fn bench_typed_cache(c: &mut Criterion) {
 
                 // Get
                 black_box(
-                    cache.cache_manager()
-                        .get_or_compute_typed::<User, _, _>(&key, CacheStrategy::ShortTerm, || async {
-                            panic!("Should not compute");
-                        })
+                    cache
+                        .cache_manager()
+                        .get_or_compute_typed::<User, _, _>(
+                            &key,
+                            CacheStrategy::ShortTerm,
+                            || async {
+                                panic!("Should not compute");
+                            },
+                        )
                         .await
-                        .unwrap()
+                        .unwrap(),
                 );
             })
         });
@@ -241,7 +254,8 @@ fn bench_cache_strategies(c: &mut Criterion) {
             b.iter(|| {
                 rt.block_on(async {
                     let key = format!("bench:strategy:{}", rand::random::<u32>());
-                    cache.cache_manager()
+                    cache
+                        .cache_manager()
                         .set_with_strategy(&key, black_box(data.clone()), strategy.clone())
                         .await
                         .unwrap();

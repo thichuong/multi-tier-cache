@@ -2,13 +2,13 @@
 //!
 //! High-performance in-memory cache using Moka for hot data storage.
 
+use anyhow::Result;
+use moka::future::Cache;
+use serde_json;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use anyhow::Result;
-use serde_json;
-use moka::future::Cache;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// Cache entry with TTL information
 #[derive(Debug, Clone)]
@@ -62,7 +62,10 @@ impl MokaCache {
             .time_to_idle(Duration::from_secs(120)) // 2 minutes idle time
             .build();
 
-        info!(capacity = 2000, "Moka Cache initialized with per-key TTL support");
+        info!(
+            capacity = 2000,
+            "Moka Cache initialized with per-key TTL support"
+        );
 
         Ok(Self {
             cache,
@@ -72,7 +75,6 @@ impl MokaCache {
             coalesced_requests: Arc::new(AtomicU64::new(0)),
         })
     }
-
 }
 
 // ===== Trait Implementations =====
@@ -105,12 +107,7 @@ impl CacheBackend for MokaCache {
         }
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-        ttl: Duration,
-    ) -> Result<()> {
+    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
         let entry = CacheEntry::new(value, ttl);
         self.cache.insert(key.to_string(), entry).await;
         self.sets.fetch_add(1, Ordering::Relaxed);
@@ -128,17 +125,18 @@ impl CacheBackend for MokaCache {
         let test_key = "health_check_moka";
         let test_value = serde_json::json!({"test": true});
 
-        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60)).await {
-            Ok(_) => {
-                match self.get(test_key).await {
-                    Some(retrieved) => {
-                        let _ = self.remove(test_key).await;
-                        retrieved == test_value
-                    }
-                    None => false
+        match self
+            .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
+            .await
+        {
+            Ok(_) => match self.get(test_key).await {
+                Some(retrieved) => {
+                    let _ = self.remove(test_key).await;
+                    retrieved == test_value
                 }
-            }
-            Err(_) => false
+                None => false,
+            },
+            Err(_) => false,
         }
     }
 

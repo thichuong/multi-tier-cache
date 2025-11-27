@@ -30,10 +30,10 @@
 //!     .await?;
 //! ```
 
-use std::sync::Arc;
-use anyhow::Result;
 use crate::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
-use crate::{CacheManager, L1Cache, L2Cache, CacheSystem, CacheTier, TierConfig};
+use crate::{CacheManager, CacheSystem, CacheTier, L1Cache, L2Cache, TierConfig};
+use anyhow::Result;
+use std::sync::Arc;
 use tracing::info;
 
 /// Builder for constructing CacheSystem with custom backends
@@ -311,7 +311,10 @@ impl CacheSystemBuilder {
 
         // NEW: Multi-tier mode (v0.5.0+)
         if !self.tiers.is_empty() {
-            info!(tier_count = self.tiers.len(), "Initializing multi-tier architecture");
+            info!(
+                tier_count = self.tiers.len(),
+                "Initializing multi-tier architecture"
+            );
 
             // Sort tiers by tier_level (ascending: L1 first, L4 last)
             let mut tiers = self.tiers;
@@ -331,9 +334,8 @@ impl CacheSystemBuilder {
                 .collect();
 
             // Create cache manager with multi-tier support
-            let cache_manager = Arc::new(
-                CacheManager::new_with_tiers(cache_tiers, self.streaming_backend).await?
-            );
+            let cache_manager =
+                Arc::new(CacheManager::new_with_tiers(cache_tiers, self.streaming_backend).await?);
 
             info!("Multi-Tier Cache System built successfully");
             info!("Note: Using multi-tier mode - use cache_manager() for all operations");
@@ -355,7 +357,8 @@ impl CacheSystemBuilder {
             let l2_cache = Arc::new(L2Cache::new().await?);
 
             // Use legacy constructor that handles conversion to trait objects
-            let cache_manager = Arc::new(CacheManager::new(l1_cache.clone(), l2_cache.clone()).await?);
+            let cache_manager =
+                Arc::new(CacheManager::new(l1_cache.clone(), l2_cache.clone()).await?);
 
             info!("Multi-Tier Cache System built successfully");
 
@@ -394,11 +397,7 @@ impl CacheSystemBuilder {
 
             // Create cache manager with trait objects
             let cache_manager = Arc::new(
-                CacheManager::new_with_backends(
-                    l1_backend,
-                    l2_backend,
-                    streaming_backend,
-                ).await?
+                CacheManager::new_with_backends(l1_backend, l2_backend, streaming_backend).await?,
             );
 
             info!("Multi-Tier Cache System built with custom backends");

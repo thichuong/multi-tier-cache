@@ -3,13 +3,13 @@
 //! A lightweight in-memory cache using DashMap for concurrent access.
 //! This is a reference implementation showing how to create custom cache backends.
 
+use anyhow::Result;
+use dashmap::DashMap;
+use serde_json;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use anyhow::Result;
-use serde_json;
-use dashmap::DashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// Cache entry with expiration tracking
 #[derive(Debug, Clone)]
@@ -160,12 +160,7 @@ impl CacheBackend for DashMapCache {
         }
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-        ttl: Duration,
-    ) -> Result<()> {
+    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
         let entry = CacheEntry::new(value, ttl);
         self.map.insert(key.to_string(), entry);
         self.sets.fetch_add(1, Ordering::Relaxed);
@@ -182,17 +177,18 @@ impl CacheBackend for DashMapCache {
         let test_key = "health_check_dashmap";
         let test_value = serde_json::json!({"test": true});
 
-        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60)).await {
-            Ok(_) => {
-                match self.get(test_key).await {
-                    Some(retrieved) => {
-                        let _ = self.remove(test_key).await;
-                        retrieved == test_value
-                    }
-                    None => false
+        match self
+            .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
+            .await
+        {
+            Ok(_) => match self.get(test_key).await {
+                Some(retrieved) => {
+                    let _ = self.remove(test_key).await;
+                    retrieved == test_value
                 }
-            }
-            Err(_) => false
+                None => false,
+            },
+            Err(_) => false,
         }
     }
 

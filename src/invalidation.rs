@@ -4,20 +4,18 @@
 //! It supports both cache removal (invalidation) and cache updates (refresh).
 
 use anyhow::{Context, Result};
+use futures_util::StreamExt;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use futures_util::StreamExt;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Invalidation message types sent across cache instances via Redis Pub/Sub
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum InvalidationMessage {
     /// Remove a single key from all cache instances
-    Remove {
-        key: String,
-    },
+    Remove { key: String },
 
     /// Update a key with new value across all cache instances
     /// This is more efficient than Remove for hot keys as it avoids cache miss
@@ -30,14 +28,10 @@ pub enum InvalidationMessage {
 
     /// Remove all keys matching a pattern from all cache instances
     /// Uses glob-style patterns (e.g., "user:*", "product:123:*")
-    RemovePattern {
-        pattern: String,
-    },
+    RemovePattern { pattern: String },
 
     /// Bulk remove multiple keys at once
-    RemoveBulk {
-        keys: Vec<String>,
-    },
+    RemoveBulk { keys: Vec<String> },
 }
 
 impl InvalidationMessage {
@@ -186,10 +180,7 @@ impl InvalidationPublisher {
             }
         }
 
-        let mut fields = vec![
-            ("type", type_str),
-            ("timestamp", timestamp.as_str()),
-        ];
+        let mut fields = vec![("type", type_str), ("timestamp", timestamp.as_str())];
 
         if !key_str.is_empty() {
             fields.push(("key", key_str));
@@ -323,10 +314,7 @@ impl InvalidationSubscriber {
     ///
     /// # Returns
     /// Join handle for the background task
-    pub fn start<F, Fut>(
-        &self,
-        handler: F,
-    ) -> tokio::task::JoinHandle<()>
+    pub fn start<F, Fut>(&self, handler: F) -> tokio::task::JoinHandle<()>
     where
         F: Fn(InvalidationMessage) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
@@ -353,13 +341,18 @@ impl InvalidationSubscriber {
                     Arc::clone(&handler),
                     Arc::clone(&stats),
                     &mut shutdown_rx,
-                ).await {
+                )
+                .await
+                {
                     Ok(_) => {
                         info!("Invalidation subscriber loop completed normally");
                         break;
                     }
                     Err(e) => {
-                        error!("Invalidation subscriber error: {}. Reconnecting in 5s...", e);
+                        error!(
+                            "Invalidation subscriber error: {}. Reconnecting in 5s...",
+                            e
+                        );
                         stats.processing_errors.fetch_add(1, Ordering::Relaxed);
 
                         // Wait before reconnecting
@@ -389,11 +382,15 @@ impl InvalidationSubscriber {
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
         // Get Pub/Sub connection
-        let mut pubsub = client.get_async_pubsub().await
+        let mut pubsub = client
+            .get_async_pubsub()
+            .await
             .context("Failed to get pubsub connection")?;
 
         // Subscribe to channel
-        pubsub.subscribe(channel).await
+        pubsub
+            .subscribe(channel)
+            .await
             .context("Failed to subscribe to channel")?;
 
         info!("Subscribed to invalidation channel: {}", channel);
@@ -493,7 +490,11 @@ mod tests {
         let json = msg.to_json().unwrap();
         let parsed = InvalidationMessage::from_json(&json).unwrap();
         match parsed {
-            InvalidationMessage::Update { key, value, ttl_secs } => {
+            InvalidationMessage::Update {
+                key,
+                value,
+                ttl_secs,
+            } => {
                 assert_eq!(key, "test_key");
                 assert_eq!(value, serde_json::json!({"value": 123}));
                 assert_eq!(ttl_secs, Some(300));

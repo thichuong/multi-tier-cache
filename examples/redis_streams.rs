@@ -32,7 +32,8 @@ async fn main() -> anyhow::Result<()> {
             ("action".to_string(), "login".to_string()),
         ];
 
-        let entry_id = cache.cache_manager()
+        let entry_id = cache
+            .cache_manager()
             .publish_to_stream("events_stream", fields, Some(1000))
             .await?;
 
@@ -44,7 +45,8 @@ async fn main() -> anyhow::Result<()> {
     // 2. Read latest entries from stream
     println!("Reading latest 3 entries from stream...\n");
 
-    let entries = cache.cache_manager()
+    let entries = cache
+        .cache_manager()
         .read_stream_latest("events_stream", 3)
         .await?;
 
@@ -59,7 +61,8 @@ async fn main() -> anyhow::Result<()> {
     // 3. Read stream from beginning (XREAD)
     println!("Reading all entries from stream (from beginning)...\n");
 
-    let all_entries = cache.cache_manager()
+    let all_entries = cache
+        .cache_manager()
         .read_stream("events_stream", "0", 10, None)
         .await?;
 
@@ -82,7 +85,8 @@ async fn main() -> anyhow::Result<()> {
             ("status_code".to_string(), "200".to_string()),
         ];
 
-        cache.cache_manager()
+        cache
+            .cache_manager()
             .publish_to_stream("events_stream", fields, Some(1000))
             .await?;
 
@@ -91,7 +95,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     println!("\n=== Stream Summary ===");
-    let final_entries = cache.cache_manager()
+    let final_entries = cache
+        .cache_manager()
         .read_stream_latest("events_stream", 1000)
         .await?;
     println!("Total events in stream: {}", final_entries.len());

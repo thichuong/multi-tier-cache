@@ -2,14 +2,14 @@
 //!
 //! Redis-based distributed cache for warm data storage with persistence.
 
-use std::sync::Arc;
-use std::time::Duration;
 use anyhow::{Context, Result};
-use redis::{Client, AsyncCommands};
 use redis::aio::ConnectionManager;
+use redis::{AsyncCommands, Client};
 use serde_json;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{info, debug};
+use std::sync::Arc;
+use std::time::Duration;
+use tracing::{debug, info};
 
 /// Redis distributed cache with ConnectionManager for automatic reconnection
 ///
@@ -33,8 +33,8 @@ pub struct RedisCache {
 impl RedisCache {
     /// Create new Redis cache with ConnectionManager for automatic reconnection
     pub async fn new() -> Result<Self> {
-        let redis_url = std::env::var("REDIS_URL")
-            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         Self::with_url(&redis_url).await
     }
 
@@ -50,7 +50,8 @@ impl RedisCache {
             .with_context(|| format!("Failed to create Redis client with URL: {}", redis_url))?;
 
         // Create ConnectionManager - handles reconnection automatically
-        let conn_manager = ConnectionManager::new(client).await
+        let conn_manager = ConnectionManager::new(client)
+            .await
             .context("Failed to establish Redis connection manager")?;
 
         // Test connection
@@ -69,7 +70,6 @@ impl RedisCache {
             sets: Arc::new(AtomicU64::new(0)),
         })
     }
-
 
     /// Scan keys matching a pattern (glob-style: *, ?, [])
     ///
@@ -137,7 +137,6 @@ impl RedisCache {
         debug!(count = count, "[Redis] Removed keys in bulk");
         Ok(count)
     }
-
 }
 
 // ===== Trait Implementations =====
@@ -154,18 +153,16 @@ impl CacheBackend for RedisCache {
         let mut conn = self.conn_manager.clone();
 
         match conn.get::<_, String>(key).await {
-            Ok(json_str) => {
-                match serde_json::from_str(&json_str) {
-                    Ok(value) => {
-                        self.hits.fetch_add(1, Ordering::Relaxed);
-                        Some(value)
-                    }
-                    Err(_) => {
-                        self.misses.fetch_add(1, Ordering::Relaxed);
-                        None
-                    }
+            Ok(json_str) => match serde_json::from_str(&json_str) {
+                Ok(value) => {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    Some(value)
                 }
-            }
+                Err(_) => {
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                }
+            },
             Err(_) => {
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 None
@@ -173,12 +170,7 @@ impl CacheBackend for RedisCache {
         }
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-        ttl: Duration,
-    ) -> Result<()> {
+    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
         let json_str = serde_json::to_string(&value)?;
         let mut conn = self.conn_manager.clone();
 
@@ -202,17 +194,18 @@ impl CacheBackend for RedisCache {
             .as_secs();
         let test_value = serde_json::json!({"test": true, "timestamp": timestamp});
 
-        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10)).await {
-            Ok(_) => {
-                match self.get(test_key).await {
-                    Some(retrieved) => {
-                        let _ = self.remove(test_key).await;
-                        retrieved["test"].as_bool().unwrap_or(false)
-                    }
-                    None => false
+        match self
+            .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10))
+            .await
+        {
+            Ok(_) => match self.get(test_key).await {
+                Some(retrieved) => {
+                    let _ = self.remove(test_key).await;
+                    retrieved["test"].as_bool().unwrap_or(false)
                 }
-            }
-            Err(_) => false
+                None => false,
+            },
+            Err(_) => false,
         }
     }
 
@@ -226,10 +219,7 @@ impl CacheBackend for RedisCache {
 /// This extends CacheBackend with TTL introspection capabilities needed for L2->L1 promotion.
 #[async_trait]
 impl L2CacheBackend for RedisCache {
-    async fn get_with_ttl(
-        &self,
-        key: &str,
-    ) -> Option<(serde_json::Value, Option<Duration>)> {
+    async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
         let mut conn = self.conn_manager.clone();
 
         // Get value

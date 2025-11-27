@@ -22,8 +22,8 @@
 //! cargo run --example builtin_backends --all-features
 //! ```
 
-use multi_tier_cache::{CacheSystemBuilder, CacheStrategy, CacheBackend};
 use anyhow::Result;
+use multi_tier_cache::{CacheBackend, CacheStrategy, CacheSystemBuilder};
 use std::sync::Arc;
 
 #[tokio::main]
@@ -49,7 +49,9 @@ async fn main() -> Result<()> {
         println!("\n📦 Example 2: MemcachedCache (L2)");
         println!("──────────────────────────────────");
         println!("⚠️  Skipped: Requires 'backend-memcached' feature");
-        println!("   Run with: cargo run --example builtin_backends --features backend-memcached\n");
+        println!(
+            "   Run with: cargo run --example builtin_backends --features backend-memcached\n"
+        );
     }
 
     // Example 3: QuickCacheBackend (L1) - requires feature flag
@@ -65,7 +67,9 @@ async fn main() -> Result<()> {
         println!("\n📦 Example 3: QuickCacheBackend (L1)");
         println!("─────────────────────────────────────");
         println!("⚠️  Skipped: Requires 'backend-quickcache' feature");
-        println!("   Run with: cargo run --example builtin_backends --features backend-quickcache\n");
+        println!(
+            "   Run with: cargo run --example builtin_backends --features backend-quickcache\n"
+        );
     }
 
     println!("\n✅ Built-in backends example completed!");
@@ -97,11 +101,9 @@ async fn demo_dashmap_backend() -> Result<()> {
         "permissions": ["read", "write", "delete"]
     });
 
-    manager.set_with_strategy(
-        "user:bob",
-        test_data.clone(),
-        CacheStrategy::ShortTerm,
-    ).await?;
+    manager
+        .set_with_strategy("user:bob", test_data.clone(), CacheStrategy::ShortTerm)
+        .await?;
 
     if let Some(cached) = manager.get("user:bob").await? {
         println!("✅ Retrieved from DashMapCache: {}", cached);
@@ -109,8 +111,10 @@ async fn demo_dashmap_backend() -> Result<()> {
 
     // Show statistics
     let stats = manager.get_stats();
-    println!("📊 Stats - L1 hits: {}, L2 hits: {}, misses: {}",
-        stats.l1_hits, stats.l2_hits, stats.misses);
+    println!(
+        "📊 Stats - L1 hits: {}, L2 hits: {}, misses: {}",
+        stats.l1_hits, stats.l2_hits, stats.misses
+    );
 
     // Demonstrate cleanup of expired entries
     println!("\n🧹 DashMapCache has manual cleanup (no automatic eviction)");
@@ -142,11 +146,13 @@ async fn demo_memcached_backend() -> Result<()> {
             });
 
             // Set with TTL
-            memcached.set_with_ttl(
-                "product:laptop",
-                test_data.clone(),
-                Duration::from_secs(300),
-            ).await?;
+            memcached
+                .set_with_ttl(
+                    "product:laptop",
+                    test_data.clone(),
+                    Duration::from_secs(300),
+                )
+                .await?;
 
             // Get the value
             if let Some(cached) = memcached.get("product:laptop").await {
@@ -215,11 +221,13 @@ async fn demo_quickcache_backend() -> Result<()> {
         "expires_at": 1234567890
     });
 
-    manager.set_with_strategy(
-        "session:abc123",
-        test_data.clone(),
-        CacheStrategy::ShortTerm,
-    ).await?;
+    manager
+        .set_with_strategy(
+            "session:abc123",
+            test_data.clone(),
+            CacheStrategy::ShortTerm,
+        )
+        .await?;
 
     if let Some(cached) = manager.get("session:abc123").await? {
         println!("✅ Retrieved from QuickCache: {}", cached);
@@ -227,8 +235,10 @@ async fn demo_quickcache_backend() -> Result<()> {
 
     // Show statistics
     let stats = manager.get_stats();
-    println!("📊 Stats - L1 hits: {}, L2 hits: {}, misses: {}",
-        stats.l1_hits, stats.l2_hits, stats.misses);
+    println!(
+        "📊 Stats - L1 hits: {}, L2 hits: {}, misses: {}",
+        stats.l1_hits, stats.l2_hits, stats.misses
+    );
 
     println!("\n⚡ QuickCache is optimized for maximum throughput");
     println!("   Use it when you need sub-microsecond latency");

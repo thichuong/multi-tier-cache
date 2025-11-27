@@ -1,12 +1,12 @@
 //! Integration tests for multi-tier cache architecture (v0.5.0+)
 
-use multi_tier_cache::{CacheSystemBuilder, CacheStrategy, TierConfig, L2Cache, CacheBackend};
+use multi_tier_cache::{CacheBackend, CacheStrategy, CacheSystemBuilder, L2Cache, TierConfig};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 
 mod common;
-use common::{test_key, test_data};
+use common::{test_data, test_key};
 
 /// Test basic multi-tier get/set operations
 #[tokio::test]
@@ -43,10 +43,12 @@ async fn test_multi_tier_basic_operations() {
     if let Some(tier_stats) = manager.get_tier_stats() {
         println!("Multi-tier stats:");
         for stats in &tier_stats {
-            println!("  L{}: {} hits ({})",
-                     stats.tier_level,
-                     stats.hit_count(),
-                     stats.backend_name);
+            println!(
+                "  L{}: {} hits ({})",
+                stats.tier_level,
+                stats.hit_count(),
+                stats.backend_name
+            );
         }
         assert_eq!(tier_stats.len(), 3, "Should have 3 tiers");
     } else {
@@ -91,7 +93,10 @@ async fn test_multi_tier_stats() {
 
         // L1 should have most hits
         let l1_stats = tier_stats.iter().find(|s| s.tier_level == 1).unwrap();
-        assert!(l1_stats.hit_count() >= 4, "L1 should have at least 4 hits from repeated gets");
+        assert!(
+            l1_stats.hit_count() >= 4,
+            "L1 should have at least 4 hits from repeated gets"
+        );
 
         println!("Tier statistics:");
         for stats in &tier_stats {
@@ -111,10 +116,7 @@ async fn test_multi_tier_stats() {
 #[tokio::test]
 async fn test_backward_compatibility_legacy_mode() {
     // Use old-style constructor (no tiers)
-    let cache = CacheSystemBuilder::new()
-        .build()
-        .await
-        .unwrap();
+    let cache = CacheSystemBuilder::new().build().await.unwrap();
 
     let manager = cache.cache_manager();
 
@@ -129,7 +131,10 @@ async fn test_backward_compatibility_legacy_mode() {
     assert_eq!(result, Some(test_data));
 
     // Tier stats should be None for legacy mode
-    assert!(manager.get_tier_stats().is_none(), "Legacy mode should not have tier stats");
+    assert!(
+        manager.get_tier_stats().is_none(),
+        "Legacy mode should not have tier stats"
+    );
 
     // Regular stats should work
     let stats = manager.get_stats();
@@ -150,7 +155,7 @@ async fn test_multi_tier_ttl_scaling() {
         .with_tier(l2, TierConfig::as_l2())
         .with_tier(
             l3,
-            TierConfig::as_l3() // L3 has 2x TTL multiplier
+            TierConfig::as_l3(), // L3 has 2x TTL multiplier
         )
         .build()
         .await
@@ -161,7 +166,11 @@ async fn test_multi_tier_ttl_scaling() {
     // Set with 10 second TTL
     let test_data = json!({"ttl": "test"});
     manager
-        .set_with_strategy("test:ttl:1", test_data, CacheStrategy::Custom(Duration::from_secs(10)))
+        .set_with_strategy(
+            "test:ttl:1",
+            test_data,
+            CacheStrategy::Custom(Duration::from_secs(10)),
+        )
         .await
         .unwrap();
 
@@ -294,7 +303,10 @@ async fn test_multi_tier_stampede_protection() {
 
     // Verify data is in L1
     let cached_in_l1 = manager.get(&key).await.unwrap();
-    assert!(cached_in_l1.is_some(), "Data should be cached in L1 after stampede");
+    assert!(
+        cached_in_l1.is_some(),
+        "Data should be cached in L1 after stampede"
+    );
 
     println!("✅ Multi-tier stampede protection test passed");
 }
@@ -350,7 +362,9 @@ async fn test_stampede_retrieves_from_l3() {
 
     // Wait for all tasks
     while let Some(result) = tasks.join_next().await {
-        result.expect("Task panicked").expect("Should retrieve from L3");
+        result
+            .expect("Task panicked")
+            .expect("Should retrieve from L3");
     }
 
     // Should NOT have computed (data retrieved from L3)
@@ -364,7 +378,11 @@ async fn test_stampede_retrieves_from_l3() {
     // Verify data was promoted to L1
     let l1_data = l1.get(&key).await;
     assert!(l1_data.is_some(), "Data should be promoted from L3 to L1");
-    assert_eq!(l1_data.unwrap(), data, "Promoted data should match original");
+    assert_eq!(
+        l1_data.unwrap(),
+        data,
+        "Promoted data should match original"
+    );
 
     println!("✅ Stampede retrieves from L3 test passed");
 }

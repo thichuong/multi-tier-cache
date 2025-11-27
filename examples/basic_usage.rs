@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example basic_usage
 
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+use multi_tier_cache::{CacheStrategy, CacheSystem};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -28,7 +28,8 @@ async fn main() -> anyhow::Result<()> {
     });
 
     println!("Storing user data with ShortTerm strategy (5 min TTL)...");
-    cache.cache_manager()
+    cache
+        .cache_manager()
         .set_with_strategy("user:1", user_data.clone(), CacheStrategy::ShortTerm)
         .await?;
     println!();
@@ -48,7 +49,8 @@ async fn main() -> anyhow::Result<()> {
     });
 
     println!("Storing API response with RealTime strategy (10 sec TTL)...");
-    cache.cache_manager()
+    cache
+        .cache_manager()
         .set_with_strategy("sensor:temp", api_response, CacheStrategy::RealTime)
         .await?;
     println!();

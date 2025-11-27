@@ -1,7 +1,7 @@
 //! Benchmarks for serialization and type-safe caching
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use multi_tier_cache::{CacheStrategy, CacheSystem};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
@@ -28,7 +28,9 @@ fn setup_cache() -> (CacheSystem, Runtime) {
     let rt = Runtime::new().unwrap();
     let cache = rt.block_on(async {
         std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
-        CacheSystem::new().await.expect("Failed to create cache system")
+        CacheSystem::new()
+            .await
+            .expect("Failed to create cache system")
     });
     (cache, rt)
 }
@@ -49,7 +51,8 @@ fn bench_json_vs_typed(c: &mut Criterion) {
                     "email": "test@example.com"
                 });
 
-                cache.cache_manager()
+                cache
+                    .cache_manager()
                     .set_with_strategy(&key, user, CacheStrategy::ShortTerm)
                     .await
                     .unwrap();
@@ -65,7 +68,8 @@ fn bench_json_vs_typed(c: &mut Criterion) {
                 let key = format!("bench:typed:{}", rand::random::<u32>());
                 let user = User::new(123);
 
-                cache.cache_manager()
+                cache
+                    .cache_manager()
                     .get_or_compute_typed(&key, CacheStrategy::ShortTerm, || {
                         let u = user.clone();
                         async move { Ok(u) }
@@ -74,12 +78,17 @@ fn bench_json_vs_typed(c: &mut Criterion) {
                     .unwrap();
 
                 black_box(
-                    cache.cache_manager()
-                        .get_or_compute_typed::<User, _, _>(&key, CacheStrategy::ShortTerm, || async {
-                            panic!("Should not compute");
-                        })
+                    cache
+                        .cache_manager()
+                        .get_or_compute_typed::<User, _, _>(
+                            &key,
+                            CacheStrategy::ShortTerm,
+                            || async {
+                                panic!("Should not compute");
+                            },
+                        )
                         .await
-                        .unwrap()
+                        .unwrap(),
                 );
             })
         });
@@ -102,7 +111,8 @@ fn bench_data_sizes(c: &mut Criterion) {
                     let key = format!("bench:size:{}", rand::random::<u32>());
                     let data = json!({"data": "x".repeat(size)});
 
-                    cache.cache_manager()
+                    cache
+                        .cache_manager()
                         .set_with_strategy(&key, data, CacheStrategy::ShortTerm)
                         .await
                         .unwrap();

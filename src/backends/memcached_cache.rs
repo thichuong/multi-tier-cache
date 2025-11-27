@@ -2,12 +2,12 @@
 //!
 //! Memcached-based distributed cache for warm data storage with simple key-value operations.
 
-use std::sync::Arc;
-use std::time::Duration;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde_json;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{info, debug};
+use std::sync::Arc;
+use std::time::Duration;
+use tracing::{debug, info};
 
 /// Memcached distributed cache
 ///
@@ -88,7 +88,9 @@ impl MemcachedCache {
     ///
     /// Returns server statistics like hits, misses, uptime, etc.
     /// Each tuple contains (server_address, stats_map)
-    pub fn get_server_stats(&self) -> Result<Vec<(String, std::collections::HashMap<String, String>)>> {
+    pub fn get_server_stats(
+        &self,
+    ) -> Result<Vec<(String, std::collections::HashMap<String, String>)>> {
         self.client
             .stats()
             .map_err(|e| anyhow!("Failed to get Memcached stats: {}", e))
@@ -107,18 +109,16 @@ use async_trait::async_trait;
 impl CacheBackend for MemcachedCache {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
         match self.client.get::<String>(key) {
-            Ok(Some(json_str)) => {
-                match serde_json::from_str(&json_str) {
-                    Ok(value) => {
-                        self.hits.fetch_add(1, Ordering::Relaxed);
-                        Some(value)
-                    }
-                    Err(_) => {
-                        self.misses.fetch_add(1, Ordering::Relaxed);
-                        None
-                    }
+            Ok(Some(json_str)) => match serde_json::from_str(&json_str) {
+                Ok(value) => {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    Some(value)
                 }
-            }
+                Err(_) => {
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                }
+            },
             Ok(None) | Err(_) => {
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 None
@@ -126,12 +126,7 @@ impl CacheBackend for MemcachedCache {
         }
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-        ttl: Duration,
-    ) -> Result<()> {
+    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
         let json_str = serde_json::to_string(&value)?;
 
         self.client
@@ -158,17 +153,18 @@ impl CacheBackend for MemcachedCache {
             .as_secs();
         let test_value = serde_json::json!({"test": true, "timestamp": timestamp});
 
-        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10)).await {
-            Ok(_) => {
-                match self.get(test_key).await {
-                    Some(retrieved) => {
-                        let _ = self.remove(test_key).await;
-                        retrieved["test"].as_bool().unwrap_or(false)
-                    }
-                    None => false
+        match self
+            .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10))
+            .await
+        {
+            Ok(_) => match self.get(test_key).await {
+                Some(retrieved) => {
+                    let _ = self.remove(test_key).await;
+                    retrieved["test"].as_bool().unwrap_or(false)
                 }
-            }
-            Err(_) => false
+                None => false,
+            },
+            Err(_) => false,
         }
     }
 

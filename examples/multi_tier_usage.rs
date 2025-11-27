@@ -4,14 +4,12 @@
 //!
 //! Run with: cargo run --example multi_tier_usage
 
-use multi_tier_cache::{
-    CacheSystemBuilder, CacheBackend, L2CacheBackend, async_trait
-};
+use anyhow::Result;
+use multi_tier_cache::{async_trait, CacheBackend, CacheSystemBuilder, L2CacheBackend};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
-use anyhow::Result;
-use serde_json::Value;
 
 // ==================== Mock L3 Cache (Simulated Disk/Cold Storage) ====================
 
@@ -35,7 +33,7 @@ impl CacheBackend for MockL3Cache {
     async fn get(&self, key: &str) -> Option<Value> {
         // Simulate latency for "disk" access
         tokio::time::sleep(Duration::from_millis(50)).await;
-        
+
         let store = self.store.read().unwrap();
         store.get(key).and_then(|(value, expiry, _)| {
             if *expiry > Instant::now() {
@@ -108,7 +106,7 @@ async fn main() -> Result<()> {
 
     // Note: We need a Redis instance for L2. If not available, this might fail.
     // You can use `CacheSystemBuilder::with_tier` to use custom backends for L1/L2 too.
-    
+
     let l3_backend = Arc::new(MockL3Cache::new("Mock L3 (Disk)"));
 
     println!("Building 3-tier cache system...");
@@ -120,7 +118,7 @@ async fn main() -> Result<()> {
         .await?;
 
     println!("✅ Cache system initialized with 3 tiers!");
-    
+
     // 2. Store data
     println!("\n--- Storing Data ---");
     let data = serde_json::json!({
@@ -132,44 +130,47 @@ async fn main() -> Result<()> {
     // When we set data, it goes to ALL tiers
     // L3 will have 2x TTL by default (TierConfig::as_l3())
     println!("Setting 'user:123' with ShortTerm strategy (5 min)...");
-    cache.cache_manager()
-        .set_with_strategy("user:123", data.clone(), multi_tier_cache::CacheStrategy::ShortTerm)
+    cache
+        .cache_manager()
+        .set_with_strategy(
+            "user:123",
+            data.clone(),
+            multi_tier_cache::CacheStrategy::ShortTerm,
+        )
         .await?;
 
     // 3. Simulate Cache Miss & Promotion
     println!("\n--- Simulating Access Patterns ---");
-    
+
     // Clear L1 and L2 to force retrieval from L3
     // (In a real scenario, this happens when L1/L2 evict data but L3 keeps it longer)
     // Since we can't easily clear internal default backends, we'll simulate this
     // by using a key that we manually populate in L3 only, or just trust the flow.
-    
+
     // Let's try a different approach:
     // We'll manually insert into L3 backend to simulate "cold" data
-    // But we don't have direct access to the inner L3 backend instance easily here 
+    // But we don't have direct access to the inner L3 backend instance easily here
     // without keeping a reference to `l3_backend` before building.
-    
+
     // Let's use a new key and pretend it was only in L3
     let cold_data = serde_json::json!({"status": "archived"});
-    
+
     // We can use the fact that we have `l3_backend` reference!
     // It's wrapped in Arc, so we can still use it.
     // However, `CacheSystem` took ownership of it? No, it took a clone of the Arc.
     // So we can still use our `l3_backend` variable.
-    
+
     // Manually seed L3 only
     // Note: We need to cast/use the trait methods
-    let l3_ref = l3_backend.as_ref(); 
-    l3_ref.set_with_ttl(
-        "archive:doc1", 
-        cold_data, 
-        Duration::from_secs(3600)
-    ).await?;
+    let l3_ref = l3_backend.as_ref();
+    l3_ref
+        .set_with_ttl("archive:doc1", cold_data, Duration::from_secs(3600))
+        .await?;
     println!("(Seeded 'archive:doc1' directly into L3 only)");
 
     // Now request it via CacheManager
     println!("Requesting 'archive:doc1' (should miss L1/L2, hit L3, and promote)...");
-    
+
     let start = Instant::now();
     if let Some(val) = cache.cache_manager().get("archive:doc1").await? {
         println!("✅ Found value: {}", val);

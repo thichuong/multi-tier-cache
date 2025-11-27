@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo run --example database_caching`
 
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+use multi_tier_cache::{CacheStrategy, CacheSystem};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -81,7 +81,10 @@ async fn main() -> anyhow::Result<()> {
     let elapsed = start.elapsed();
 
     println!("✅ Retrieved user: {:?}", user);
-    println!("⏱️  Time taken: {:?} (includes DB query + caching)\n", elapsed);
+    println!(
+        "⏱️  Time taken: {:?} (includes DB query + caching)\n",
+        elapsed
+    );
 
     // ========================================
     // Example 2: Second Request (Cache Hit)
@@ -92,11 +95,9 @@ async fn main() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let user: User = cache
         .cache_manager()
-        .get_or_compute_typed(
-            "user:123",
-            CacheStrategy::MediumTerm,
-            || async { fetch_user_from_db(123).await },
-        )
+        .get_or_compute_typed("user:123", CacheStrategy::MediumTerm, || async {
+            fetch_user_from_db(123).await
+        })
         .await?;
     let elapsed = start.elapsed();
 
@@ -135,11 +136,9 @@ async fn main() -> anyhow::Result<()> {
                 let start = std::time::Instant::now();
                 let user: User = cache
                     .cache_manager()
-                    .get_or_compute_typed(
-                        "user:999",
-                        CacheStrategy::ShortTerm,
-                        || async { fetch_user_from_db(999).await },
-                    )
+                    .get_or_compute_typed("user:999", CacheStrategy::ShortTerm, || async {
+                        fetch_user_from_db(999).await
+                    })
                     .await
                     .unwrap();
                 let elapsed = start.elapsed();
@@ -171,7 +170,8 @@ async fn main() -> anyhow::Result<()> {
     println!("Promotions: {}", stats.promotions);
 
     println!("\n✅ Example completed successfully!");
-    println!("
+    println!(
+        "
 💡 Key Takeaways:
 ─────────────────
 1. Type-safe: Compiler enforces correct types
@@ -179,7 +179,8 @@ async fn main() -> anyhow::Result<()> {
 3. Automatic caching: L1+L2 storage handled for you
 4. Stampede protection: Concurrent requests coalesced
 5. Generic: Works with any Serialize + Deserialize type
-");
+"
+    );
 
     Ok(())
 }

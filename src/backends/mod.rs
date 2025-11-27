@@ -35,9 +35,9 @@
 //! ```
 
 // Core backends (always available)
+pub mod dashmap_cache;
 pub mod moka_cache;
 pub mod redis_cache;
-pub mod dashmap_cache;
 
 // Optional backends (feature-gated)
 #[cfg(feature = "backend-memcached")]
@@ -47,9 +47,9 @@ pub mod memcached_cache;
 pub mod quickcache_cache;
 
 // Re-export backend types
+pub use dashmap_cache::DashMapCache;
 pub use moka_cache::MokaCache;
 pub use redis_cache::RedisCache;
-pub use dashmap_cache::DashMapCache;
 
 #[cfg(feature = "backend-memcached")]
 pub use memcached_cache::MemcachedCache;

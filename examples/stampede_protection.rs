@@ -5,7 +5,7 @@
 //!
 //! Run with: cargo run --example stampede_protection
 
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -45,12 +45,11 @@ async fn main() -> anyhow::Result<()> {
             let worker_start = Instant::now();
 
             // Try to get or compute
-            let result = cache_clone.cache_manager()
-                .get_or_compute_with(
-                    "stampede_test_key",
-                    CacheStrategy::ShortTerm,
-                    || expensive_computation(i)
-                )
+            let result = cache_clone
+                .cache_manager()
+                .get_or_compute_with("stampede_test_key", CacheStrategy::ShortTerm, || {
+                    expensive_computation(i)
+                })
                 .await;
 
             let elapsed = worker_start.elapsed();
@@ -83,7 +82,10 @@ async fn main() -> anyhow::Result<()> {
     println!("\n=== Cache Statistics ===");
     println!("Total requests: {}", stats.total_requests);
     println!("Cache hits: {}", stats.total_hits);
-    println!("In-flight requests (coalesced): {}", stats.in_flight_requests);
+    println!(
+        "In-flight requests (coalesced): {}",
+        stats.in_flight_requests
+    );
 
     Ok(())
 }

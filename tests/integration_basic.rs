@@ -5,7 +5,7 @@
 mod common;
 
 use common::*;
-use multi_tier_cache::{CacheStrategy, CacheManagerStats, CacheBackend};
+use multi_tier_cache::{CacheBackend, CacheManagerStats, CacheStrategy};
 use std::time::Duration;
 
 /// Test basic cache set and get operations
@@ -182,7 +182,11 @@ async fn test_ttl_expiration() {
     // Set with very short TTL
     cache
         .cache_manager()
-        .set_with_strategy(&key, value.clone(), CacheStrategy::Custom(Duration::from_millis(100)))
+        .set_with_strategy(
+            &key,
+            value.clone(),
+            CacheStrategy::Custom(Duration::from_millis(100)),
+        )
         .await
         .unwrap();
 
@@ -219,12 +223,18 @@ async fn test_statistics_tracking() {
         .unwrap();
 
     let _ = cache.cache_manager().get(&key).await.unwrap(); // L1 hit
-    let _ = cache.cache_manager().get(&test_key("nonexistent")).await.unwrap(); // Miss
+    let _ = cache
+        .cache_manager()
+        .get(&test_key("nonexistent"))
+        .await
+        .unwrap(); // Miss
 
     // Check stats increased
     let stats_after = cache.cache_manager().get_stats();
     assert!(stats_after.total_requests > stats_before.total_requests);
-    assert!(stats_after.l1_hits > stats_before.l1_hits || stats_after.l2_hits > stats_before.l2_hits);
+    assert!(
+        stats_after.l1_hits > stats_before.l1_hits || stats_after.l2_hits > stats_before.l2_hits
+    );
     assert!(stats_after.misses > stats_before.misses);
 
     // Cleanup

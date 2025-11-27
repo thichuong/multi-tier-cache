@@ -1,7 +1,7 @@
 //! Benchmarks for cache stampede protection
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+use multi_tier_cache::{CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -11,7 +11,9 @@ fn setup_cache() -> (CacheSystem, Runtime) {
     let rt = Runtime::new().unwrap();
     let cache = rt.block_on(async {
         std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
-        CacheSystem::new().await.expect("Failed to create cache system")
+        CacheSystem::new()
+            .await
+            .expect("Failed to create cache system")
     });
     (cache, rt)
 }
@@ -31,7 +33,8 @@ fn bench_stampede_protection(c: &mut Criterion) {
                     let cache = cache.clone();
                     let key = key.clone();
                     let handle = tokio::spawn(async move {
-                        cache.cache_manager()
+                        cache
+                            .cache_manager()
                             .get_or_compute_with(&key, CacheStrategy::ShortTerm, || async {
                                 tokio::time::sleep(Duration::from_millis(10)).await;
                                 Ok(json!({"computed": true}))

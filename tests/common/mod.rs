@@ -6,9 +6,9 @@
 //! - Cleanup utilities
 //! - Test environment setup
 
-use multi_tier_cache::{CacheSystem, CacheManager, L1Cache, L2Cache, InvalidationConfig};
-use std::sync::Arc;
 use anyhow::Result;
+use multi_tier_cache::{CacheManager, CacheSystem, InvalidationConfig, L1Cache, L2Cache};
+use std::sync::Arc;
 
 /// Get Redis URL from environment or use default
 pub fn redis_url() -> String {
@@ -42,12 +42,7 @@ pub async fn setup_cache_with_invalidation() -> Result<Arc<CacheManager>> {
     let l2 = Arc::new(L2Cache::new().await?);
     let config = InvalidationConfig::default();
 
-    let manager = CacheManager::new_with_invalidation(
-        l1,
-        l2,
-        &redis_url(),
-        config
-    ).await?;
+    let manager = CacheManager::new_with_invalidation(l1, l2, &redis_url(), config).await?;
 
     Ok(Arc::new(manager))
 }
@@ -71,7 +66,7 @@ pub async fn cleanup_test_keys(prefix: &str) -> Result<()> {
 
 /// Generate test data of various types
 pub mod test_data {
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub struct User {

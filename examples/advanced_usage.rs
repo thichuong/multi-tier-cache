@@ -4,7 +4,7 @@
 //!
 //! Run with: cargo run --example advanced_usage
 
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::time::Duration;
 
 #[tokio::main]
@@ -21,7 +21,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Store data in L2 cache only (by first clearing L1)
     let data = serde_json::json!({"message": "This data starts in L2"});
-    cache.cache_manager()
+    cache
+        .cache_manager()
         .set_with_strategy("promotion_test", data, CacheStrategy::MediumTerm)
         .await?;
     println!("✅ Data stored in both L1 and L2\n");
@@ -61,23 +62,21 @@ async fn main() -> anyhow::Result<()> {
 
     // First call - cache miss, will compute
     println!("First call - cache miss:");
-    let product1 = cache.cache_manager()
-        .get_or_compute_with(
-            "product:42",
-            CacheStrategy::MediumTerm,
-            || fetch_from_database(42)
-        )
+    let product1 = cache
+        .cache_manager()
+        .get_or_compute_with("product:42", CacheStrategy::MediumTerm, || {
+            fetch_from_database(42)
+        })
         .await?;
     println!("   Result: {}\n", product1);
 
     // Second call - cache hit, no computation
     println!("Second call - cache hit:");
-    let product2 = cache.cache_manager()
-        .get_or_compute_with(
-            "product:42",
-            CacheStrategy::MediumTerm,
-            || fetch_from_database(42)
-        )
+    let product2 = cache
+        .cache_manager()
+        .get_or_compute_with("product:42", CacheStrategy::MediumTerm, || {
+            fetch_from_database(42)
+        })
         .await?;
     println!("   Result: {} (from cache, no DB call)\n", product2);
 
@@ -92,7 +91,8 @@ async fn main() -> anyhow::Result<()> {
                 "worker_id": i,
                 "data": format!("Concurrent data from worker {}", i)
             });
-            cache_clone.cache_manager()
+            cache_clone
+                .cache_manager()
                 .set_with_strategy(&format!("concurrent:{}", i), data, CacheStrategy::ShortTerm)
                 .await
         });
@@ -106,7 +106,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Verify all concurrent writes
     for i in 1..=5 {
-        if let Some(value) = cache.cache_manager().get(&format!("concurrent:{}", i)).await? {
+        if let Some(value) = cache
+            .cache_manager()
+            .get(&format!("concurrent:{}", i))
+            .await?
+        {
             println!("   concurrent:{} = {}", i, value);
         }
     }

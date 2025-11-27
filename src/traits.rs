@@ -40,10 +40,10 @@
 //! }
 //! ```
 
-use std::time::Duration;
 use anyhow::Result;
 use async_trait::async_trait;
 use serde_json;
+use std::time::Duration;
 
 /// Core cache backend trait for both L1 and L2 caches
 ///
@@ -96,12 +96,7 @@ pub trait CacheBackend: Send + Sync {
     ///
     /// * `Ok(())` - Value successfully cached
     /// * `Err(e)` - Cache operation failed
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-        ttl: Duration,
-    ) -> Result<()>;
+    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()>;
 
     /// Remove value from cache
     ///
@@ -186,10 +181,7 @@ pub trait L2CacheBackend: CacheBackend {
     /// - TTL represents the **remaining** time until expiration
     /// - `None` TTL means the key has no expiration
     /// - Implementations should use backend-specific TTL commands (e.g., Redis TTL)
-    async fn get_with_ttl(
-        &self,
-        key: &str,
-    ) -> Option<(serde_json::Value, Option<Duration>)>;
+    async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)>;
 }
 
 /// Optional trait for cache backends that support event streaming

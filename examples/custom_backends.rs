@@ -5,12 +5,12 @@
 //!
 //! Run with: `cargo run --example custom_backends`
 
-use multi_tier_cache::{CacheBackend, L2CacheBackend, CacheSystemBuilder, async_trait};
+use anyhow::Result;
+use multi_tier_cache::{async_trait, CacheBackend, CacheSystemBuilder, L2CacheBackend};
+use serde_json;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use anyhow::Result;
-use serde_json;
 
 // ==================== Example 1: Simple HashMap L1 Cache ====================
 
@@ -57,12 +57,7 @@ impl CacheBackend for HashMapCache {
         })
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-        ttl: Duration,
-    ) -> Result<()> {
+    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
         let mut store = self.store.write().unwrap();
         let expiry = Instant::now() + ttl;
         store.insert(key.to_string(), (value, expiry));
@@ -117,12 +112,7 @@ impl CacheBackend for InMemoryL2Cache {
         })
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
-        ttl: Duration,
-    ) -> Result<()> {
+    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
         let mut store = self.store.write().unwrap();
         let expiry = Instant::now() + ttl;
         store.insert(key.to_string(), (value, expiry, ttl));
@@ -147,10 +137,7 @@ impl CacheBackend for InMemoryL2Cache {
 
 #[async_trait]
 impl L2CacheBackend for InMemoryL2Cache {
-    async fn get_with_ttl(
-        &self,
-        key: &str,
-    ) -> Option<(serde_json::Value, Option<Duration>)> {
+    async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
         let store = self.store.read().unwrap();
         store.get(key).and_then(|(value, expiry, _original_ttl)| {
             let now = Instant::now();
@@ -195,7 +182,10 @@ impl CacheBackend for NoOpCache {
         _value: serde_json::Value,
         ttl: Duration,
     ) -> Result<()> {
-        println!("💾 [{}] Would cache '{}' with TTL {:?} (no-op)", self.name, key, ttl);
+        println!(
+            "💾 [{}] Would cache '{}' with TTL {:?} (no-op)",
+            self.name, key, ttl
+        );
         Ok(())
     }
 
@@ -214,10 +204,7 @@ impl CacheBackend for NoOpCache {
 
 #[async_trait]
 impl L2CacheBackend for NoOpCache {
-    async fn get_with_ttl(
-        &self,
-        _key: &str,
-    ) -> Option<(serde_json::Value, Option<Duration>)> {
+    async fn get_with_ttl(&self, _key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
         None // Always miss
     }
 }
@@ -250,11 +237,13 @@ async fn main() -> Result<()> {
         "timestamp": 1234567890
     });
 
-    manager.set_with_strategy(
-        "user:alice",
-        test_data.clone(),
-        multi_tier_cache::CacheStrategy::ShortTerm,
-    ).await?;
+    manager
+        .set_with_strategy(
+            "user:alice",
+            test_data.clone(),
+            multi_tier_cache::CacheStrategy::ShortTerm,
+        )
+        .await?;
 
     if let Some(cached) = manager.get("user:alice").await? {
         println!("✅ Retrieved from cache: {}", cached);
@@ -275,11 +264,13 @@ async fn main() -> Result<()> {
 
     let noop_manager = noop_cache.cache_manager();
 
-    noop_manager.set_with_strategy(
-        "test:key",
-        serde_json::json!({"value": "test"}),
-        multi_tier_cache::CacheStrategy::Default,
-    ).await?;
+    noop_manager
+        .set_with_strategy(
+            "test:key",
+            serde_json::json!({"value": "test"}),
+            multi_tier_cache::CacheStrategy::Default,
+        )
+        .await?;
 
     match noop_manager.get("test:key").await? {
         Some(_) => println!("❌ Unexpected cache hit (no-op should always miss)"),
@@ -323,9 +314,7 @@ async fn main() -> Result<()> {
     let custom_l2_tier = Arc::new(InMemoryL2Cache::new());
 
     // Configure it as Tier 2 with custom settings
-    let tier_config = TierConfig::as_l2()
-        .with_promotion(true)
-        .with_ttl_scale(1.5); // 1.5x TTL scaling
+    let tier_config = TierConfig::as_l2().with_promotion(true).with_ttl_scale(1.5); // 1.5x TTL scaling
 
     let tiered_cache = CacheSystemBuilder::new()
         // We can mix default L1 with custom L2 tier
@@ -335,13 +324,16 @@ async fn main() -> Result<()> {
         .await?;
 
     println!("✅ Tiered cache system initialized");
-    
-    tiered_cache.cache_manager().set_with_strategy(
-        "tiered:key",
-        serde_json::json!("value"),
-        multi_tier_cache::CacheStrategy::ShortTerm
-    ).await?;
-    
+
+    tiered_cache
+        .cache_manager()
+        .set_with_strategy(
+            "tiered:key",
+            serde_json::json!("value"),
+            multi_tier_cache::CacheStrategy::ShortTerm,
+        )
+        .await?;
+
     println!("   Stored 'tiered:key' with 1.5x TTL in L2");
 
     println!("\n✅ Custom backends example completed!");
