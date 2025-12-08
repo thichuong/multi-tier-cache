@@ -14,7 +14,7 @@ readme = "README.md"
 [dependencies]
 # Caching
 moka = { version = "0.12", features = ["future"] }
-redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "1.0", features = ["tokio-comp", "connection-manager"] }
 memcache = { version = "0.17", optional = true }
 quick_cache = { version = "0.6", optional = true }
 parking_lot = { version = "0.12", optional = true }
