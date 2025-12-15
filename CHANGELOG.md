@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 
 - Metrics export (Prometheus format)
+## [0.5.6] - 2025-12-15
+
+### Added
+
+- **Configurable Moka Cache**: Introduced `MokaCacheConfig` to allow customizing L1 cache settings (capacity, TTL, idle time).
+- **Builder API**: Added `with_moka_config()` to `CacheSystemBuilder` for applying custom Moka configurations.
+
+### Changed
+
+- **Code Quality**: Resolved all `clippy` warnings including `doc_markdown`, `needless_pass_by_value`, and `clone_on_copy`.
+- **Documentation**: Added "Moka Cache (L1) Configuration" section to README.md with usage examples.
+
 
 ## [0.5.5] - 2025-01-06
 

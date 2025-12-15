@@ -1,6 +1,6 @@
 [package]
 name = "multi-tier-cache"
-version = "0.5.5"
+version = "0.5.6"
 edition = "2021"
 authors = ["thichuong <thichuong22022000@gmail.com>"]
 description = "Customizable multi-tier cache with L1 (Moka in-memory) + L2 (Redis distributed) defaults, expandable to L3/L4+, cross-instance invalidation via Pub/Sub, stampede protection, and flexible TTL scaling"
