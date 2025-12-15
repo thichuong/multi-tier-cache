@@ -49,6 +49,7 @@ pub mod quickcache_cache;
 // Re-export backend types
 pub use dashmap_cache::DashMapCache;
 pub use moka_cache::MokaCache;
+pub use moka_cache::MokaCacheConfig;
 pub use redis_cache::RedisCache;
 
 #[cfg(feature = "backend-memcached")]

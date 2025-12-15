@@ -70,6 +70,7 @@ pub use backends::{
     L1Cache,
     L2Cache, // Type aliases
     MokaCache,
+    MokaCacheConfig,
     RedisCache, // Default backends
 };
 
@@ -163,7 +164,7 @@ impl CacheSystem {
         info!("Initializing Multi-Tier Cache System");
 
         // Initialize L1 cache (Moka)
-        let l1_cache = Arc::new(L1Cache::new()?);
+        let l1_cache = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
 
         // Initialize L2 cache (Redis)
         let l2_cache = Arc::new(L2Cache::new().await?);
@@ -204,7 +205,7 @@ impl CacheSystem {
         info!(redis_url = %redis_url, "Initializing Multi-Tier Cache System with custom Redis URL");
 
         // Initialize L1 cache (Moka)
-        let l1_cache = Arc::new(L1Cache::new()?);
+        let l1_cache = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
 
         // Initialize L2 cache (Redis) with custom URL
         let l2_cache = Arc::new(L2Cache::with_url(redis_url).await?);

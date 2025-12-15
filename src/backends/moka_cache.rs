@@ -30,6 +30,27 @@ impl CacheEntry {
     }
 }
 
+/// Configuration for MokaCache
+#[derive(Debug, Clone)]
+pub struct MokaCacheConfig {
+    /// Max capacity of the cache
+    pub max_capacity: u64,
+    /// Time to live for cache entries
+    pub time_to_live: Duration,
+    /// Time to idle for cache entries
+    pub time_to_idle: Duration,
+}
+
+impl Default for MokaCacheConfig {
+    fn default() -> Self {
+        Self {
+            max_capacity: 2000,
+            time_to_live: Duration::from_secs(3600),
+            time_to_idle: Duration::from_secs(120),
+        }
+    }
+}
+
 /// Moka in-memory cache with per-key TTL support
 ///
 /// This is the default L1 (hot tier) cache backend, providing:
@@ -56,17 +77,17 @@ impl MokaCache {
     /// # Errors
     ///
     /// Returns an error if the cache cannot be initialized.
-    pub fn new() -> Result<Self> {
+    pub fn new(config: MokaCacheConfig) -> Result<Self> {
         info!("Initializing Moka Cache");
 
         let cache = Cache::builder()
-            .max_capacity(2000) // 2000 entries max
-            .time_to_live(Duration::from_secs(3600)) // 1 hour max TTL as safety net
-            .time_to_idle(Duration::from_secs(120)) // 2 minutes idle time
+            .max_capacity(config.max_capacity)
+            .time_to_live(config.time_to_live)
+            .time_to_idle(config.time_to_idle)
             .build();
 
         info!(
-            capacity = 2000,
+            capacity = config.max_capacity,
             "Moka Cache initialized with per-key TTL support"
         );
 

@@ -30,6 +30,7 @@
 //!     .await?;
 //! ```
 
+use crate::backends::MokaCacheConfig;
 use crate::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 use crate::{CacheManager, CacheSystem, CacheTier, L1Cache, L2Cache, TierConfig};
 use anyhow::Result;
@@ -97,7 +98,9 @@ pub struct CacheSystemBuilder {
     // Legacy 2-tier configuration (v0.1.0 - v0.4.x)
     l1_backend: Option<Arc<dyn CacheBackend>>,
     l2_backend: Option<Arc<dyn L2CacheBackend>>,
+
     streaming_backend: Option<Arc<dyn StreamingBackend>>,
+    moka_config: Option<MokaCacheConfig>,
 
     // Multi-tier configuration (v0.5.0+)
     tiers: Vec<(Arc<dyn L2CacheBackend>, TierConfig)>,
@@ -113,7 +116,9 @@ impl CacheSystemBuilder {
         Self {
             l1_backend: None,
             l2_backend: None,
+
             streaming_backend: None,
+            moka_config: None,
             tiers: Vec::new(),
         }
     }
@@ -140,6 +145,13 @@ impl CacheSystemBuilder {
     #[must_use]
     pub fn with_l1(mut self, backend: Arc<dyn CacheBackend>) -> Self {
         self.l1_backend = Some(backend);
+        self
+    }
+
+    /// Configure custom configuration for default L1 (Moka) backend
+    #[must_use]
+    pub fn with_moka_config(mut self, config: MokaCacheConfig) -> Self {
+        self.moka_config = Some(config);
         self
     }
 
@@ -365,7 +377,7 @@ impl CacheSystemBuilder {
             // Default path: Create concrete types once and reuse them
             info!("Initializing default backends (Moka + Redis)");
 
-            let l1_cache = Arc::new(L1Cache::new()?);
+            let l1_cache = Arc::new(L1Cache::new(self.moka_config.clone().unwrap_or_default())?);
             let l2_cache = Arc::new(L2Cache::new().await?);
 
             // Use legacy constructor that handles conversion to trait objects
@@ -388,7 +400,8 @@ impl CacheSystemBuilder {
                 backend
             } else {
                 info!("Using default L1 backend (Moka)");
-                Arc::new(L1Cache::new()?)
+                let config = self.moka_config.unwrap_or_default();
+                Arc::new(L1Cache::new(config)?)
             };
 
             let l2_backend: Arc<dyn L2CacheBackend> = if let Some(backend) = self.l2_backend {
