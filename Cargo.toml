@@ -41,7 +41,7 @@ dashmap = "5.5"
 
 [dev-dependencies]
 tokio = { version = "1.28", features = ["full"] }
-criterion = "0.5"
+criterion = "0.8"
 rand = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
