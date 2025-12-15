@@ -37,9 +37,11 @@ pub async fn setup_cache_system() -> Result<CacheSystem> {
     CacheSystem::new().await
 }
 
+use multi_tier_cache::backends::MokaCacheConfig;
+
 /// Initialize cache manager with invalidation for testing
 pub async fn setup_cache_with_invalidation() -> Result<Arc<CacheManager>> {
-    let l1 = Arc::new(L1Cache::new()?);
+    let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
     let l2 = Arc::new(L2Cache::new().await?);
     let config = InvalidationConfig::default();
 

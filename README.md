@@ -24,6 +24,7 @@
 - [Feature Compatibility](#%EF%B8%8F-feature-compatibility)
 - [Performance Benchmarks](#-performance-benchmarks)
 - [Configuration](#-configuration)
+  - [Moka Cache (L1)](#moka-cache-l1-configuration)
 - [Testing](#-testing)
 - [Examples](#-examples)
 - [Architecture Details](#%EF%B8%8F-architecture-details)
@@ -765,6 +766,32 @@ let cache = CacheSystemBuilder::new().build().await?;
 - Small datasets (< 10GB) that fit in Redis
 - Uniform access patterns (all data equally hot)
 - Latency-critical paths (stick to L1+L2)
+
+## 🔧 Configuration
+### Moka Cache (L1) Configuration
+
+You can customize the Moka in-memory cache settings (capacity, TTL) using `MokaCacheConfig` via the builder:
+
+```rust
+use multi_tier_cache::{CacheSystemBuilder, MokaCacheConfig};
+use std::time::Duration;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let config = MokaCacheConfig {
+        max_capacity: 10_000,
+        time_to_live: Duration::from_secs(30 * 60), // 30 mins
+        time_to_idle: Duration::from_secs(5 * 60),  // 5 mins
+    };
+
+    let cache = CacheSystemBuilder::new()
+        .with_moka_config(config)
+        .build()
+        .await?;
+
+    Ok(())
+}
+```
 
 ## ⚖️ Feature Compatibility
 

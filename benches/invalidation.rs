@@ -1,7 +1,9 @@
 //! Benchmarks for cache invalidation operations
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use multi_tier_cache::{CacheManager, CacheStrategy, InvalidationConfig, L1Cache, L2Cache};
+use multi_tier_cache::{
+    CacheManager, CacheStrategy, InvalidationConfig, L1Cache, L2Cache, MokaCacheConfig,
+};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +15,10 @@ fn setup_cache_with_invalidation() -> (Arc<CacheManager>, Runtime) {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
 
-        let l1 = Arc::new(L1Cache::new().unwrap_or_else(|_| panic!("Failed to create L1")));
+        let l1 = Arc::new(
+            L1Cache::new(MokaCacheConfig::default())
+                .unwrap_or_else(|_| panic!("Failed to create L1")),
+        );
         let l2 = Arc::new(
             L2Cache::new()
                 .await

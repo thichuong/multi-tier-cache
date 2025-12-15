@@ -30,8 +30,8 @@ impl CacheEntry {
     }
 }
 
-/// Configuration for MokaCache
-#[derive(Debug, Clone)]
+/// Configuration for `MokaCache`
+#[derive(Debug, Clone, Copy)]
 pub struct MokaCacheConfig {
     /// Max capacity of the cache
     pub max_capacity: u64,

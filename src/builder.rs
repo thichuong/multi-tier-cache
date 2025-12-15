@@ -377,7 +377,7 @@ impl CacheSystemBuilder {
             // Default path: Create concrete types once and reuse them
             info!("Initializing default backends (Moka + Redis)");
 
-            let l1_cache = Arc::new(L1Cache::new(self.moka_config.clone().unwrap_or_default())?);
+            let l1_cache = Arc::new(L1Cache::new(self.moka_config.unwrap_or_default())?);
             let l2_cache = Arc::new(L2Cache::new().await?);
 
             // Use legacy constructor that handles conversion to trait objects
