@@ -76,7 +76,7 @@ async fn test_concurrent_cache_hits() {
     // Pre-populate cache
     cache
         .cache_manager()
-        .set_with_strategy(&key, value.clone(), CacheStrategy::MediumTerm)
+        .set_with_strategy(&key, &value, CacheStrategy::MediumTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
@@ -90,7 +90,7 @@ async fn test_concurrent_cache_hits() {
         tasks.spawn(async move {
             let cached = cache_clone
                 .cache_manager()
-                .get(&key_clone)
+                .get::<serde_json::Value>(&key_clone)
                 .await
                 .unwrap_or_else(|_| panic!("Failed to get cache"));
             assert_eq!(cached, Some(expected));
@@ -137,7 +137,7 @@ async fn test_stampede_latency_reduction() {
     let start = std::time::Instant::now();
     let _ = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     let cached_duration = start.elapsed();

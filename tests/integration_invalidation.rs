@@ -20,13 +20,13 @@ async fn test_invalidate_single_key() {
 
     // Set value
     cache
-        .set_with_strategy(&key, value.clone(), CacheStrategy::MediumTerm)
+        .set_with_strategy(&key, &value, CacheStrategy::MediumTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // Verify cached
     let cached = cache
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(value));
@@ -39,7 +39,7 @@ async fn test_invalidate_single_key() {
 
     // Should be gone
     let cached2 = cache
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached2, None);
@@ -57,13 +57,13 @@ async fn test_update_cache() {
 
     // Set initial value
     cache
-        .set_with_strategy(&key, value1.clone(), CacheStrategy::MediumTerm)
+        .set_with_strategy(&key, &value1, CacheStrategy::MediumTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // Update cache
     cache
-        .update_cache(&key, value2.clone(), Some(Duration::from_secs(300)))
+        .update_cache(&key, &value2, Some(Duration::from_secs(300)))
         .await
         .unwrap_or_else(|_| panic!("Failed to update cache"));
 
@@ -72,7 +72,7 @@ async fn test_update_cache() {
 
     // Should have new value
     let cached = cache
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(value2));
@@ -91,7 +91,7 @@ async fn test_invalidate_pattern() {
         let key = format!("{prefix}key{i}");
         let value = test_data::json_user(i);
         cache
-            .set_with_strategy(&key, value, CacheStrategy::MediumTerm)
+            .set_with_strategy(&key, &value, CacheStrategy::MediumTerm)
             .await
             .unwrap_or_else(|_| panic!("Failed to set cache"));
     }
@@ -110,7 +110,7 @@ async fn test_invalidate_pattern() {
     for i in 1..=5 {
         let key = format!("{prefix}key{i}");
         let cached = cache
-            .get(&key)
+            .get::<serde_json::Value>(&key)
             .await
             .unwrap_or_else(|_| panic!("Failed to get cache"));
         assert_eq!(cached, None, "Key {key} should be invalidated");
@@ -128,7 +128,7 @@ async fn test_set_with_broadcast() {
 
     // Set with broadcast
     cache
-        .set_with_broadcast(&key, value.clone(), CacheStrategy::ShortTerm)
+        .set_with_broadcast(&key, &value, CacheStrategy::ShortTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
@@ -137,7 +137,7 @@ async fn test_set_with_broadcast() {
 
     // Should be cached
     let cached = cache
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(value));
@@ -154,7 +154,7 @@ async fn test_invalidation_stats() {
 
     // Perform invalidation operations
     cache
-        .set_with_strategy(&key, value.clone(), CacheStrategy::ShortTerm)
+        .set_with_strategy(&key, &value, CacheStrategy::ShortTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
@@ -187,7 +187,7 @@ async fn test_bulk_invalidation() {
     for (i, key) in keys.iter().enumerate() {
         let value = test_data::json_user((i + 1) as u64);
         cache
-            .set_with_strategy(key, value, CacheStrategy::ShortTerm)
+            .set_with_strategy(key, &value, CacheStrategy::ShortTerm)
             .await
             .unwrap_or_else(|_| panic!("Failed to set cache"));
     }
@@ -206,7 +206,7 @@ async fn test_bulk_invalidation() {
     // All should be gone
     for key in &keys {
         let cached = cache
-            .get(key)
+            .get::<serde_json::Value>(key)
             .await
             .unwrap_or_else(|_| panic!("Failed to get cache"));
         assert_eq!(cached, None);

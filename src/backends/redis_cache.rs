@@ -5,7 +5,6 @@
 use anyhow::{Context, Result};
 use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, Client};
-use serde_json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -161,28 +160,25 @@ use async_trait::async_trait;
 /// This allows `RedisCache` to be used as a pluggable backend in the multi-tier cache system.
 #[async_trait]
 impl CacheBackend for RedisCache {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
+    async fn get(&self, key: &str) -> Option<Vec<u8>> {
         let mut conn = self.conn_manager.clone();
 
-        if let Ok(json_str) = conn.get::<_, String>(key).await {
-            if let Ok(value) = serde_json::from_str(&json_str) {
+        match conn.get::<_, Vec<u8>>(key).await {
+            Ok(value) if !value.is_empty() => {
                 self.hits.fetch_add(1, Ordering::Relaxed);
                 Some(value)
-            } else {
+            }
+            _ => {
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 None
             }
-        } else {
-            self.misses.fetch_add(1, Ordering::Relaxed);
-            None
         }
     }
 
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let json_str = serde_json::to_string(&value)?;
+    async fn set_with_ttl(&self, key: &str, value: &[u8], ttl: Duration) -> Result<()> {
         let mut conn = self.conn_manager.clone();
 
-        let _: () = conn.set_ex(key, json_str, ttl.as_secs()).await?;
+        let _: () = conn.set_ex(key, value, ttl.as_secs()).await?;
         self.sets.fetch_add(1, Ordering::Relaxed);
         debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Redis] Cached key with TTL");
         Ok(())
@@ -196,23 +192,16 @@ impl CacheBackend for RedisCache {
 
     async fn health_check(&self) -> bool {
         let test_key = "health_check_redis";
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or(Duration::from_secs(0))
-            .as_secs();
-        let test_value = serde_json::json!({"test": true, "timestamp": timestamp});
+        let test_value = vec![1, 2, 3, 4];
 
         match self
-            .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10))
+            .set_with_ttl(test_key, &test_value, Duration::from_secs(10))
             .await
         {
             Ok(()) => match self.get(test_key).await {
                 Some(retrieved) => {
                     let _ = self.remove(test_key).await;
-                    retrieved
-                        .get("test")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false)
+                    retrieved == test_value
                 }
                 None => false,
             },
@@ -230,20 +219,12 @@ impl CacheBackend for RedisCache {
 /// This extends `CacheBackend` with TTL introspection capabilities needed for L2->L1 promotion.
 #[async_trait]
 impl L2CacheBackend for RedisCache {
-    async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
+    async fn get_with_ttl(&self, key: &str) -> Option<(Vec<u8>, Option<Duration>)> {
         let mut conn = self.conn_manager.clone();
 
         // Get value
-        let json_str: String = if let Ok(s) = conn.get(key).await {
+        let bytes: Vec<u8> = if let Ok(s) = conn.get(key).await {
             s
-        } else {
-            self.misses.fetch_add(1, Ordering::Relaxed);
-            return None;
-        };
-
-        // Parse JSON
-        let value: serde_json::Value = if let Ok(v) = serde_json::from_str(&json_str) {
-            v
         } else {
             self.misses.fetch_add(1, Ordering::Relaxed);
             return None;
@@ -264,6 +245,6 @@ impl L2CacheBackend for RedisCache {
             None // No expiry or error
         };
 
-        Some((value, ttl))
+        Some((bytes, ttl))
     }
 }

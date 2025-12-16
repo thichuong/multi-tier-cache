@@ -20,14 +20,14 @@ async fn test_basic_set_and_get() {
     // Set value
     cache
         .cache_manager()
-        .set_with_strategy(&key, value.clone(), CacheStrategy::ShortTerm)
+        .set_with_strategy(&key, &value, CacheStrategy::ShortTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set value"));
 
     // Get value
     let cached = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get value"));
 
@@ -54,21 +54,21 @@ async fn test_l1_cache_hit() {
     // Set value (populates L1)
     cache
         .cache_manager()
-        .set_with_strategy(&key, value.clone(), CacheStrategy::MediumTerm)
+        .set_with_strategy(&key, &value, CacheStrategy::MediumTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // First get - should hit L1
     let _ = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
 
     // Second get - should also hit L1
     let cached = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(value));
@@ -96,18 +96,19 @@ async fn test_l2_to_l1_promotion() {
     let value = test_data::json_user(3);
 
     // Set directly in L2 (bypass L1)
+    let bytes = serde_json::to_vec(&value).unwrap();
     cache
         .l2_cache
         .as_ref()
         .unwrap_or_else(|| panic!("L2 cache missing"))
-        .set_with_ttl(&key, value.clone(), Duration::from_secs(300))
+        .set_with_ttl(&key, &bytes, Duration::from_secs(300))
         .await
         .unwrap_or_else(|_| panic!("Failed to set L2"));
 
     // Get from cache manager - should promote to L1
     let cached = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(value.clone()));
@@ -119,7 +120,7 @@ async fn test_l2_to_l1_promotion() {
     // Next get should hit L1
     let cached2 = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached2, Some(value));
@@ -144,7 +145,7 @@ async fn test_cache_miss() {
     // Get non-existent key
     let cached = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, None);
@@ -178,7 +179,7 @@ async fn test_compute_on_miss() {
     // Verify it's now cached
     let cached = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(expected_value));
@@ -204,7 +205,7 @@ async fn test_type_safe_caching() {
     // Store and retrieve with type safety
     let user: test_data::User = cache
         .cache_manager()
-        .get_or_compute_typed(&key, CacheStrategy::MediumTerm, || {
+        .get_or_compute(&key, CacheStrategy::MediumTerm, || {
             let u = expected_user.clone();
             async move { Ok(u) }
         })
@@ -216,7 +217,7 @@ async fn test_type_safe_caching() {
     // Verify it's cached
     let user2: test_data::User = cache
         .cache_manager()
-        .get_or_compute_typed(&key, CacheStrategy::MediumTerm, || async {
+        .get_or_compute(&key, CacheStrategy::MediumTerm, || async {
             panic!("Should not compute again");
         })
         .await
@@ -247,7 +248,7 @@ async fn test_ttl_expiration() {
         .cache_manager()
         .set_with_strategy(
             &key,
-            value.clone(),
+            &value,
             CacheStrategy::Custom(Duration::from_millis(100)),
         )
         .await
@@ -256,7 +257,7 @@ async fn test_ttl_expiration() {
     // Immediate get should work
     let cached = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(value.clone()));
@@ -267,7 +268,7 @@ async fn test_ttl_expiration() {
     // Should be expired now
     let cached2 = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached2, None);
@@ -296,18 +297,18 @@ async fn test_statistics_tracking() {
     // Perform operations
     cache
         .cache_manager()
-        .set_with_strategy(&key, value, CacheStrategy::ShortTerm)
+        .set_with_strategy(&key, &value, CacheStrategy::ShortTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     let _ = cache
         .cache_manager()
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache")); // L1 hit
     let _ = cache
         .cache_manager()
-        .get(&test_key("nonexistent"))
+        .get::<serde_json::Value>(&test_key("nonexistent"))
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache")); // Miss
 
@@ -360,13 +361,13 @@ async fn test_cache_strategies() {
 
         cache
             .cache_manager()
-            .set_with_strategy(&key, value.clone(), strategy)
+            .set_with_strategy(&key, &value, strategy)
             .await
             .unwrap_or_else(|_| panic!("Failed to set with {name} strategy"));
 
         let cached = cache
             .cache_manager()
-            .get(&key)
+            .get::<serde_json::Value>(&key)
             .await
             .unwrap_or_else(|_| panic!("Failed to get with {name} strategy"));
 

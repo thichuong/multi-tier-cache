@@ -5,7 +5,6 @@
 use anyhow::Result;
 use parking_lot::RwLock;
 use quick_cache::sync::Cache;
-use serde_json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,12 +13,12 @@ use tracing::{debug, info};
 /// Cache entry with TTL information
 #[derive(Debug, Clone)]
 struct CacheEntry {
-    value: serde_json::Value,
+    value: Vec<u8>,
     expires_at: Instant,
 }
 
 impl CacheEntry {
-    fn new(value: serde_json::Value, ttl: Duration) -> Self {
+    fn new(value: Vec<u8>, ttl: Duration) -> Self {
         Self {
             value,
             expires_at: Instant::now() + ttl,
@@ -109,7 +108,7 @@ use async_trait::async_trait;
 /// This allows `QuickCacheBackend` to be used as a pluggable backend in the multi-tier cache system.
 #[async_trait]
 impl CacheBackend for QuickCacheBackend {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
+    async fn get(&self, key: &str) -> Option<Vec<u8>> {
         if let Some(entry_lock) = self.cache.get(key) {
             let entry = entry_lock.read();
             if entry.is_expired() {
@@ -128,8 +127,8 @@ impl CacheBackend for QuickCacheBackend {
         }
     }
 
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let entry = Arc::new(RwLock::new(CacheEntry::new(value, ttl)));
+    async fn set_with_ttl(&self, key: &str, value: &[u8], ttl: Duration) -> Result<()> {
+        let entry = Arc::new(RwLock::new(CacheEntry::new(value.to_vec(), ttl)));
         self.cache.insert(key.to_string(), entry);
         self.sets.fetch_add(1, Ordering::Relaxed);
         debug!(key = %key, ttl_secs = %ttl.as_secs(), "[QuickCache] Cached key with TTL");
@@ -143,10 +142,10 @@ impl CacheBackend for QuickCacheBackend {
 
     async fn health_check(&self) -> bool {
         let test_key = "health_check_quickcache";
-        let test_value = serde_json::json!({"test": true});
+        let test_value = vec![1, 2, 3, 4];
 
         match self
-            .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
+            .set_with_ttl(test_key, &test_value, Duration::from_secs(60))
             .await
         {
             Ok(()) => match self.get(test_key).await {

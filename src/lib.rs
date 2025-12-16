@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 //! Multi-Tier Cache
 //!
 //! A high-performance, production-ready multi-tier caching library for Rust featuring:
@@ -60,6 +61,7 @@ use tracing::{info, warn};
 pub mod backends;
 pub mod builder;
 pub mod cache_manager;
+pub mod codecs;
 pub mod invalidation;
 pub mod redis_streams;
 pub mod traits;
@@ -95,10 +97,12 @@ pub use invalidation::{
     InvalidationSubscriber,
 };
 pub use redis_streams::RedisStreams;
-pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
+pub use traits::{CacheBackend, CacheCodec, L2CacheBackend, StreamingBackend};
 
 // Re-export async_trait for user convenience
 pub use async_trait::async_trait;
+
+use crate::codecs::JsonCodec;
 
 /// Main entry point for the Multi-Tier Cache system
 ///
@@ -126,16 +130,16 @@ pub use async_trait::async_trait;
 /// When using multi-tier mode or custom backends, `l1_cache` and `l2_cache`
 /// may be `None`. Always use `cache_manager()` for cache operations.
 #[derive(Clone)]
-pub struct CacheSystem {
+pub struct CacheSystem<C: CacheCodec = JsonCodec> {
     /// Unified cache manager (primary interface)
-    pub cache_manager: Arc<CacheManager>,
+    pub cache_manager: CacheManager<C>,
     /// L1 Cache (in-memory, Moka) - `None` when using custom backends
     pub l1_cache: Option<Arc<L1Cache>>,
     /// L2 Cache (distributed, Redis) - `None` when using custom backends
     pub l2_cache: Option<Arc<L2Cache>>,
 }
 
-impl CacheSystem {
+impl CacheSystem<JsonCodec> {
     /// Create new cache system with default configuration
     ///
     /// # Configuration
@@ -170,7 +174,7 @@ impl CacheSystem {
         let l2_cache = Arc::new(L2Cache::new().await?);
 
         // Initialize cache manager
-        let cache_manager = Arc::new(CacheManager::new(l1_cache.clone(), l2_cache.clone()).await?);
+        let cache_manager = CacheManager::new(l1_cache.clone(), l2_cache.clone()).await?;
 
         info!("Multi-Tier Cache System initialized successfully");
 
@@ -211,8 +215,7 @@ impl CacheSystem {
         let l2_cache = Arc::new(L2Cache::with_url(redis_url).await?);
 
         // Initialize cache manager
-        let cache_manager =
-            Arc::new(CacheManager::new(Arc::clone(&l1_cache), Arc::clone(&l2_cache)).await?);
+        let cache_manager = CacheManager::new(Arc::clone(&l1_cache), Arc::clone(&l2_cache)).await?;
 
         info!("Multi-Tier Cache System initialized successfully");
 
@@ -222,7 +225,9 @@ impl CacheSystem {
             l2_cache: Some(l2_cache),
         })
     }
+}
 
+impl<C: CacheCodec> CacheSystem<C> {
     /// Perform health check on all cache tiers
     ///
     /// Returns `true` if at least L1 is operational.
@@ -268,7 +273,7 @@ impl CacheSystem {
     ///
     /// Use this for all cache operations: get, set, streams, etc.
     #[must_use]
-    pub fn cache_manager(&self) -> &Arc<CacheManager> {
+    pub fn cache_manager(&self) -> &CacheManager<C> {
         &self.cache_manager
     }
 }

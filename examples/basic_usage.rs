@@ -30,13 +30,17 @@ async fn main() -> anyhow::Result<()> {
     println!("Storing user data with ShortTerm strategy (5 min TTL)...");
     cache
         .cache_manager()
-        .set_with_strategy("user:1", user_data.clone(), CacheStrategy::ShortTerm)
+        .set_with_strategy("user:1", &user_data, CacheStrategy::ShortTerm)
         .await?;
     println!();
 
     // 4. Retrieve data
     println!("Retrieving user data...");
-    if let Some(cached_user) = cache.cache_manager().get("user:1").await? {
+    if let Some(cached_user) = cache
+        .cache_manager()
+        .get::<serde_json::Value>("user:1")
+        .await?
+    {
         println!("✅ Retrieved from cache: {cached_user}");
     }
     println!();
@@ -51,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Storing API response with RealTime strategy (10 sec TTL)...");
     cache
         .cache_manager()
-        .set_with_strategy("sensor:temp", api_response, CacheStrategy::RealTime)
+        .set_with_strategy("sensor:temp", &api_response, CacheStrategy::RealTime)
         .await?;
     println!();
 

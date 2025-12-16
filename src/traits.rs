@@ -1,10 +1,11 @@
 //! Cache Backend Traits
 //!
 //! This module defines the trait abstractions that allow users to implement
-//! custom cache backends for both L1 (in-memory) and L2 (distributed) caches.
+//! custom cache backends and serialization codecs.
 //!
 //! # Architecture
 //!
+//! - `CacheCodec`: Trait for pluggable serialization backends
 //! - `CacheBackend`: Core trait for all cache implementations
 //! - `L2CacheBackend`: Extended trait for L2 caches with TTL introspection
 //! - `StreamingBackend`: Optional trait for event streaming capabilities
@@ -42,8 +43,82 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use std::fmt::Debug;
 use std::time::Duration;
+
+/// Trait for cache value serialization/deserialization
+///
+/// This trait provides a pluggable serialization abstraction for the cache system,
+/// allowing users to choose between different serialization backends (e.g., `serde_json`,
+/// `simd-json`) or implement custom serializers.
+///
+/// # Thread Safety
+///
+/// Implementations must be `Send + Sync + Debug` to support concurrent access across async tasks
+/// and provide debugging capabilities.
+///
+/// # Example: Custom Codec
+///
+/// ```rust,ignore
+/// use multi_tier_cache::CacheCodec;
+/// use anyhow::Result;
+/// use serde::{Serialize, de::DeserializeOwned};
+///
+/// #[derive(Debug)]
+/// struct MyCustomCodec;
+///
+/// impl CacheCodec for MyCustomCodec {
+///     fn serialize<T: Serialize + ?Sized>(&self, value: &T) -> Result<Vec<u8>> {
+///         // Your custom serialization logic
+///         Ok(mycodec::serialize(value)?)
+///     }
+///
+///     fn deserialize<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T> {
+///         // Your custom deserialization logic
+///         Ok(mycodec::deserialize(bytes)?)
+///     }
+///
+///     fn name(&self) -> &'static str {
+///         "mycodec"
+///     }
+/// }
+/// ```
+pub trait CacheCodec: Send + Sync + Debug {
+    /// Serialize a value to bytes
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The value to serialize
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(bytes)` - Serialized byte representation
+    /// * `Err(e)` - Serialization failed
+    fn serialize<T: Serialize + ?Sized>(&self, value: &T) -> Result<Vec<u8>>;
+
+    /// Deserialize bytes to a value
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The byte slice to deserialize
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(value)` - Deserialized value
+    /// * `Err(e)` - Deserialization failed
+    fn deserialize<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T>;
+
+    /// Get the name of the codec
+    ///
+    /// This is used for logging and debugging purposes.
+    ///
+    /// # Returns
+    ///
+    /// A string identifying this codec.
+    fn name(&self) -> &'static str;
+}
 
 /// Core cache backend trait for both L1 and L2 caches
 ///
@@ -80,23 +155,23 @@ pub trait CacheBackend: Send + Sync {
     ///
     /// # Returns
     ///
-    /// * `Some(value)` - Value found in cache
+    /// * `Some(value)` - Value found in cache (as bytes)
     /// * `None` - Key not found or expired
-    async fn get(&self, key: &str) -> Option<serde_json::Value>;
+    async fn get(&self, key: &str) -> Option<Vec<u8>>;
 
     /// Set value in cache with time-to-live
     ///
     /// # Arguments
     ///
     /// * `key` - The cache key
-    /// * `value` - The value to store (must be JSON-serializable)
+    /// * `value` - The value to store (as bytes)
     /// * `ttl` - Time-to-live duration
     ///
     /// # Returns
     ///
     /// * `Ok(())` - Value successfully cached
     /// * `Err(e)` - Cache operation failed
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()>;
+    async fn set_with_ttl(&self, key: &str, value: &[u8], ttl: Duration) -> Result<()>;
 
     /// Remove value from cache
     ///
@@ -152,7 +227,7 @@ pub trait CacheBackend: Send + Sync {
 ///
 /// #[async_trait]
 /// impl L2CacheBackend for MyDistributedCache {
-///     async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
+///     async fn get_with_ttl(&self, key: &str) -> Option<(Vec<u8>, Option<Duration>)> {
 ///         // Retrieve value and calculate remaining TTL
 ///         Some((value, Some(remaining_ttl)))
 ///     }
@@ -181,7 +256,7 @@ pub trait L2CacheBackend: CacheBackend {
     /// - TTL represents the **remaining** time until expiration
     /// - `None` TTL means the key has no expiration
     /// - Implementations should use backend-specific TTL commands (e.g., Redis TTL)
-    async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)>;
+    async fn get_with_ttl(&self, key: &str) -> Option<(Vec<u8>, Option<Duration>)>;
 }
 
 /// Optional trait for cache backends that support event streaming

@@ -102,10 +102,10 @@ async fn demo_dashmap_backend() -> Result<()> {
     });
 
     manager
-        .set_with_strategy("user:bob", test_data.clone(), CacheStrategy::ShortTerm)
+        .set_with_strategy("user:bob", &test_data, CacheStrategy::ShortTerm)
         .await?;
 
-    if let Some(cached) = manager.get("user:bob").await? {
+    if let Some(cached) = manager.get::<serde_json::Value>("user:bob").await? {
         println!("✅ Retrieved from DashMapCache: {cached}");
     }
 
@@ -146,17 +146,16 @@ async fn demo_memcached_backend() -> Result<()> {
             });
 
             // Set with TTL
+            let bytes = serde_json::to_vec(&test_data)?;
             memcached
-                .set_with_ttl(
-                    "product:laptop",
-                    test_data.clone(),
-                    Duration::from_secs(300),
-                )
+                .set_with_ttl("product:laptop", &bytes, Duration::from_secs(300))
                 .await?;
 
             // Get the value
-            if let Some(cached) = memcached.get("product:laptop").await {
-                println!("✅ Retrieved from MemcachedCache: {cached}");
+            if let Some(cached_bytes) = memcached.get("product:laptop").await {
+                if let Ok(cached) = serde_json::from_slice::<serde_json::Value>(&cached_bytes) {
+                    println!("✅ Retrieved from MemcachedCache: {cached}");
+                }
             }
 
             // Show server statistics
@@ -222,14 +221,10 @@ async fn demo_quickcache_backend() -> Result<()> {
     });
 
     manager
-        .set_with_strategy(
-            "session:abc123",
-            test_data.clone(),
-            CacheStrategy::ShortTerm,
-        )
+        .set_with_strategy("session:abc123", &test_data, CacheStrategy::ShortTerm)
         .await?;
 
-    if let Some(cached) = manager.get("session:abc123").await? {
+    if let Some(cached) = manager.get::<serde_json::Value>("session:abc123").await? {
         println!("✅ Retrieved from QuickCache: {cached}");
     }
 

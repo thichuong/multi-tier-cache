@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 // ==================== Mock L3 Cache (Simulated Disk/Cold Storage) ====================
 
 /// A simulated "slow" cache backend to represent L3 (e.g., Disk, S3, `RocksDB`)
-type L3Store = Arc<RwLock<HashMap<String, (Value, Instant, Duration)>>>;
+type L3Store = Arc<RwLock<HashMap<String, (Vec<u8>, Instant, Duration)>>>;
 
 struct MockL3Cache {
     name: String,
@@ -32,7 +32,7 @@ impl MockL3Cache {
 
 #[async_trait]
 impl CacheBackend for MockL3Cache {
-    async fn get(&self, key: &str) -> Option<Value> {
+    async fn get(&self, key: &str) -> Option<Vec<u8>> {
         // Simulate latency for "disk" access
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -49,7 +49,7 @@ impl CacheBackend for MockL3Cache {
         })
     }
 
-    async fn set_with_ttl(&self, key: &str, value: Value, ttl: Duration) -> Result<()> {
+    async fn set_with_ttl(&self, key: &str, value: &[u8], ttl: Duration) -> Result<()> {
         // Simulate latency
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -58,7 +58,7 @@ impl CacheBackend for MockL3Cache {
             .write()
             .unwrap_or_else(|_| panic!("Lock poisoned"));
         let expiry = Instant::now() + ttl;
-        store.insert(key.to_string(), (value, expiry, ttl));
+        store.insert(key.to_string(), (value.to_vec(), expiry, ttl));
         println!("💾 [{}] Cached '{}' with TTL {:?}", self.name, key, ttl);
         Ok(())
     }
@@ -83,7 +83,7 @@ impl CacheBackend for MockL3Cache {
 
 #[async_trait]
 impl L2CacheBackend for MockL3Cache {
-    async fn get_with_ttl(&self, key: &str) -> Option<(Value, Option<Duration>)> {
+    async fn get_with_ttl(&self, key: &str) -> Option<(Vec<u8>, Option<Duration>)> {
         // Simulate latency
         tokio::time::sleep(Duration::from_millis(50)).await;
 
@@ -148,7 +148,7 @@ async fn main() -> Result<()> {
         .cache_manager()
         .set_with_strategy(
             "user:123",
-            data.clone(),
+            &data,
             multi_tier_cache::CacheStrategy::ShortTerm,
         )
         .await?;
@@ -177,8 +177,9 @@ async fn main() -> Result<()> {
     // Manually seed L3 only
     // Note: We need to cast/use the trait methods
     let l3_ref = l3_backend.as_ref();
+    let cold_bytes = serde_json::to_vec(&cold_data)?;
     l3_ref
-        .set_with_ttl("archive:doc1", cold_data, Duration::from_secs(3600))
+        .set_with_ttl("archive:doc1", &cold_bytes, Duration::from_secs(3600))
         .await?;
     println!("(Seeded 'archive:doc1' directly into L3 only)");
 
@@ -186,7 +187,7 @@ async fn main() -> Result<()> {
     println!("Requesting 'archive:doc1' (should miss L1/L2, hit L3, and promote)...");
 
     let start = Instant::now();
-    if let Some(val) = cache.cache_manager().get("archive:doc1").await? {
+    if let Some(val) = cache.cache_manager().get::<Value>("archive:doc1").await? {
         println!("✅ Found value: {val}");
         println!("   Latency: {:?}", start.elapsed());
     } else {
@@ -196,7 +197,7 @@ async fn main() -> Result<()> {
     // Now it should be in L1 (fast access)
     println!("Requesting 'archive:doc1' again (should hit L1)...");
     let start = Instant::now();
-    if let Some(val) = cache.cache_manager().get("archive:doc1").await? {
+    if let Some(val) = cache.cache_manager().get::<Value>("archive:doc1").await? {
         println!("✅ Found value: {val}");
         println!("   Latency: {:?}", start.elapsed());
     }

@@ -73,7 +73,7 @@ async fn main() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let user: User = cache
         .cache_manager()
-        .get_or_compute_typed(
+        .get_or_compute(
             "user:123",
             CacheStrategy::MediumTerm, // 1 hour TTL
             || async { fetch_user_from_db(123).await },
@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let user: User = cache
         .cache_manager()
-        .get_or_compute_typed("user:123", CacheStrategy::MediumTerm, || async {
+        .get_or_compute("user:123", CacheStrategy::MediumTerm, || async {
             fetch_user_from_db(123).await
         })
         .await?;
@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
 
     let product: Product = cache
         .cache_manager()
-        .get_or_compute_typed(
+        .get_or_compute(
             "product:456",
             CacheStrategy::LongTerm, // 3 hours TTL
             || async { fetch_product_from_db(456).await },
@@ -134,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
                 let start = std::time::Instant::now();
                 let user: User = cache
                     .cache_manager()
-                    .get_or_compute_typed("user:999", CacheStrategy::ShortTerm, || async {
+                    .get_or_compute("user:999", CacheStrategy::ShortTerm, || async {
                         fetch_user_from_db(999).await
                     })
                     .await

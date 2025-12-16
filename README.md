@@ -35,9 +35,9 @@
 ## ✨ Features
 
 - **🔥 Multi-Tier Architecture**: Combines fast in-memory (Moka) with persistent distributed (Redis) caching
-- **🌐 Dynamic Multi-Tier** *(v0.5.0+)*: Support for 3, 4, or more cache tiers (L1+L2+L3+L4+...) with flexible configuration ⭐ **NEW**
-- **🔄 Cross-Instance Cache Invalidation** *(v0.4.0+)*: Real-time cache synchronization across all instances via Redis Pub/Sub
-- **🔌 Pluggable Backends** *(v0.3.0+)*: Swap Moka/Redis with custom implementations (DashMap, Memcached, RocksDB, etc.)
+- **🌐 Dynamic Multi-Tier** _(v0.5.0+)_: Support for 3, 4, or more cache tiers (L1+L2+L3+L4+...) with flexible configuration ⭐ **NEW**
+- **🔄 Cross-Instance Cache Invalidation** _(v0.4.0+)_: Real-time cache synchronization across all instances via Redis Pub/Sub
+- **🔌 Pluggable Backends** _(v0.3.0+)_: Swap Moka/Redis with custom implementations (DashMap, Memcached, RocksDB, etc.)
 - **🛡️ Cache Stampede Protection**: DashMap + Mutex request coalescing prevents duplicate computations (99.6% latency reduction: 534ms → 5.2ms)
 - **📊 Redis Streams**: Built-in publish/subscribe with automatic trimming for event streaming
 - **⚡ Automatic Tier Promotion**: Intelligent cache tier promotion for frequently accessed data with TTL preservation and per-tier scaling
@@ -71,6 +71,7 @@ serde_json = "1.0"
 ```
 
 **Version Guide:**
+
 - **v0.5.0+**: Dynamic multi-tier architecture (L1+L2+L3+L4+...), per-tier statistics ⭐ **NEW**
 - **v0.4.0+**: Cross-instance cache invalidation via Redis Pub/Sub
 - **v0.3.0+**: Pluggable backends, trait-based architecture
@@ -210,8 +211,7 @@ let user: User = match cached {
             .bind(123)
             .fetch_one(&pool)
             .await?;
-        let json = serde_json::to_value(&user)?;
-        cache.cache_manager().set_with_strategy("user:123", json, CacheStrategy::MediumTerm).await?;
+        cache.cache_manager().set_with_strategy("user:123", &user, CacheStrategy::MediumTerm).await?;
         user
     }
 };
@@ -232,6 +232,7 @@ let user: User = cache.cache_manager()
 ```
 
 **Benefits:**
+
 - ✅ **Type-Safe**: Compiler checks types, no runtime surprises
 - ✅ **Zero Boilerplate**: Automatic serialize/deserialize
 - ✅ **Full Cache Features**: L1→L2 fallback, stampede protection, auto-promotion
@@ -302,6 +303,7 @@ let analytics: AnalyticsResult = cache.cache_manager()
 ```
 
 **Performance:**
+
 - **L1 Hit**: <1ms + deserialization (~10-50μs)
 - **L2 Hit**: 2-5ms + deserialization + L1 promotion
 - **Cache Miss**: Your query time + serialization + L1+L2 storage
@@ -313,6 +315,7 @@ Keep caches synchronized across multiple servers/instances using Redis Pub/Sub:
 #### Why Invalidation?
 
 In distributed systems with multiple cache instances, **stale data** is a common problem:
+
 - User updates profile on Server A → Cache on Server B still has old data
 - Admin changes product price → Other servers show outdated prices
 - TTL-only expiration → Users see stale data until timeout
@@ -322,6 +325,7 @@ In distributed systems with multiple cache instances, **stale data** is a common
 #### Two Invalidation Strategies
 
 **1. Remove Strategy** (Lazy Reload)
+
 ```rust
 use multi_tier_cache::{CacheManager, L1Cache, L2Cache, InvalidationConfig};
 
@@ -343,6 +347,7 @@ cache_manager.invalidate("user:123").await?;
 ```
 
 **2. Update Strategy** (Zero Cache Miss)
+
 ```rust
 // Update database
 database.update_user(123, new_data).await?;
@@ -396,6 +401,7 @@ Instance A              Redis Pub/Sub           Instance B
 ```
 
 **Performance:**
+
 - **Latency**: ~1-5ms invalidation propagation
 - **Overhead**: Negligible (<0.1% CPU for subscriber)
 - **Production-Safe**: Auto-reconnection, error recovery
@@ -415,6 +421,7 @@ let config = InvalidationConfig {
 ```
 
 **When to Use:**
+
 - ✅ Multi-server deployments (load balancers, horizontal scaling)
 - ✅ Data that changes frequently (user profiles, prices, inventory)
 - ✅ Real-time requirements (instant consistency)
@@ -423,11 +430,11 @@ let config = InvalidationConfig {
 
 **Comparison:**
 
-| Strategy | Bandwidth | Cache Miss | Use Case |
-|----------|-----------|------------|----------|
-| **Remove** | Low | Yes (on next access) | Large values, infrequent access |
-| **Update** | Higher | No (instant) | Small values, frequent access |
-| **Pattern** | Medium | Yes | Bulk invalidation (categories) |
+| Strategy    | Bandwidth | Cache Miss           | Use Case                        |
+| ----------- | --------- | -------------------- | ------------------------------- |
+| **Remove**  | Low       | Yes (on next access) | Large values, infrequent access |
+| **Update**  | Higher    | No (instant)         | Small values, frequent access   |
+| **Pattern** | Medium    | Yes                  | Bulk invalidation (categories)  |
 
 ### 6. Available Backends (New in 0.5.2! 🎉)
 
@@ -435,18 +442,18 @@ Starting from **v0.5.2**, the library includes multiple built-in cache backend i
 
 #### In-Memory Backends (L1 Tier)
 
-| Backend | Feature | Performance | Eviction | Use Case |
-|---------|---------|-------------|----------|----------|
-| **MokaCache** *(default)* | Always available | High | Automatic (LRU + TTL) | Production workloads |
-| **DashMapCache** | Always available | Medium | Manual cleanup | Simple caching, education |
-| **QuickCacheBackend** | `backend-quickcache` | Very High | Automatic (LRU) | Maximum throughput |
+| Backend                   | Feature              | Performance | Eviction              | Use Case                  |
+| ------------------------- | -------------------- | ----------- | --------------------- | ------------------------- |
+| **MokaCache** _(default)_ | Always available     | High        | Automatic (LRU + TTL) | Production workloads      |
+| **DashMapCache**          | Always available     | Medium      | Manual cleanup        | Simple caching, education |
+| **QuickCacheBackend**     | `backend-quickcache` | Very High   | Automatic (LRU)       | Maximum throughput        |
 
 #### Distributed Backends (L2 Tier)
 
-| Backend | Feature | Persistence | TTL Introspection | Use Case |
-|---------|---------|-------------|-------------------|----------|
-| **RedisCache** *(default)* | Always available | Yes (disk) | ✅ Yes | Production, multi-instance |
-| **MemcachedCache** | `backend-memcached` | No (memory only) | ❌ No | High-performance distributed |
+| Backend                    | Feature             | Persistence      | TTL Introspection | Use Case                     |
+| -------------------------- | ------------------- | ---------------- | ----------------- | ---------------------------- |
+| **RedisCache** _(default)_ | Always available    | Yes (disk)       | ✅ Yes            | Production, multi-instance   |
+| **MemcachedCache**         | `backend-memcached` | No (memory only) | ❌ No             | High-performance distributed |
 
 #### Example: Using DashMapCache as L1
 
@@ -488,6 +495,7 @@ let cache = CacheSystemBuilder::new()
 Starting from **v0.3.0**, you can replace the default Moka (L1) and Redis (L2) backends with your own custom implementations!
 
 **Use Cases:**
+
 - Replace Redis with Memcached, DragonflyDB, or KeyDB
 - Use DashMap instead of Moka for L1
 - Implement no-op caches for testing
@@ -592,11 +600,13 @@ let cache = CacheSystemBuilder::new()
 ```
 
 **Mix and Match:**
+
 - Use custom L1 with default Redis L2
 - Use default Moka L1 with custom L2
 - Replace both L1 and L2 backends
 
 **See:** [`examples/custom_backends.rs`](examples/custom_backends.rs) for complete working examples including:
+
 - HashMap L1 cache
 - In-memory L2 cache with TTL
 - No-op cache (for testing)
@@ -607,6 +617,7 @@ let cache = CacheSystemBuilder::new()
 Starting from **v0.5.0**, you can configure **3, 4, or more cache tiers** beyond the default L1+L2 setup!
 
 **Use Cases:**
+
 - **L3 (Cold Storage)**: RocksDB or LevelDB for large datasets with longer TTL
 - **L4 (Archive)**: S3 or filesystem for rarely-accessed but important data
 - **Custom Tiers**: Any combination of backends to fit your workload
@@ -757,17 +768,20 @@ let cache = CacheSystemBuilder::new().build().await?;
 #### When to Use Multi-Tier
 
 ✅ **Good fit:**
+
 - Large datasets that don't fit in RAM
 - Cost-sensitive workloads (mix expensive + cheap storage)
 - Long-tail data access patterns (90% hot, 10% cold)
 - Hierarchical data with different access frequencies
 
 ❌ **Not needed:**
+
 - Small datasets (< 10GB) that fit in Redis
 - Uniform access patterns (all data equally hot)
 - Latency-critical paths (stick to L1+L2)
 
 ## 🔧 Configuration
+
 ### Moka Cache (L1) Configuration
 
 You can customize the Moka in-memory cache settings (capacity, TTL) using `MokaCacheConfig` via the builder:
@@ -798,17 +812,20 @@ async fn main() -> anyhow::Result<()> {
 ### Invalidation + Custom Backends
 
 **✅ Compatible:**
+
 - Cache invalidation works with **default Redis L2** backend
 - Single-key operations (`invalidate`, `update_cache`) work with any backend
 - Type-safe caching works with all backends
 - Stampede protection works with all backends
 
 **⚠️ Limited Support:**
+
 - **Pattern-based invalidation** (`invalidate_pattern`) requires **concrete Redis L2Cache**
 - Custom L2 backends: Single-key invalidation works, but pattern invalidation not available
 - Workaround: Implement pattern matching in your custom backend
 
 **Example:**
+
 ```rust
 // ✅ Works: Default Redis + Invalidation
 let cache = CacheManager::new_with_invalidation(
@@ -872,22 +889,22 @@ println!("Hit rate: {:.2}%", stats.hit_rate);
 
 Tested in production environment:
 
-| Metric | Value |
-|--------|-------|
-| **Throughput** | 16,829+ requests/second |
-| **Latency (p50)** | 5.2ms |
-| **Cache Hit Rate** | 95% (L1: 90%, L2: 75%) |
+| Metric                  | Value                                   |
+| ----------------------- | --------------------------------------- |
+| **Throughput**          | 16,829+ requests/second                 |
+| **Latency (p50)**       | 5.2ms                                   |
+| **Cache Hit Rate**      | 95% (L1: 90%, L2: 75%)                  |
 | **Stampede Protection** | 99.6% latency reduction (534ms → 5.2ms) |
-| **Success Rate** | 100% (zero failures under load) |
+| **Success Rate**        | 100% (zero failures under load)         |
 
 ### Comparison with Other Libraries
 
-| Library | Multi-Tier | Stampede Protection | Redis Support | Streams | Invalidation |
-|---------|------------|---------------------|---------------|---------|--------------|
-| **multi-tier-cache** | ✅ L1+L2 | ✅ Full | ✅ Full | ✅ Built-in | ✅ Pub/Sub |
-| cached | ❌ Single | ❌ No | ❌ No | ❌ No | ❌ No |
-| moka | ❌ L1 only | ✅ L1 only | ❌ No | ❌ No | ❌ No |
-| redis-rs | ❌ No cache | ❌ Manual | ✅ Low-level | ✅ Manual | ❌ Manual |
+| Library              | Multi-Tier  | Stampede Protection | Redis Support | Streams     | Invalidation |
+| -------------------- | ----------- | ------------------- | ------------- | ----------- | ------------ |
+| **multi-tier-cache** | ✅ L1+L2    | ✅ Full             | ✅ Full       | ✅ Built-in | ✅ Pub/Sub   |
+| cached               | ❌ Single   | ❌ No               | ❌ No         | ❌ No       | ❌ No        |
+| moka                 | ❌ L1 only  | ✅ L1 only          | ❌ No         | ❌ No       | ❌ No        |
+| redis-rs             | ❌ No cache | ❌ Manual           | ✅ Low-level  | ✅ Manual   | ❌ Manual    |
 
 ### Running Benchmarks
 
@@ -908,6 +925,7 @@ cargo bench -- --save-baseline my_baseline
 ```
 
 **Benchmark Suites:**
+
 - **cache_operations**: L1/L2 read/write performance, cache strategies, compute-on-miss patterns
 - **stampede_protection**: Concurrent access, request coalescing under load
 - **invalidation**: Cross-instance invalidation overhead, pattern matching performance
@@ -952,18 +970,21 @@ If not configured, defaults to: `redis://127.0.0.1:6379`
 ### Use Cases
 
 **Development (Local Redis)**
+
 ```bash
 # .env
 REDIS_URL="redis://127.0.0.1:6379"
 ```
 
 **Production (Cloud Redis with Authentication)**
+
 ```bash
 # Railway, Render, AWS ElastiCache, etc.
 REDIS_URL="redis://:your-password@redis-host.cloud:6379"
 ```
 
 **Docker Compose**
+
 ```yaml
 services:
   app:
@@ -976,6 +997,7 @@ services:
 ```
 
 **Testing (Separate Instance)**
+
 ```rust
 #[tokio::test]
 async fn test_cache() {
@@ -993,6 +1015,7 @@ redis://[username]:[password]@[host]:[port]/[database]
 ```
 
 **Examples:**
+
 - `redis://localhost:6379` - Local Redis, no authentication
 - `redis://:mypassword@localhost:6379` - Local with password only
 - `redis://user:pass@redis.example.com:6379/0` - Remote with username, password, and database 0
@@ -1003,6 +1026,7 @@ redis://[username]:[password]@[host]:[port]/[database]
 ### Troubleshooting Redis Connection
 
 **Connection Refused**
+
 ```bash
 # Check if Redis is running
 redis-cli ping  # Should return "PONG"
@@ -1015,6 +1039,7 @@ echo $REDIS_URL
 ```
 
 **Authentication Failed**
+
 ```bash
 # Ensure password is in the URL
 REDIS_URL="redis://:YOUR_PASSWORD@host:6379"
@@ -1024,12 +1049,14 @@ redis-cli -h host -p 6379 -a YOUR_PASSWORD ping
 ```
 
 **Timeout Errors**
+
 - Check network connectivity: `ping your-redis-host`
 - Verify firewall rules allow port 6379
 - Check Redis `maxclients` setting (may be full)
 - Review Redis logs: `redis-cli INFO clients`
 
 **DNS Resolution Issues**
+
 ```bash
 # Test DNS resolution
 nslookup your-redis-host.com
@@ -1067,6 +1094,7 @@ cargo test --test integration_streams
 ```
 
 **Test Coverage:**
+
 - ✅ L1 cache operations (get, set, remove, TTL)
 - ✅ L2 cache operations (get_with_ttl, scan_keys, bulk operations)
 - ✅ L2-to-L1 promotion
@@ -1077,10 +1105,12 @@ cargo test --test integration_streams
 - ✅ Statistics tracking
 
 **Requirements:**
+
 - Redis server running on `localhost:6379` (or set `REDIS_URL`)
 - Tests automatically clean up after themselves
 
 **Test Structure:**
+
 ```
 tests/
 ├── common/mod.rs           # Shared utilities
@@ -1126,6 +1156,7 @@ When multiple requests hit an expired cache key simultaneously:
 4. **Result**: Only ONE computation instead of N
 
 **Performance Impact**:
+
 - Without protection: 10 requests × 500ms = 5000ms total
 - With protection: 1 request × 500ms = 500ms total (90% faster)
 
@@ -1216,6 +1247,7 @@ at your option.
 ## 🙏 Acknowledgments
 
 Built with:
+
 - [Moka](https://github.com/moka-rs/moka) - High-performance concurrent cache library
 - [Redis-rs](https://github.com/redis-rs/redis-rs) - Redis client for Rust
 - [DashMap](https://github.com/xacrimon/dashmap) - Blazingly fast concurrent map
