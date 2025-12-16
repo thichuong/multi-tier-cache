@@ -3,7 +3,6 @@
 //! Memcached-based distributed cache for warm data storage with simple key-value operations.
 
 use anyhow::{anyhow, Result};
-use serde_json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -114,30 +113,19 @@ use async_trait::async_trait;
 /// This allows `MemcachedCache` to be used as a pluggable backend in the multi-tier cache system.
 #[async_trait]
 impl CacheBackend for MemcachedCache {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        if let Ok(Some(json_str)) = self.client.get::<String>(key) {
-            if let Ok(value) = serde_json::from_str(&json_str) {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                Some(value)
-            } else {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
-            }
+    async fn get(&self, key: &str) -> Option<Vec<u8>> {
+        if let Ok(Some(value)) = self.client.get::<Vec<u8>>(key) {
+            self.hits.fetch_add(1, Ordering::Relaxed);
+            Some(value)
         } else {
             self.misses.fetch_add(1, Ordering::Relaxed);
             None
         }
     }
 
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let json_str = serde_json::to_string(&value)?;
-
+    async fn set_with_ttl(&self, key: &str, value: &[u8], ttl: Duration) -> Result<()> {
         self.client
-            .set(
-                key,
-                json_str,
-                u32::try_from(ttl.as_secs()).unwrap_or(u32::MAX),
-            )
+            .set(key, value, u32::try_from(ttl.as_secs()).unwrap_or(u32::MAX))
             .map_err(|e| anyhow!("Memcached SET failed: {e}"))?;
 
         self.sets.fetch_add(1, Ordering::Relaxed);
@@ -154,23 +142,16 @@ impl CacheBackend for MemcachedCache {
 
     async fn health_check(&self) -> bool {
         let test_key = "health_check_memcached";
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or(Duration::from_secs(0))
-            .as_secs();
-        let test_value = serde_json::json!({"test": true, "timestamp": timestamp});
+        let test_value = vec![1, 2, 3, 4];
 
         match self
-            .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10))
+            .set_with_ttl(test_key, &test_value, Duration::from_secs(10))
             .await
         {
             Ok(()) => match self.get(test_key).await {
                 Some(retrieved) => {
                     let _ = self.remove(test_key).await;
-                    retrieved
-                        .get("test")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false)
+                    retrieved == test_value
                 }
                 None => false,
             },

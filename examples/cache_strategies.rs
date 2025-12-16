@@ -23,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
     });
     cache
         .cache_manager()
-        .set_with_strategy("live_price", live_data, CacheStrategy::RealTime)
+        .set_with_strategy("live_price", &live_data, CacheStrategy::RealTime)
         .await?;
     println!("   ✅ Stored live price data (expires in 10 seconds)\n");
 
@@ -36,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
     });
     cache
         .cache_manager()
-        .set_with_strategy("session:123", user_session, CacheStrategy::ShortTerm)
+        .set_with_strategy("session:123", &user_session, CacheStrategy::ShortTerm)
         .await?;
     println!("   ✅ Stored user session (expires in 5 minutes)\n");
 
@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
         .cache_manager()
         .set_with_strategy(
             "catalog:electronics",
-            product_catalog,
+            &product_catalog,
             CacheStrategy::MediumTerm,
         )
         .await?;
@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
     });
     cache
         .cache_manager()
-        .set_with_strategy("app_config", config_data, CacheStrategy::LongTerm)
+        .set_with_strategy("config:app", &config_data, CacheStrategy::MediumTerm)
         .await?;
     println!("   ✅ Stored application config (expires in 3 hours)\n");
 
@@ -81,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
         .cache_manager()
         .set_with_strategy(
             "metrics:cpu",
-            custom_data,
+            &custom_data,
             CacheStrategy::Custom(Duration::from_secs(30)),
         )
         .await?;
@@ -92,7 +92,7 @@ async fn main() -> anyhow::Result<()> {
     let generic_data = serde_json::json!({"key": "value"});
     cache
         .cache_manager()
-        .set_with_strategy("generic_key", generic_data, CacheStrategy::Default)
+        .set_with_strategy("generic_key", &generic_data, CacheStrategy::Default)
         .await?;
     println!("   ✅ Stored generic data (expires in 5 minutes)\n");
 
@@ -108,7 +108,7 @@ async fn main() -> anyhow::Result<()> {
     ];
 
     for key in keys {
-        if let Some(value) = cache.cache_manager().get(key).await? {
+        if let Some(value) = cache.cache_manager().get::<serde_json::Value>(key).await? {
             println!("✅ {key}: {value}");
         }
     }

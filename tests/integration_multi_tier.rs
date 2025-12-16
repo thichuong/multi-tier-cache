@@ -43,13 +43,13 @@ async fn test_multi_tier_basic_operations() {
     // Test set_with_strategy - should store in all tiers
     let test_data = json!({"user": "alice", "id": 123});
     manager
-        .set_with_strategy("test:multi:1", test_data.clone(), CacheStrategy::ShortTerm)
+        .set_with_strategy("test:multi:1", &test_data, CacheStrategy::ShortTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // Test get - should hit L1
     let result = manager
-        .get("test:multi:1")
+        .get::<serde_json::Value>("test:multi:1")
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(result, Some(test_data.clone()));
@@ -105,14 +105,14 @@ async fn test_multi_tier_stats() {
     // Store some data
     let test_data = json!({"stats": "test"});
     manager
-        .set_with_strategy("test:stats:1", test_data.clone(), CacheStrategy::ShortTerm)
+        .set_with_strategy("test:stats:1", &test_data, CacheStrategy::ShortTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // Retrieve data multiple times
     for _ in 0..5 {
         let _result = manager
-            .get("test:stats:1")
+            .get::<serde_json::Value>("test:stats:1")
             .await
             .unwrap_or_else(|_| panic!("Failed to get cache"));
     }
@@ -159,12 +159,12 @@ async fn test_backward_compatibility_legacy_mode() {
     // Standard operations should work
     let test_data = json!({"legacy": "mode"});
     manager
-        .set_with_strategy("test:legacy:1", test_data.clone(), CacheStrategy::ShortTerm)
+        .set_with_strategy("test:legacy:1", &test_data, CacheStrategy::ShortTerm)
         .await
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     let result = manager
-        .get("test:legacy:1")
+        .get::<serde_json::Value>("test:legacy:1")
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(result, Some(test_data));
@@ -219,7 +219,7 @@ async fn test_multi_tier_ttl_scaling() {
     manager
         .set_with_strategy(
             "test:ttl:1",
-            test_data,
+            &test_data,
             CacheStrategy::Custom(Duration::from_secs(10)),
         )
         .await
@@ -229,7 +229,7 @@ async fn test_multi_tier_ttl_scaling() {
     // We can't directly verify TTL from outside, but the operation should succeed
 
     let result = manager
-        .get("test:ttl:1")
+        .get::<serde_json::Value>("test:ttl:1")
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert!(result.is_some(), "Should retrieve data with scaled TTL");
@@ -262,7 +262,7 @@ async fn test_multi_tier_cache_miss() {
 
     // Try to get non-existent key
     let result = manager
-        .get("test:miss:nonexistent")
+        .get::<serde_json::Value>("test:miss:nonexistent")
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert!(result.is_none(), "Should return None for cache miss");
@@ -397,7 +397,7 @@ async fn test_multi_tier_stampede_protection() {
 
     // Verify data is in L1
     let cached_in_l1 = manager
-        .get(&key)
+        .get::<serde_json::Value>(&key)
         .await
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert!(
@@ -443,7 +443,8 @@ async fn test_stampede_retrieves_from_l3() {
     let data = test_data::json_user(777);
 
     // Pre-populate ONLY L3 (skip L1 and L2)
-    l3.set_with_ttl(&key, data.clone(), std::time::Duration::from_secs(300))
+    let bytes = serde_json::to_vec(&data).unwrap();
+    l3.set_with_ttl(&key, &bytes, std::time::Duration::from_secs(300))
         .await
         .unwrap_or_else(|_| panic!("Failed to set L3"));
 
@@ -484,13 +485,10 @@ async fn test_stampede_retrieves_from_l3() {
     );
 
     // Verify data was promoted to L1
-    let l1_data = l1.get(&key).await;
-    assert!(l1_data.is_some(), "Data should be promoted from L3 to L1");
-    assert_eq!(
-        l1_data.unwrap_or_else(|| panic!("L1 data missing")),
-        data,
-        "Promoted data should match original"
-    );
+    let l1_bytes = l1.get(&key).await;
+    assert!(l1_bytes.is_some(), "Data should be promoted from L3 to L1");
+    let l1_val: serde_json::Value = serde_json::from_slice(&l1_bytes.unwrap()).unwrap();
+    assert_eq!(l1_val, data, "Promoted data should match original");
 
     println!("✅ Stampede retrieves from L3 test passed");
 }

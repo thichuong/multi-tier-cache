@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     manager
         .set_with_strategy(
             "test_key",
-            serde_json::json!("value"),
+            &serde_json::json!("value"),
             multi_tier_cache::CacheStrategy::ShortTerm,
         )
         .await?;

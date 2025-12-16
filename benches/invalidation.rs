@@ -44,7 +44,7 @@ fn bench_invalidate_single_key(c: &mut Criterion) {
         for i in 0..100 {
             let key = format!("bench:inv:{i}");
             cache
-                .set_with_strategy(&key, json!({"id": i}), CacheStrategy::MediumTerm)
+                .set_with_strategy(&key, &json!({"id": i}), CacheStrategy::MediumTerm)
                 .await
                 .unwrap_or_else(|_| panic!("Failed to set cache"));
         }
@@ -72,7 +72,7 @@ fn bench_update_cache(c: &mut Criterion) {
         for i in 0..100 {
             let key = format!("bench:upd:{i}");
             cache
-                .set_with_strategy(&key, json!({"id": i}), CacheStrategy::MediumTerm)
+                .set_with_strategy(&key, &json!({"id": i}), CacheStrategy::MediumTerm)
                 .await
                 .unwrap_or_else(|_| panic!("Failed to set cache"));
         }
@@ -84,7 +84,7 @@ fn bench_update_cache(c: &mut Criterion) {
                 let key = format!("bench:upd:{}", rand::random::<u8>() % 100);
                 let new_value = json!({"id": 999, "value": "updated"});
                 let _: () = cache
-                    .update_cache(&key, new_value, Some(Duration::from_secs(300)))
+                    .update_cache(&key, &new_value, Some(Duration::from_secs(300)))
                     .await
                     .unwrap_or_else(|_| panic!("Failed to update"));
                 black_box(());

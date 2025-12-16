@@ -33,13 +33,16 @@ async fn main() -> anyhow::Result<()> {
     let data = serde_json::json!({"message": "This data starts in L2"});
     cache
         .cache_manager()
-        .set_with_strategy("promotion_test", data, CacheStrategy::MediumTerm)
+        .set_with_strategy("promotion_test", &data, CacheStrategy::MediumTerm)
         .await?;
     println!("✅ Data stored in both L1 and L2\n");
 
     // First access - hits L1
     println!("First access:");
-    let result1 = cache.cache_manager().get("promotion_test").await?;
+    let result1 = cache
+        .cache_manager()
+        .get::<serde_json::Value>("promotion_test")
+        .await?;
     println!("   Retrieved: {:?}\n", result1.is_some());
 
     // Wait for L1 to expire (simulating L1 eviction)
@@ -48,13 +51,19 @@ async fn main() -> anyhow::Result<()> {
 
     // Second access - should hit L2 and promote to L1
     println!("Second access (after L1 expiration):");
-    let result2 = cache.cache_manager().get("promotion_test").await?;
+    let result2 = cache
+        .cache_manager()
+        .get::<serde_json::Value>("promotion_test")
+        .await?;
     println!("   Retrieved: {:?}", result2.is_some());
     println!("   (Data promoted from L2 back to L1)\n");
 
     // Third access - should hit L1 again
     println!("Third access (now in L1):");
-    let result3 = cache.cache_manager().get("promotion_test").await?;
+    let result3 = cache
+        .cache_manager()
+        .get::<serde_json::Value>("promotion_test")
+        .await?;
     println!("   Retrieved: {:?}\n", result3.is_some());
 
     // Scenario 2: get_or_compute_with pattern
@@ -93,7 +102,7 @@ async fn main() -> anyhow::Result<()> {
             });
             cache_clone
                 .cache_manager()
-                .set_with_strategy(&format!("concurrent:{i}"), data, CacheStrategy::ShortTerm)
+                .set_with_strategy(&format!("concurrent:{i}"), &data, CacheStrategy::ShortTerm)
                 .await
         });
         handles.push(handle);
@@ -108,7 +117,7 @@ async fn main() -> anyhow::Result<()> {
     for i in 1..=5 {
         if let Some(value) = cache
             .cache_manager()
-            .get(&format!("concurrent:{i}"))
+            .get::<serde_json::Value>(&format!("concurrent:{i}"))
             .await?
         {
             println!("   concurrent:{i} = {value}");
