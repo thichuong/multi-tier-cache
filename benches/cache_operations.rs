@@ -7,7 +7,7 @@
 //! - Cache hit vs miss latency
 //! - Different data sizes
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use multi_tier_cache::{CacheBackend, CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::time::Duration;
@@ -17,7 +17,11 @@ use tokio::runtime::Runtime;
 fn setup_cache() -> (CacheSystem, Runtime) {
     let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
     let cache = rt.block_on(async {
-        std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
+        // SAFETY: This is the initialization of the test environment, so it is safe to set the
+        // environment up.
+        unsafe {
+            std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
+        }
         CacheSystem::new()
             .await
             .unwrap_or_else(|_| panic!("Failed to create cache system"))

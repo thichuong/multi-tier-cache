@@ -33,7 +33,11 @@ pub fn test_key(name: &str) -> String {
 
 /// Initialize a basic cache system for testing
 pub async fn setup_cache_system() -> Result<CacheSystem> {
-    std::env::set_var("REDIS_URL", redis_url());
+    // SAFETY: This is only modified during single-threaded setup so it is safe to mutate
+    // environment variables.
+    unsafe {
+        std::env::set_var("REDIS_URL", redis_url());
+    }
     CacheSystem::new().await
 }
 
@@ -132,7 +136,7 @@ pub async fn wait_for<F>(mut condition: F, timeout_ms: u64) -> bool
 where
     F: FnMut() -> bool,
 {
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     let start = std::time::Instant::now();
     let timeout = Duration::from_millis(timeout_ms);

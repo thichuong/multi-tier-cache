@@ -1,6 +1,6 @@
 //! Benchmarks for serialization and type-safe caching
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,7 +27,11 @@ impl User {
 fn setup_cache() -> (CacheSystem, Runtime) {
     let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
     let cache = rt.block_on(async {
-        std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
+        // SAFETY: This is the initialization of the test environment, so it is safe to set the
+        // environment up.
+        unsafe {
+            std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
+        }
         CacheSystem::new()
             .await
             .unwrap_or_else(|_| panic!("Failed to create cache system"))
