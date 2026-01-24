@@ -121,6 +121,21 @@ pub trait CacheBackend: Send + Sync {
     /// * `false` - Cache is unhealthy or unreachable
     async fn health_check(&self) -> bool;
 
+    /// Remove keys matching a pattern
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern` - Glob-style pattern (e.g. "user:*")
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Pattern processed
+    /// * `Err(e)` - Operation failed
+    async fn remove_pattern(&self, _pattern: &str) -> Result<()> {
+        // Default implementation does nothing (for backward compatibility)
+        Ok(())
+    }
+
     /// Get the name of this cache backend
     ///
     /// This is used for logging and debugging purposes.

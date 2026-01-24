@@ -603,13 +603,11 @@ impl CacheManager {
                             debug!("Invalidation: Updated '{}' in L1", key);
                         }
                         InvalidationMessage::RemovePattern { pattern } => {
-                            // For pattern-based invalidation, we can't easily iterate L1 cache
-                            // So we just log it. The pattern invalidation is mainly for L2.
-                            // L1 entries will naturally expire via TTL.
-                            debug!(
-                                "Invalidation: Pattern '{}' invalidated (L1 will expire naturally)",
-                                pattern
-                            );
+                            // Remove matching keys from L1
+                            if let Err(e) = l1.remove_pattern(&pattern).await {
+                                warn!("Failed to remove pattern '{}' from L1: {}", pattern, e);
+                            }
+                            debug!("Invalidation: Pattern '{}' removed from L1", pattern);
                         }
                         InvalidationMessage::RemoveBulk { keys } => {
                             // Remove multiple keys from L1
@@ -1094,11 +1092,11 @@ impl CacheManager {
     /// # Example - Database Query
     ///
     /// ```no_run
-    /// # use multi_tier_cache::{CacheManager, CacheStrategy, L1Cache, L2Cache};
+    /// # use multi_tier_cache::{CacheManager, CacheStrategy, L1Cache, L2Cache, MokaCacheConfig};
     /// # use std::sync::Arc;
     /// # use serde::{Serialize, Deserialize};
     /// # async fn example() -> anyhow::Result<()> {
-    /// # let l1 = Arc::new(L1Cache::new()?);
+    /// # let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
     /// # let l2 = Arc::new(L2Cache::new().await?);
     /// # let cache_manager = CacheManager::new(l1, l2);
     ///
@@ -1126,11 +1124,11 @@ impl CacheManager {
     /// # Example - API Call
     ///
     /// ```no_run
-    /// # use multi_tier_cache::{CacheManager, CacheStrategy, L1Cache, L2Cache};
+    /// # use multi_tier_cache::{CacheManager, CacheStrategy, L1Cache, L2Cache, MokaCacheConfig};
     /// # use std::sync::Arc;
     /// # use serde::{Serialize, Deserialize};
     /// # async fn example() -> anyhow::Result<()> {
-    /// # let l1 = Arc::new(L1Cache::new()?);
+    /// # let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
     /// # let l2 = Arc::new(L2Cache::new().await?);
     /// # let cache_manager = CacheManager::new(l1, l2);
     /// #[derive(Serialize, Deserialize)]
