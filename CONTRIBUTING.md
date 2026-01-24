@@ -75,7 +75,7 @@ Title: Cache stampede protection not working with custom Duration
 **Environment**:
 - OS: Fedora 42
 - Rust: 1.75.0
-- Redis: 7.2.0
+- Redis: 7.4.0
 ```
 
 ### Suggesting Features

@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 
 - Metrics export (Prometheus format)
+## [0.5.7] - 2026-01-24
+
+### Fixed
+
+- **L1 Pattern Invalidation**: Fixed a critical bug where `invalidate_pattern` (e.g., `user:*`) would only remove keys from L2 (Redis) but leave stale data in L1 (Moka). Now, matching keys are atomically removed from L1 memory as well.
+- **Documentation**: Fixed broken doc tests in `src/backends/mod.rs` and `src/cache_manager.rs` that were using outdated API calls.
+
+### Changed
+
+- **Dependencies Upgrade**:
+  - Upgraded `redis` from `0.32` to **`1.0.2`** for improved performance and async stability.
+  - Upgraded `tokio` from `1.28` to **`1.43`** (latest stable).
+
 ## [0.5.6] - 2025-12-15
 
 ### Added

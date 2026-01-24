@@ -66,7 +66,7 @@ Add to your `Cargo.toml`:
 ```toml
 [dependencies]
 multi-tier-cache = "0.5"
-tokio = { version = "1.28", features = ["full"] }
+tokio = { version = "1.43", features = ["full"] }
 serde_json = "1.0"
 ```
 
