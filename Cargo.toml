@@ -20,7 +20,7 @@ quick_cache = { version = "0.6", optional = true }
 parking_lot = { version = "0.12", optional = true }
 
 # Async runtime
-tokio = { version = "1.43", features = ["sync", "macros", "time"] }
+tokio = { version = "1.49", features = ["sync", "macros", "time"] }
 futures-util = "0.3"
 
 # Serialization
@@ -40,7 +40,7 @@ async-trait = "0.1"
 dashmap = "5.5"
 
 [dev-dependencies]
-tokio = { version = "1.43", features = ["full"] }
+tokio = { version = "1.49", features = ["full"] }
 criterion = "0.5"
 rand = "0.8"
 tracing = "0.1"
