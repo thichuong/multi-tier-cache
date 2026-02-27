@@ -20,14 +20,19 @@ use super::invalidation::{
 use crate::backends::{L1Cache, L2Cache};
 use crate::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 
-/// Type alias for the in-flight requests map
-type InFlightMap = DashMap<String, Arc<Mutex<()>>>;
+/// Type alias for the in-flight requests map.
+///
+/// Uses `Arc<str>` instead of `String` to reduce per-request allocation overhead.
+/// When a cache key misses L1 and enters stampede protection, only one `Arc<str>`
+/// is allocated and then cheaply cloned (atomic refcount bump) for the `DashMap`
+/// entry and the `CleanupGuard`.
+type InFlightMap = DashMap<Arc<str>, Arc<Mutex<()>>>;
 
 /// RAII cleanup guard for in-flight request tracking
 /// Ensures that entries are removed from `DashMap` even on early return or panic
 struct CleanupGuard<'a> {
     map: &'a InFlightMap,
-    key: String,
+    key: Arc<str>,
 }
 
 impl Drop for CleanupGuard<'_> {
@@ -717,17 +722,17 @@ impl CacheManager {
             }
 
             // L1 miss - use stampede protection for lower tiers
-            let key_owned = key.to_string();
+            let key_arc: Arc<str> = Arc::from(key);
             let lock_guard = self
                 .in_flight_requests
-                .entry(key_owned.clone())
+                .entry(Arc::clone(&key_arc))
                 .or_insert_with(|| Arc::new(Mutex::new(())))
                 .clone();
 
             let _guard = lock_guard.lock().await;
             let cleanup_guard = CleanupGuard {
                 map: &self.in_flight_requests,
-                key: key_owned.clone(),
+                key: Arc::clone(&key_arc),
             };
 
             // Double-check L1 after acquiring lock
@@ -774,10 +779,10 @@ impl CacheManager {
         }
 
         // L1 miss - implement Cache Stampede protection for L2 lookup
-        let key_owned = key.to_string();
+        let key_arc: Arc<str> = Arc::from(key);
         let lock_guard = self
             .in_flight_requests
-            .entry(key_owned.clone())
+            .entry(Arc::clone(&key_arc))
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone();
 
@@ -786,7 +791,7 @@ impl CacheManager {
         // RAII cleanup guard - ensures entry is removed even on early return or panic
         let cleanup_guard = CleanupGuard {
             map: &self.in_flight_requests,
-            key: key_owned.clone(),
+            key: Arc::clone(&key_arc),
         };
 
         // Double-check L1 cache after acquiring lock
@@ -837,9 +842,14 @@ impl CacheManager {
     ///
     /// Supports both legacy 2-tier mode and new multi-tier mode (v0.5.0+).
     /// In multi-tier mode, stores to ALL tiers with their respective TTL scaling.
+    ///
+    /// This method is optimized to avoid unnecessary cloning: it clones the value
+    /// for the first N-1 tiers and **moves** the original into the last tier,
+    /// saving one full deep clone of the JSON value per call.
+    ///
     /// # Errors
     ///
-    /// Returns an error if cache set operation fails.
+    /// Returns an error if all cache tiers fail to store the value.
     pub async fn set_with_strategy(
         &self,
         key: &str,
@@ -848,17 +858,33 @@ impl CacheManager {
     ) -> Result<()> {
         let ttl = strategy.to_duration();
 
-        // NEW: Multi-tier mode (v0.5.0+)
+        // Multi-tier mode (v0.5.0+)
         if let Some(tiers) = &self.tiers {
-            // Store in ALL tiers with their respective TTL scaling
             let mut success_count = 0;
             let mut last_error = None;
+            let tier_count = tiers.len();
 
-            for tier in tiers {
+            // Clone for all tiers except the last; move the original into the last tier.
+            // Split into (init, last) to avoid Option/expect and eliminate one deep clone.
+            let (init_tiers, last_tier) = tiers.split_at(tier_count.saturating_sub(1));
+
+            for tier in init_tiers {
                 match tier.set_with_ttl(key, value.clone(), ttl).await {
-                    Ok(()) => {
-                        success_count += 1;
+                    Ok(()) => success_count += 1,
+                    Err(e) => {
+                        error!(
+                            "L{} cache set failed for key '{}': {}",
+                            tier.tier_level, key, e
+                        );
+                        last_error = Some(e);
                     }
+                }
+            }
+
+            // Last tier: move the original value (no clone)
+            if let Some(tier) = last_tier.first() {
+                match tier.set_with_ttl(key, value, ttl).await {
+                    Ok(()) => success_count += 1,
                     Err(e) => {
                         error!(
                             "L{} cache set failed for key '{}': {}",
@@ -872,10 +898,7 @@ impl CacheManager {
             if success_count > 0 {
                 debug!(
                     "[Multi-Tier] Cached '{}' in {}/{} tiers (base TTL: {:?})",
-                    key,
-                    success_count,
-                    tiers.len(),
-                    ttl
+                    key, success_count, tier_count, ttl
                 );
                 return Ok(());
             }
@@ -884,36 +907,26 @@ impl CacheManager {
             );
         }
 
-        // LEGACY: 2-tier mode (L1 + L2)
-        // Store in both L1 and L2
+        // Legacy 2-tier mode (L1 + L2): clone for L1, move into L2
         let l1_result = self.l1_cache.set_with_ttl(key, value.clone(), ttl).await;
         let l2_result = self.l2_cache.set_with_ttl(key, value, ttl).await;
 
-        // Return success if at least one cache succeeded
         match (l1_result, l2_result) {
             (Ok(()), Ok(())) => {
-                // Both succeeded
                 debug!("[L1+L2] Cached '{}' with TTL {:?}", key, ttl);
                 Ok(())
             }
             (Ok(()), Err(_)) => {
-                // L1 succeeded, L2 failed
                 warn!("L2 cache set failed for key '{}', continuing with L1", key);
-                debug!("[L1] Cached '{}' with TTL {:?}", key, ttl);
                 Ok(())
             }
             (Err(_), Ok(())) => {
-                // L1 failed, L2 succeeded
                 warn!("L1 cache set failed for key '{}', continuing with L2", key);
-                debug!("[L2] Cached '{}' with TTL {:?}", key, ttl);
                 Ok(())
             }
-            (Err(e1), Err(_e2)) => {
-                // Both failed
-                Err(anyhow::anyhow!(
-                    "Both L1 and L2 cache set failed for key '{key}': {e1}"
-                ))
-            }
+            (Err(e1), Err(_e2)) => Err(anyhow::anyhow!(
+                "Both L1 and L2 cache set failed for key '{key}': {e1}"
+            )),
         }
     }
 
@@ -962,10 +975,10 @@ impl CacheManager {
         }
 
         // 2. L1 miss - try L2 with Cache Stampede protection
-        let key_owned = key.to_string();
+        let key_arc: Arc<str> = Arc::from(key);
         let lock_guard = self
             .in_flight_requests
-            .entry(key_owned.clone())
+            .entry(Arc::clone(&key_arc))
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone();
 
@@ -974,7 +987,7 @@ impl CacheManager {
         // RAII cleanup guard - ensures entry is removed even on early return or panic
         let _cleanup_guard = CleanupGuard {
             map: &self.in_flight_requests,
-            key: key_owned,
+            key: key_arc,
         };
 
         // 3. Double-check L1 cache after acquiring lock
@@ -1206,10 +1219,10 @@ impl CacheManager {
         }
 
         // 2. L1 miss - try L2 with Cache Stampede protection
-        let key_owned = key.to_string();
+        let key_arc: Arc<str> = Arc::from(key);
         let lock_guard = self
             .in_flight_requests
-            .entry(key_owned.clone())
+            .entry(Arc::clone(&key_arc))
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone();
 
@@ -1218,7 +1231,7 @@ impl CacheManager {
         // RAII cleanup guard - ensures entry is removed even on early return or panic
         let _cleanup_guard = CleanupGuard {
             map: &self.in_flight_requests,
-            key: key_owned,
+            key: key_arc,
         };
 
         // 3. Double-check L1 cache after acquiring lock

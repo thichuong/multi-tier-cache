@@ -176,9 +176,9 @@ impl CacheBackend for MokaCache {
         });
 
         if let Err(e) = result {
-            tracing::error!("Moka invalidation failed: {}", e);
-            // We return Ok even if internal invalidation failed, as we can't do much about it
-            // and don't want to crash the application.
+            return Err(anyhow::anyhow!(
+                "Moka invalidation failed for pattern '{pattern}': {e}"
+            ));
         }
 
         debug!("Invalidated pattern '{}' from Moka cache", pattern);
