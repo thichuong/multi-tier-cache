@@ -472,9 +472,6 @@ async fn test_stampede_multi_key_isolation() {
             .map(|v| v.load(Ordering::SeqCst))
             .unwrap_or(0);
 
-        assert_eq!(
-            count, 1,
-            "Key '{key}' computed {count} times (expected 1)"
-        );
+        assert_eq!(count, 1, "Key '{key}' computed {count} times (expected 1)");
     }
 }

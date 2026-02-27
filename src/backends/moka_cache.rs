@@ -177,9 +177,7 @@ impl CacheBackend for MokaCache {
 
         if let Err(e) = result {
             return Err(anyhow::anyhow!(
-                "Moka invalidation failed for pattern '{}': {}",
-                pattern,
-                e
+                "Moka invalidation failed for pattern '{pattern}': {e}"
             ));
         }
 

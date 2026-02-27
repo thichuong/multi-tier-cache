@@ -164,8 +164,8 @@ impl CacheBackend for RedisCache {
     async fn get(&self, key: &str) -> Option<serde_json::Value> {
         let mut conn = self.conn_manager.clone();
 
-        match conn.get::<_, String>(key).await {
-            Ok(json_str) => match serde_json::from_str(&json_str) {
+        if let Ok(json_str) = conn.get::<_, String>(key).await {
+            match serde_json::from_str(&json_str) {
                 Ok(value) => {
                     self.hits.fetch_add(1, Ordering::Relaxed);
                     Some(value)
@@ -179,11 +179,10 @@ impl CacheBackend for RedisCache {
                     self.misses.fetch_add(1, Ordering::Relaxed);
                     None
                 }
-            },
-            Err(_) => {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
             }
+        } else {
+            self.misses.fetch_add(1, Ordering::Relaxed);
+            None
         }
     }
 
