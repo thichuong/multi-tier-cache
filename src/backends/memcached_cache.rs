@@ -47,7 +47,7 @@ impl MemcachedCache {
     /// // Set environment variable (optional)
     /// std::env::set_var("MEMCACHED_URL", "memcache://localhost:11211");
     ///
-    /// let cache = MemcachedCache::new().await?;
+    /// let cache = MemcachedCache::new()?;
     /// # Ok(())
     /// # }
     /// ```
@@ -55,21 +55,32 @@ impl MemcachedCache {
     ///
     /// Returns an error if the Memcached client cannot be created.
     pub fn new() -> Result<Self> {
-        info!("Initializing Memcached Cache");
-
-        // Get Memcached URL from environment
         let memcached_url = std::env::var("MEMCACHED_URL")
             .unwrap_or_else(|_| "memcache://127.0.0.1:11211".to_string());
+        Self::with_url(&memcached_url)
+    }
+
+    /// Create new Memcached cache with custom URL
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - Memcached connection string (e.g., `memcache://localhost:11211`)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Memcached client cannot be created.
+    pub fn with_url(url: &str) -> Result<Self> {
+        info!(url = %url, "Initializing Memcached Cache");
 
         // Create Memcached client
-        let client = memcache::connect(memcached_url.as_str())
-            .map_err(|e| anyhow!("Failed to connect to Memcached: {e}"))?;
+        let client =
+            memcache::connect(url).map_err(|e| anyhow!("Failed to connect to Memcached: {e}"))?;
 
         // Test connection with version command
         match client.version() {
             Ok(versions) => {
                 info!(
-                    url = %memcached_url,
+                    url = %url,
                     server_count = versions.len(),
                     "Memcached Cache connected successfully"
                 );
