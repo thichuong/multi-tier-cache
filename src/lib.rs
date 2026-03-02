@@ -63,6 +63,7 @@ pub mod cache_manager;
 pub mod invalidation;
 pub mod redis_streams;
 pub mod traits;
+pub mod utils;
 
 // Re-export backend types (maintains backward compatibility)
 pub use backends::{
@@ -202,7 +203,7 @@ impl CacheSystem {
     ///
     /// Returns an error if cache initialization fails.
     pub async fn with_redis_url(redis_url: &str) -> Result<Self> {
-        info!(redis_url = %redis_url, "Initializing Multi-Tier Cache System with custom Redis URL");
+        info!(redis_url = %utils::redact_url(redis_url), "Initializing Multi-Tier Cache System with custom Redis URL");
 
         // Initialize L1 cache (Moka)
         let l1_cache = Arc::new(L1Cache::new(MokaCacheConfig::default())?);

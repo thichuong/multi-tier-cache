@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info};
 
+use crate::utils::redact_url;
+
 /// Redis distributed cache with `ConnectionManager` for automatic reconnection
 ///
 /// This is the default L2 (warm tier) cache backend, providing:
@@ -50,10 +52,10 @@ impl RedisCache {
     ///
     /// Returns an error if the Redis client cannot be created or connection fails.
     pub async fn with_url(redis_url: &str) -> Result<Self> {
-        info!(redis_url = %redis_url, "Initializing Redis Cache with ConnectionManager");
+        info!(redis_url = %redact_url(redis_url), "Initializing Redis Cache with ConnectionManager");
 
         let client = Client::open(redis_url)
-            .with_context(|| format!("Failed to create Redis client with URL: {redis_url}"))?;
+            .with_context(|| format!("Failed to create Redis client with URL: {}", redact_url(redis_url)))?;
 
         // Create ConnectionManager - handles reconnection automatically
         let conn_manager = ConnectionManager::new(client)
@@ -67,7 +69,7 @@ impl RedisCache {
             .await
             .context("Redis PING health check failed")?;
 
-        info!(redis_url = %redis_url, "Redis Cache connected successfully (ConnectionManager enabled)");
+        info!(redis_url = %redact_url(redis_url), "Redis Cache connected successfully (ConnectionManager enabled)");
 
         Ok(Self {
             conn_manager,

@@ -41,6 +41,7 @@
 //! ```
 
 use crate::traits::StreamingBackend;
+use crate::utils::redact_url;
 use anyhow::Result;
 use async_trait::async_trait;
 use redis::aio::ConnectionManager;
@@ -79,7 +80,7 @@ impl RedisStreams {
         let client = redis::Client::open(redis_url)?;
         let conn_manager = ConnectionManager::new(client).await?;
 
-        debug!("Redis Streams initialized at {}", redis_url);
+        debug!("Redis Streams initialized at {}", redact_url(redis_url));
 
         Ok(Self { conn_manager })
     }
