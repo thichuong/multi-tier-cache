@@ -81,4 +81,4 @@ unwrap_used = "warn"
 
 expect_used = "warn"
 
-indexing_slicing = "warn" 
+indexing_slicing = "warn"
