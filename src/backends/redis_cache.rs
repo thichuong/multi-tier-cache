@@ -9,7 +9,9 @@ use serde_json;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
+
+use crate::utils::redact_url;
 
 /// Redis distributed cache with `ConnectionManager` for automatic reconnection
 ///
@@ -50,10 +52,10 @@ impl RedisCache {
     ///
     /// Returns an error if the Redis client cannot be created or connection fails.
     pub async fn with_url(redis_url: &str) -> Result<Self> {
-        info!(redis_url = %redis_url, "Initializing Redis Cache with ConnectionManager");
+        info!(redis_url = %redact_url(redis_url), "Initializing Redis Cache with ConnectionManager");
 
         let client = Client::open(redis_url)
-            .with_context(|| format!("Failed to create Redis client with URL: {redis_url}"))?;
+            .with_context(|| format!("Failed to create Redis client with URL: {}", redact_url(redis_url)))?;
 
         // Create ConnectionManager - handles reconnection automatically
         let conn_manager = ConnectionManager::new(client)
@@ -67,7 +69,7 @@ impl RedisCache {
             .await
             .context("Redis PING health check failed")?;
 
-        info!(redis_url = %redis_url, "Redis Cache connected successfully (ConnectionManager enabled)");
+        info!(redis_url = %redact_url(redis_url), "Redis Cache connected successfully (ConnectionManager enabled)");
 
         Ok(Self {
             conn_manager,
@@ -165,12 +167,20 @@ impl CacheBackend for RedisCache {
         let mut conn = self.conn_manager.clone();
 
         if let Ok(json_str) = conn.get::<_, String>(key).await {
-            if let Ok(value) = serde_json::from_str(&json_str) {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                Some(value)
-            } else {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
+            match serde_json::from_str(&json_str) {
+                Ok(value) => {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    Some(value)
+                }
+                Err(e) => {
+                    warn!(
+                        key = %key,
+                        error = %e,
+                        "[Redis] Deserialization failed for cached value — returning None"
+                    );
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                }
             }
         } else {
             self.misses.fetch_add(1, Ordering::Relaxed);
@@ -242,11 +252,17 @@ impl L2CacheBackend for RedisCache {
         };
 
         // Parse JSON
-        let value: serde_json::Value = if let Ok(v) = serde_json::from_str(&json_str) {
-            v
-        } else {
-            self.misses.fetch_add(1, Ordering::Relaxed);
-            return None;
+        let value: serde_json::Value = match serde_json::from_str(&json_str) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    key = %key,
+                    error = %e,
+                    "[Redis] Deserialization failed in get_with_ttl — returning None"
+                );
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
         };
 
         // Get TTL (in seconds, -1 = no expiry, -2 = key doesn't exist)
