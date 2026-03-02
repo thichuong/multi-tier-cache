@@ -160,7 +160,7 @@ async fn demo_memcached_backend() -> Result<()> {
             }
 
             // Show server statistics
-            if let Ok(server_stats) = memcached.get_server_stats() {
+            if let Ok(server_stats) = memcached.get_server_stats().await {
                 println!("\n📊 Memcached Server Stats:");
                 for (server, stats) in server_stats {
                     println!("   Server: {server}");
