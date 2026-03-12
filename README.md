@@ -34,15 +34,16 @@
 
 ## ✨ Features
 
+- **🦀 Rust Edition 2024** *(v0.6.1+)*: Leverages native **Async Functions in Traits (AFIT)**, eliminating the `async-trait` dependency for a lighter, faster build. ⭐ **NEW**
 - **🔥 Multi-Tier Architecture**: Combines fast in-memory (Moka) with persistent distributed (Redis) caching
-- **🌐 Dynamic Multi-Tier** *(v0.5.0+)*: Support for 3, 4, or more cache tiers (L1+L2+L3+L4+...) with flexible configuration ⭐ **NEW**
+- **🌐 Dynamic Multi-Tier** *(v0.5.0+)*: Support for 3, 4, or more cache tiers (L1+L2+L3+L4+...) with flexible configuration
 - **🔄 Cross-Instance Cache Invalidation** *(v0.4.0+)*: Real-time cache synchronization across all instances via Redis Pub/Sub
 - **🔌 Pluggable Backends** *(v0.3.0+)*: Swap Moka/Redis with custom implementations (DashMap, Memcached, RocksDB, etc.)
-- **🛡️ Cache Stampede Protection**: DashMap + Mutex request coalescing prevents duplicate computations (99.6% latency reduction: 534ms → 5.2ms)
+- **🛡️ Cache Stampede Protection**: **Asynchronous broadcast channel** request coalescing prevents duplicate computations (99.6% latency reduction: 534ms → 5.2ms)
 - **📊 Redis Streams**: Built-in publish/subscribe with automatic trimming for event streaming
 - **⚡ Automatic Tier Promotion**: Intelligent cache tier promotion for frequently accessed data with TTL preservation and per-tier scaling
 - **📈 Comprehensive Statistics**: Hit rates per tier, promotions, in-flight request tracking, invalidation metrics
-- **🎯 Zero-Config**: Sensible defaults, works out of the box
+- **🎯 Zero-Cost L1 Hits**: L2 payload caching uses raw `bytes::Bytes`, while L1 skips intermediate JSON AST allocations for maximum performance.
 - **✅ Production-Proven**: Battle-tested at **16,829+ RPS** with **5.2ms latency** and **95% hit rate**
 
 ## 🏗️ Architecture
@@ -55,9 +56,9 @@ Request → L1 Cache (Moka) → L2 Cache (Redis) → Compute/Fetch
 
 ### Cache Flow
 
-1. **Fast Path**: Check L1 cache (sub-millisecond, 90% hit rate)
-2. **Fallback**: Check L2 cache (2-5ms, 75% hit rate) + auto-promote to L1
-3. **Compute**: Fetch/compute fresh data with stampede protection, store in both tiers
+1. **Fast Path**: Check L1 cache (sub-millisecond, 90% hit rate) - **Zero-cost** raw bytes access.
+2. **Fallback**: Check L2 cache (2-5ms, 75% hit rate) + auto-promote to L1.
+3. **Compute**: Fetch/compute fresh data with **broadcast-based stampede protection**, store in both tiers.
 
 ## 📦 Installation
 
@@ -65,7 +66,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-multi-tier-cache = "0.5"
+multi-tier-cache = "0.6.2"
 tokio = { version = "1.43", features = ["full"] }
 serde_json = "1.0"
 ```
@@ -95,7 +96,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Retrieve data (L1 first, then L2 fallback)
     if let Some(cached) = cache.cache_manager().get("user:1").await? {
-        println!("Cached data: {}", cached);
+        let user: serde_json::Value = serde_json::from_slice(cached.as_ref())?;
+        println!("Cached data: {}", user);
     }
 
     // Get statistics
@@ -146,19 +148,21 @@ cache.cache_manager()
 Fetch data only when cache misses, with stampede protection:
 
 ```rust
-async fn fetch_from_database(id: u32) -> anyhow::Result<serde_json::Value> {
+async fn fetch_from_database(id: u32) -> anyhow::Result<bytes::Bytes> {
     // Expensive operation...
-    Ok(serde_json::json!({"id": id, "data": "..."}))
+    let data = serde_json::json!({"id": id, "data": "..."});
+    Ok(bytes::Bytes::from(serde_json::to_vec(&data)?))
 }
 
 // Only ONE request will compute, others wait and read from cache
-let product = cache.cache_manager()
+let product_bytes = cache.cache_manager()
     .get_or_compute_with(
         "product:42",
         CacheStrategy::MediumTerm,
         || fetch_from_database(42)
     )
     .await?;
+let product: serde_json::Value = serde_json::from_slice(product_bytes.as_ref())?;
 ```
 
 ### 3. Redis Streams Integration
@@ -204,14 +208,14 @@ struct User {
 // ❌ OLD WAY: Manual cache + serialize + deserialize (40+ lines)
 let cached = cache.cache_manager().get("user:123").await?;
 let user: User = match cached {
-    Some(json) => serde_json::from_value(json)?,
+    Some(bytes) => serde_json::from_slice(bytes.as_ref())?,
     None => {
         let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
             .bind(123)
             .fetch_one(&pool)
             .await?;
-        let json = serde_json::to_value(&user)?;
-        cache.cache_manager().set_with_strategy("user:123", json, CacheStrategy::MediumTerm).await?;
+        let bytes = bytes::Bytes::from(serde_json::to_vec(&user)?);
+        cache.cache_manager().set_with_strategy("user:123", bytes, CacheStrategy::MediumTerm).await?;
         user
     }
 };
@@ -349,9 +353,10 @@ database.update_user(123, new_data).await?;
 
 // Push new data directly to ALL instances' L1 caches
 // → No cache miss, instant update!
+let bytes = bytes::Bytes::from(serde_json::to_vec(&new_data)?);
 cache_manager.update_cache(
     "user:123",
-    serde_json::to_value(&new_data)?,
+    bytes,
     Some(Duration::from_secs(3600))
 ).await?;
 ```
@@ -376,9 +381,10 @@ Cache and broadcast in one operation:
 let report = generate_monthly_report().await?;
 
 // Cache locally AND broadcast to all other instances
+let bytes = bytes::Bytes::from(serde_json::to_vec(&report)?);
 cache_manager.set_with_broadcast(
     "report:monthly",
-    serde_json::to_value(&report)?,
+    bytes,
     CacheStrategy::LongTerm
 ).await?;
 ```
@@ -497,19 +503,19 @@ Starting from **v0.3.0**, you can replace the default Moka (L1) and Redis (L2) b
 #### Basic Example: Custom HashMap L1 Cache
 
 ```rust
-use multi_tier_cache::{CacheBackend, CacheSystemBuilder, async_trait};
+use multi_tier_cache::{CacheBackend, CacheSystemBuilder};
+use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use anyhow::Result;
 
 struct HashMapCache {
-    store: Arc<RwLock<HashMap<String, (serde_json::Value, Instant)>>>,
+    store: Arc<RwLock<HashMap<String, (Bytes, Instant)>>>,
 }
 
-#[async_trait]
 impl CacheBackend for HashMapCache {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
+    async fn get(&self, key: &str) -> Option<Bytes> {
         let store = self.store.read().unwrap();
         store.get(key).and_then(|(value, expiry)| {
             if *expiry > Instant::now() {
@@ -523,7 +529,7 @@ impl CacheBackend for HashMapCache {
     async fn set_with_ttl(
         &self,
         key: &str,
-        value: serde_json::Value,
+        value: Bytes,
         ttl: Duration,
     ) -> Result<()> {
         let mut store = self.store.write().unwrap();
@@ -540,7 +546,7 @@ impl CacheBackend for HashMapCache {
         true
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "HashMap"
     }
 }
@@ -559,19 +565,18 @@ let cache = CacheSystemBuilder::new()
 For L2 caches, implement `L2CacheBackend` which extends `CacheBackend` with `get_with_ttl()`:
 
 ```rust
-use multi_tier_cache::{L2CacheBackend, async_trait};
+use multi_tier_cache::L2CacheBackend;
+use bytes::Bytes;
 
-#[async_trait]
 impl CacheBackend for MyCustomL2 {
     // ... implement CacheBackend methods
 }
 
-#[async_trait]
 impl L2CacheBackend for MyCustomL2 {
     async fn get_with_ttl(
         &self,
         key: &str,
-    ) -> Option<(serde_json::Value, Option<Duration>)> {
+    ) -> Option<(Bytes, Option<Duration>)> {
         // Return value with remaining TTL
         Some((value, Some(remaining_ttl)))
     }

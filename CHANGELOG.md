@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 
 - Metrics export (Prometheus format)
+## [0.6.2] - 2026-03-12
+
+**[Docs / Fixed]**
+- Completely overhauled `README.md` to accurately reflect the massive v0.6.1 API and architectural changes.
+- Updated all documentation code examples to demonstrate native AFIT (no `async-trait`), the usage of `bytes::Bytes` over `serde_json::Value`, and the new broadcast-based stampede protection.
+
 ## [0.6.1] - 2026-03-12
 
 ### Changed
