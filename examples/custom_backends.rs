@@ -6,10 +6,12 @@
 //! Run with: `cargo run --example custom_backends`
 
 use anyhow::Result;
-use multi_tier_cache::{async_trait, CacheBackend, CacheSystemBuilder, L2CacheBackend, TierConfig};
+use bytes::Bytes;
+use multi_tier_cache::{CacheBackend, CacheSystemBuilder, L2CacheBackend, TierConfig};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use futures_util::future::BoxFuture;
 
 // ==================== Example 1: Simple HashMap L1 Cache ====================
 
@@ -19,7 +21,7 @@ use std::time::{Duration, Instant};
 /// In production, you might use `DashMap` or other concurrent data structures.
 struct HashMapCache {
     name: String,
-    store: Arc<RwLock<HashMap<String, (serde_json::Value, Instant)>>>,
+    store: Arc<RwLock<HashMap<String, (Bytes, Instant)>>>,
 }
 
 impl HashMapCache {
@@ -41,50 +43,63 @@ impl HashMapCache {
     }
 }
 
-#[async_trait]
 impl CacheBackend for HashMapCache {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        // Clean up expired entries periodically
-        if rand::random::<f32>() < 0.1 {
-            self.cleanup_expired();
-        }
-
-        let store = self
-            .store
-            .read()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        store.get(key).and_then(|(value, expiry)| {
-            if *expiry > Instant::now() {
-                Some(value.clone())
-            } else {
-                None
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        let store = Arc::clone(&self.store);
+        let key = key.to_string();
+        let name = self.name.clone();
+        Box::pin(async move {
+            // Clean up expired entries periodically (simple simulation)
+            if rand::random::<f32>() < 0.1 {
+                // In a real implementation, we'd avoid holding the write lock here if possible
             }
+
+            let store = store
+                .read()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            store.get(&key).and_then(|(value, expiry)| {
+                if *expiry > Instant::now() {
+                    Some(value.clone())
+                } else {
+                    None
+                }
+            })
         })
     }
 
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let mut store = self
-            .store
-            .write()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        let expiry = Instant::now() + ttl;
-        store.insert(key.to_string(), (value, expiry));
-        println!("💾 [{}] Cached '{}' with TTL {:?}", self.name, key, ttl);
-        Ok(())
+    fn set_with_ttl<'a>(&'a self, key: &'a str, value: Bytes, ttl: Duration) -> BoxFuture<'a, Result<()>> {
+        let store = Arc::clone(&self.store);
+        let key = key.to_string();
+        let name = self.name.clone();
+        Box::pin(async move {
+            let mut store = store
+                .write()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let expiry = Instant::now() + ttl;
+            store.insert(key.clone(), (value, expiry));
+            println!("💾 [{}] Cached '{}' with TTL {:?}", name, key, ttl);
+            Ok(())
+        })
     }
 
-    async fn remove(&self, key: &str) -> Result<()> {
-        let mut store = self
-            .store
-            .write()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        store.remove(key);
-        Ok(())
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+        let store = Arc::clone(&self.store);
+        let key = key.to_string();
+        Box::pin(async move {
+            let mut store = store
+                .write()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            store.remove(&key);
+            Ok(())
+        })
     }
 
-    async fn health_check(&self) -> bool {
-        // Simple health check: try to read the lock
-        self.store.read().is_ok()
+    fn health_check(&self) -> BoxFuture<'_, bool> {
+        let store = Arc::clone(&self.store);
+        Box::pin(async move {
+            // Simple health check: try to read the lock
+            store.read().is_ok()
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -97,7 +112,7 @@ impl CacheBackend for HashMapCache {
 /// In-memory L2 cache that simulates a distributed cache
 ///
 /// This demonstrates implementing `L2CacheBackend` which requires `get_with_ttl()`.
-type L2Store = Arc<RwLock<HashMap<String, (serde_json::Value, Instant, Duration)>>>;
+type L2Store = Arc<RwLock<HashMap<String, (Bytes, Instant, Duration)>>>;
 
 struct InMemoryL2Cache {
     store: L2Store,
@@ -112,44 +127,55 @@ impl InMemoryL2Cache {
     }
 }
 
-#[async_trait]
 impl CacheBackend for InMemoryL2Cache {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        let store = self
-            .store
-            .read()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        store.get(key).and_then(|(value, expiry, _)| {
-            if *expiry > Instant::now() {
-                Some(value.clone())
-            } else {
-                None
-            }
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        let store = Arc::clone(&self.store);
+        let key = key.to_string();
+        Box::pin(async move {
+            let store = store
+                .read()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            store.get(&key).and_then(|(value, expiry, _)| {
+                if *expiry > Instant::now() {
+                    Some(value.clone())
+                } else {
+                    None
+                }
+            })
         })
     }
 
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let mut store = self
-            .store
-            .write()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        let expiry = Instant::now() + ttl;
-        store.insert(key.to_string(), (value, expiry, ttl));
-        println!("💾 [InMemory L2] Cached '{key}' with TTL {ttl:?}");
-        Ok(())
+    fn set_with_ttl<'a>(&'a self, key: &'a str, value: Bytes, ttl: Duration) -> BoxFuture<'a, Result<()>> {
+        let store = Arc::clone(&self.store);
+        let key = key.to_string();
+        Box::pin(async move {
+            let mut store = store
+                .write()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let expiry = Instant::now() + ttl;
+            store.insert(key.clone(), (value, expiry, ttl));
+            println!("💾 [InMemory L2] Cached '{key}' with TTL {ttl:?}");
+            Ok(())
+        })
     }
 
-    async fn remove(&self, key: &str) -> Result<()> {
-        let mut store = self
-            .store
-            .write()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        store.remove(key);
-        Ok(())
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+        let store = Arc::clone(&self.store);
+        let key = key.to_string();
+        Box::pin(async move {
+            let mut store = store
+                .write()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            store.remove(&key);
+            Ok(())
+        })
     }
 
-    async fn health_check(&self) -> bool {
-        self.store.read().is_ok()
+    fn health_check(&self) -> BoxFuture<'_, bool> {
+        let store = Arc::clone(&self.store);
+        Box::pin(async move {
+            store.read().is_ok()
+        })
     }
 
     fn name(&self) -> &'static str {
@@ -157,22 +183,24 @@ impl CacheBackend for InMemoryL2Cache {
     }
 }
 
-#[async_trait]
 impl L2CacheBackend for InMemoryL2Cache {
-    async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
-        let store = self
-            .store
-            .read()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        store.get(key).and_then(|(value, expiry, _original_ttl)| {
-            let now = Instant::now();
-            if *expiry > now {
-                // Calculate remaining TTL
-                let remaining = expiry.duration_since(now);
-                Some((value.clone(), Some(remaining)))
-            } else {
-                None
-            }
+    fn get_with_ttl<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+        let store = Arc::clone(&self.store);
+        let key = key.to_string();
+        Box::pin(async move {
+            let store = store
+                .read()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            store.get(&key).and_then(|(value, expiry, _original_ttl)| {
+                let now = Instant::now();
+                if *expiry > now {
+                    // Calculate remaining TTL
+                    let remaining = expiry.duration_since(now);
+                    Some((value.clone(), Some(remaining)))
+                } else {
+                    None
+                }
+            })
         })
     }
 }
@@ -195,31 +223,34 @@ impl NoOpCache {
     }
 }
 
-#[async_trait]
 impl CacheBackend for NoOpCache {
-    async fn get(&self, _key: &str) -> Option<serde_json::Value> {
-        None // Always miss
+    fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        Box::pin(async move { None })
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        _value: serde_json::Value,
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        _value: Bytes,
         ttl: Duration,
-    ) -> Result<()> {
-        println!(
-            "💾 [{}] Would cache '{}' with TTL {:?} (no-op)",
-            self.name, key, ttl
-        );
-        Ok(())
+    ) -> BoxFuture<'a, Result<()>> {
+        let name = self.name.clone();
+        let key = key.to_string();
+        Box::pin(async move {
+            println!(
+                "💾 [{}] Would cache '{}' with TTL {:?} (no-op)",
+                name, key, ttl
+            );
+            Ok(())
+        })
     }
 
-    async fn remove(&self, _key: &str) -> Result<()> {
-        Ok(())
+    fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move { Ok(()) })
     }
 
-    async fn health_check(&self) -> bool {
-        true
+    fn health_check(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async move { true })
     }
 
     fn name(&self) -> &'static str {
@@ -227,10 +258,9 @@ impl CacheBackend for NoOpCache {
     }
 }
 
-#[async_trait]
 impl L2CacheBackend for NoOpCache {
-    async fn get_with_ttl(&self, _key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
-        None // Always miss
+    fn get_with_ttl<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+        Box::pin(async move { None })
     }
 }
 
@@ -256,11 +286,7 @@ async fn main() -> Result<()> {
     let manager = cache.cache_manager();
 
     // Test basic operations
-    let test_data = serde_json::json!({
-        "user": "alice",
-        "score": 100,
-        "timestamp": 1_234_567_890
-    });
+    let test_data = Bytes::from("{\"user\": \"alice\", \"score\": 100, \"timestamp\": 1234567890}");
 
     manager
         .set_with_strategy(
@@ -271,7 +297,7 @@ async fn main() -> Result<()> {
         .await?;
 
     if let Some(cached) = manager.get("user:alice").await? {
-        println!("✅ Retrieved from cache: {cached}");
+        println!("✅ Retrieved from cache: {:?}", cached);
     }
 
     // Example 2: No-Op caches (for testing/development)
@@ -292,7 +318,7 @@ async fn main() -> Result<()> {
     noop_manager
         .set_with_strategy(
             "test:key",
-            serde_json::json!({"value": "test"}),
+            Bytes::from("{\"value\": \"test\"}"),
             multi_tier_cache::CacheStrategy::Default,
         )
         .await?;
@@ -354,7 +380,7 @@ async fn main() -> Result<()> {
         .cache_manager()
         .set_with_strategy(
             "tiered:key",
-            serde_json::json!("value"),
+            Bytes::from("\"value\""),
             multi_tier_cache::CacheStrategy::ShortTerm,
         )
         .await?;

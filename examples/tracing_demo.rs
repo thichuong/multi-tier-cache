@@ -1,11 +1,10 @@
+use bytes::Bytes;
 use multi_tier_cache::CacheSystem;
-use tracing_subscriber::EnvFilter; // Import fmt module
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing subscriber
-    // Sử dụng fmt::Subscriber builder thay vì gọi thẳng fmt() đôi khi rõ ràng hơn
-    // với compiler trong các trường hợp macro phức tạp
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
         .init();
@@ -20,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
     manager
         .set_with_strategy(
             "test_key",
-            serde_json::json!("value"),
+            Bytes::from("\"value\""),
             multi_tier_cache::CacheStrategy::ShortTerm,
         )
         .await?;

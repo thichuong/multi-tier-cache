@@ -5,21 +5,20 @@
 //!
 //! Run with: cargo run --example `stampede_protection`
 
+use bytes::Bytes;
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Simulate expensive computation
-async fn expensive_computation(id: u32) -> anyhow::Result<serde_json::Value> {
+async fn expensive_computation(id: u32) -> anyhow::Result<Bytes> {
     println!("  💻 [Worker {id}] Starting expensive computation...");
     tokio::time::sleep(Duration::from_millis(500)).await;
     println!("  ✅ [Worker {id}] Computation complete");
 
-    Ok(serde_json::json!({
-        "result": "computed_value",
-        "timestamp": 1_234_567_890,
-        "worker_id": id
-    }))
+    Ok(Bytes::from(format!(
+        "{{\"result\": \"computed_value\", \"timestamp\": 1234567890, \"worker_id\": {id}}}"
+    )))
 }
 
 #[tokio::main]

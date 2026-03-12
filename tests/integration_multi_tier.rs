@@ -1,12 +1,19 @@
 //! Integration tests for multi-tier cache architecture (v0.5.0+)
 
-use multi_tier_cache::{CacheBackend, CacheStrategy, CacheSystemBuilder, L2Cache, TierConfig};
-use serde_json::json;
+use anyhow::Result;
+use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;
 
 mod common;
 use common::{test_data, test_key};
+use multi_tier_cache::{
+    CacheBackend, CacheManager, CacheStrategy, CacheSystemBuilder, L1Cache, L2Cache,
+    L2CacheBackend, TierConfig,
+};
+use std::sync::atomic::{AtomicU32, Ordering};
+use tokio::task::JoinSet;
+use tokio::time::Instant;
 
 /// Test basic multi-tier get/set operations
 #[tokio::test]
@@ -41,7 +48,7 @@ async fn test_multi_tier_basic_operations() {
     let manager = cache.cache_manager();
 
     // Test set_with_strategy - should store in all tiers
-    let test_data = json!({"user": "alice", "id": 123});
+    let test_data = Bytes::from("{\"user\": \"alice\", \"id\": 123}");
     manager
         .set_with_strategy("test:multi:1", test_data.clone(), CacheStrategy::ShortTerm)
         .await
@@ -55,7 +62,8 @@ async fn test_multi_tier_basic_operations() {
     assert_eq!(result, Some(test_data.clone()));
 
     // Verify tier stats
-    if let Some(tier_stats) = manager.get_tier_stats() {
+    let tier_stats = manager.get_tier_stats();
+    if !tier_stats.is_empty() {
         println!("Multi-tier stats:");
         for stats in &tier_stats {
             println!(
@@ -103,7 +111,7 @@ async fn test_multi_tier_stats() {
     let manager = cache.cache_manager();
 
     // Store some data
-    let test_data = json!({"stats": "test"});
+    let test_data = Bytes::from("{\"stats\": \"test\"}");
     manager
         .set_with_strategy("test:stats:1", test_data.clone(), CacheStrategy::ShortTerm)
         .await
@@ -118,7 +126,8 @@ async fn test_multi_tier_stats() {
     }
 
     // Verify tier-specific stats
-    if let Some(tier_stats) = manager.get_tier_stats() {
+    let tier_stats = manager.get_tier_stats();
+    if !tier_stats.is_empty() {
         assert_eq!(tier_stats.len(), 3, "Should have 3 tiers");
 
         // L1 should have most hits
@@ -157,7 +166,7 @@ async fn test_backward_compatibility_legacy_mode() {
     let manager = cache.cache_manager();
 
     // Standard operations should work
-    let test_data = json!({"legacy": "mode"});
+    let test_data = Bytes::from("{\"legacy\": \"mode\"}");
     manager
         .set_with_strategy("test:legacy:1", test_data.clone(), CacheStrategy::ShortTerm)
         .await
@@ -169,9 +178,9 @@ async fn test_backward_compatibility_legacy_mode() {
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(result, Some(test_data));
 
-    // Tier stats should be None for legacy mode
+    // Tier stats should be empty for legacy mode
     assert!(
-        manager.get_tier_stats().is_none(),
+        manager.get_tier_stats().is_empty(),
         "Legacy mode should not have tier stats"
     );
 
@@ -215,7 +224,7 @@ async fn test_multi_tier_ttl_scaling() {
     let manager = cache.cache_manager();
 
     // Set with 10 second TTL
-    let test_data = json!({"ttl": "test"});
+    let test_data = Bytes::from("{\"ttl\": \"test\"}");
     manager
         .set_with_strategy(
             "test:ttl:1",
@@ -311,7 +320,8 @@ async fn test_convenience_methods() {
     let manager = cache.cache_manager();
 
     // Verify tier stats
-    if let Some(tier_stats) = manager.get_tier_stats() {
+    let tier_stats = manager.get_tier_stats();
+    if !tier_stats.is_empty() {
         // Should have L1 + L2 + L3 + L4 = 4 tiers
         assert_eq!(tier_stats.len(), 4, "Should have 4 tiers");
 
@@ -365,9 +375,9 @@ async fn test_multi_tier_stampede_protection() {
     let compute_count = Arc::new(AtomicU32::new(0));
 
     // Spawn 50 concurrent requests for same key
-    let mut tasks = JoinSet::new();
+    let mut tasks: JoinSet<Result<Bytes>> = JoinSet::new();
     for _ in 0..50 {
-        let manager_clone = Arc::clone(&manager);
+        let manager_clone: Arc<CacheManager> = Arc::clone(&manager);
         let key_clone = key.clone();
         let counter_clone = Arc::clone(&compute_count);
 
@@ -375,7 +385,7 @@ async fn test_multi_tier_stampede_protection() {
             manager_clone
                 .get_or_compute_with(&key_clone, CacheStrategy::ShortTerm, || {
                     counter_clone.fetch_add(1, Ordering::SeqCst);
-                    async move { Ok(test_data::json_user(999)) }
+                    async move { Ok(test_data::bytes_user(999)) }
                 })
                 .await
         });
@@ -440,7 +450,7 @@ async fn test_stampede_retrieves_from_l3() {
 
     let manager = Arc::new(cache.cache_manager().clone());
     let key = test_key("stampede_l3_hit");
-    let data = test_data::json_user(777);
+    let data = test_data::bytes_user(777);
 
     // Pre-populate ONLY L3 (skip L1 and L2)
     l3.set_with_ttl(&key, data.clone(), std::time::Duration::from_secs(300))
@@ -450,9 +460,9 @@ async fn test_stampede_retrieves_from_l3() {
     let compute_count = Arc::new(AtomicU32::new(0));
 
     // Spawn 30 concurrent requests
-    let mut tasks = JoinSet::new();
+    let mut tasks: JoinSet<Result<Bytes>> = JoinSet::new();
     for _ in 0..30 {
-        let manager_clone = Arc::clone(&manager);
+        let manager_clone: Arc<CacheManager> = Arc::clone(&manager);
         let key_clone = key.clone();
         let counter_clone = Arc::clone(&compute_count);
 
@@ -484,7 +494,7 @@ async fn test_stampede_retrieves_from_l3() {
     );
 
     // Verify data was promoted to L1
-    let l1_data = l1.get(&key).await;
+    let l1_data: Option<Bytes> = l1.get(&key).await;
     assert!(l1_data.is_some(), "Data should be promoted from L3 to L1");
     assert_eq!(
         l1_data.unwrap_or_else(|| panic!("L1 data missing")),

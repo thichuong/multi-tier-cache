@@ -12,19 +12,19 @@
 //! # Example: Custom L1 Backend
 //!
 /// ```rust,no_run
-/// use multi_tier_cache::{CacheBackend, async_trait};
+/// use multi_tier_cache::CacheBackend;
 /// use std::time::Duration;
 /// use anyhow::Result;
+/// use bytes::Bytes;
 ///
 /// struct MyCustomCache;
 ///
-/// #[async_trait]
 /// impl CacheBackend for MyCustomCache {
-///     async fn get(&self, key: &str) -> Option<serde_json::Value> {
+///     async fn get(&self, key: &str) -> Option<Bytes> {
 ///         None
 ///     }
 ///
-///     async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
+///     async fn set_with_ttl(&self, key: &str, value: Bytes, ttl: Duration) -> Result<()> {
 ///         Ok(())
 ///     }
 ///
@@ -38,8 +38,8 @@
 /// }
 /// ```
 use anyhow::Result;
-use async_trait::async_trait;
-use serde_json;
+use bytes::Bytes;
+use futures_util::future::BoxFuture;
 use std::time::Duration;
 
 /// Core cache backend trait for both L1 and L2 caches
@@ -67,7 +67,6 @@ use std::time::Duration;
 /// # Example
 ///
 /// See module-level documentation for a complete example.
-#[async_trait]
 pub trait CacheBackend: Send + Sync {
     /// Get value from cache by key
     ///
@@ -79,21 +78,26 @@ pub trait CacheBackend: Send + Sync {
     ///
     /// * `Some(value)` - Value found in cache
     /// * `None` - Key not found or expired
-    async fn get(&self, key: &str) -> Option<serde_json::Value>;
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>>;
 
     /// Set value in cache with time-to-live
     ///
     /// # Arguments
     ///
     /// * `key` - The cache key
-    /// * `value` - The value to store (must be JSON-serializable)
+    /// * `value` - The value to store (raw bytes)
     /// * `ttl` - Time-to-live duration
     ///
     /// # Returns
     ///
     /// * `Ok(())` - Value successfully cached
     /// * `Err(e)` - Cache operation failed
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()>;
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+        ttl: Duration,
+    ) -> BoxFuture<'a, Result<()>>;
 
     /// Remove value from cache
     ///
@@ -105,7 +109,7 @@ pub trait CacheBackend: Send + Sync {
     ///
     /// * `Ok(())` - Value removed (or didn't exist)
     /// * `Err(e)` - Cache operation failed
-    async fn remove(&self, key: &str) -> Result<()>;
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>>;
 
     /// Check if cache backend is healthy
     ///
@@ -116,7 +120,7 @@ pub trait CacheBackend: Send + Sync {
     ///
     /// * `true` - Cache is healthy and operational
     /// * `false` - Cache is unhealthy or unreachable
-    async fn health_check(&self) -> bool;
+    fn health_check(&self) -> BoxFuture<'_, bool>;
 
     /// Remove keys matching a pattern
     ///
@@ -128,22 +132,15 @@ pub trait CacheBackend: Send + Sync {
     ///
     /// * `Ok(())` - Pattern processed
     /// * `Err(e)` - Operation failed
-    async fn remove_pattern(&self, _pattern: &str) -> Result<()> {
-        // Default implementation does nothing (for backward compatibility)
-        Ok(())
+    fn remove_pattern<'a>(&'a self, _pattern: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { Ok(()) })
     }
 
     /// Get the name of this cache backend
-    ///
-    /// This is used for logging and debugging purposes.
-    ///
-    /// # Returns
-    ///
-    /// A string identifying this cache backend (e.g., "Moka", "Redis", "Memcached")
-    fn name(&self) -> &'static str {
-        "unknown"
-    }
+    fn name(&self) -> &'static str;
 }
+
+/// (No longer needed since traits are now dyn-compatible)
 
 /// Extended trait for L2 cache backends with TTL introspection
 ///
@@ -160,53 +157,36 @@ pub trait CacheBackend: Send + Sync {
 /// # Example
 ///
 /// ```rust,no_run
-/// use multi_tier_cache::{CacheBackend, L2CacheBackend, async_trait};
+/// use multi_tier_cache::{CacheBackend, L2CacheBackend};
 /// use std::time::Duration;
 /// use anyhow::Result;
+/// use bytes::Bytes;
 ///
 /// struct MyDistributedCache;
 ///
-/// #[async_trait]
 /// impl CacheBackend for MyDistributedCache {
-///     async fn get(&self, _key: &str) -> Option<serde_json::Value> { None }
-///     async fn set_with_ttl(&self, _k: &str, _v: serde_json::Value, _t: Duration) -> Result<()> { Ok(()) }
+///     async fn get(&self, _key: &str) -> Option<Bytes> { None }
+///     async fn set_with_ttl(&self, _k: &str, _v: Bytes, _t: Duration) -> Result<()> { Ok(()) }
 ///     async fn remove(&self, _k: &str) -> Result<()> { Ok(()) }
 ///     async fn health_check(&self) -> bool { true }
 /// }
 ///
-/// #[async_trait]
 /// impl L2CacheBackend for MyDistributedCache {
-///     async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
+///     async fn get_with_ttl(&self, key: &str) -> Option<(Bytes, Option<Duration>)> {
 ///         // Retrieve value and calculate remaining TTL
 ///         None
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait L2CacheBackend: CacheBackend {
     /// Get value with its remaining TTL from L2 cache
-    ///
-    /// This method retrieves both the value and its remaining time-to-live.
-    /// This is used by the cache manager to promote entries from L2 to L1
-    /// with the correct TTL.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - The cache key to retrieve
-    ///
-    /// # Returns
-    ///
-    /// * `Some((value, Some(ttl)))` - Value found with remaining TTL
-    /// * `Some((value, None))` - Value found but no expiration set (never expires)
-    /// * `None` - Key not found or expired
-    ///
-    /// # TTL Semantics
-    ///
-    /// - TTL represents the **remaining** time until expiration
-    /// - `None` TTL means the key has no expiration
-    /// - Implementations should use backend-specific TTL commands (e.g., Redis TTL)
-    async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)>;
+    fn get_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>>;
 }
+
+/// (No longer needed since traits are now dyn-compatible)
 
 /// Optional trait for cache backends that support event streaming
 ///
@@ -228,12 +208,11 @@ pub trait L2CacheBackend: CacheBackend {
 /// # Example
 ///
 /// ```rust,no_run
-/// use multi_tier_cache::{StreamingBackend, async_trait};
+/// use multi_tier_cache::StreamingBackend;
 /// use anyhow::Result;
 ///
 /// struct MyStreamingCache;
 ///
-/// #[async_trait]
 /// impl StreamingBackend for MyStreamingCache {
 ///     async fn stream_add(
 ///         &self,
@@ -263,81 +242,28 @@ pub trait L2CacheBackend: CacheBackend {
 ///     }
 /// }
 /// ```
-#[async_trait]
 pub trait StreamingBackend: Send + Sync {
     /// Add an entry to a stream
-    ///
-    /// # Arguments
-    ///
-    /// * `stream_key` - Name of the stream (e.g., "`events_stream`")
-    /// * `fields` - Vector of field-value pairs to add
-    /// * `maxlen` - Optional maximum stream length (older entries are trimmed)
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(entry_id)` - The generated entry ID (e.g., "1234567890-0")
-    /// * `Err(e)` - Stream operation failed
-    ///
-    /// # Trimming Behavior
-    ///
-    /// If `maxlen` is specified, the stream is automatically trimmed to keep
-    /// approximately that many entries (oldest entries are removed).
-    async fn stream_add(
-        &self,
-        stream_key: &str,
+    fn stream_add<'a>(
+        &'a self,
+        stream_key: &'a str,
         fields: Vec<(String, String)>,
         maxlen: Option<usize>,
-    ) -> Result<String>;
+    ) -> BoxFuture<'a, Result<String>>;
 
     /// Read the latest N entries from a stream (newest first)
-    ///
-    /// # Arguments
-    ///
-    /// * `stream_key` - Name of the stream
-    /// * `count` - Maximum number of entries to retrieve
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(entries)` - Vector of (`entry_id`, fields) tuples (newest first)
-    /// * `Err(e)` - Stream operation failed
-    ///
-    /// # Ordering
-    ///
-    /// Entries are returned in reverse chronological order (newest first).
-    async fn stream_read_latest(
-        &self,
-        stream_key: &str,
+    fn stream_read_latest<'a>(
+        &'a self,
+        stream_key: &'a str,
         count: usize,
-    ) -> Result<Vec<(String, Vec<(String, String)>)>>;
+    ) -> BoxFuture<'a, Result<Vec<(String, Vec<(String, String)>)>>>;
 
     /// Read entries from a stream with optional blocking
-    ///
-    /// # Arguments
-    ///
-    /// * `stream_key` - Name of the stream
-    /// * `last_id` - Last entry ID seen ("0" for beginning, "$" for new only)
-    /// * `count` - Maximum number of entries to retrieve
-    /// * `block_ms` - Optional blocking timeout in milliseconds (None = non-blocking)
-    ///
-    /// # Returns
-    ///
-    /// * `Ok(entries)` - Vector of (`entry_id`, fields) tuples
-    /// * `Err(e)` - Stream operation failed
-    ///
-    /// # Blocking Behavior
-    ///
-    /// - `None`: Non-blocking, returns immediately
-    /// - `Some(ms)`: Blocks up to `ms` milliseconds waiting for new entries
-    ///
-    /// # Use Cases
-    ///
-    /// - Non-blocking: Poll for new events
-    /// - Blocking: Long-polling for real-time event consumption
-    async fn stream_read(
-        &self,
-        stream_key: &str,
-        last_id: &str,
+    fn stream_read<'a>(
+        &'a self,
+        stream_key: &'a str,
+        last_id: &'a str,
         count: usize,
         block_ms: Option<usize>,
-    ) -> Result<Vec<(String, Vec<(String, String)>)>>;
+    ) -> BoxFuture<'a, Result<Vec<(String, Vec<(String, String)>)>>>;
 }

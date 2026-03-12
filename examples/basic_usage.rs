@@ -4,6 +4,7 @@
 //!
 //! Run with: cargo run --example `basic_usage`
 
+use bytes::Bytes;
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 
 #[tokio::main]
@@ -20,12 +21,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 3. Store data with different strategies
-    let user_data = serde_json::json!({
-        "id": 1,
-        "name": "Alice",
-        "email": "alice@example.com",
-        "role": "admin"
-    });
+    let user_data = Bytes::from("{\"id\": 1, \"name\": \"Alice\", \"email\": \"alice@example.com\", \"role\": \"admin\"}");
 
     println!("Storing user data with ShortTerm strategy (5 min TTL)...");
     cache
@@ -37,16 +33,12 @@ async fn main() -> anyhow::Result<()> {
     // 4. Retrieve data
     println!("Retrieving user data...");
     if let Some(cached_user) = cache.cache_manager().get("user:1").await? {
-        println!("✅ Retrieved from cache: {cached_user}");
+        println!("✅ Retrieved from cache: {:?}", cached_user);
     }
     println!();
 
     // 5. Store API response with RealTime strategy
-    let api_response = serde_json::json!({
-        "timestamp": "2025-01-01T00:00:00Z",
-        "temperature": 25.5,
-        "humidity": 60
-    });
+    let api_response = Bytes::from("{\"timestamp\": \"2025-01-01T00:00:00Z\", \"temperature\": 25.5, \"humidity\": 60}");
 
     println!("Storing API response with RealTime strategy (10 sec TTL)...");
     cache

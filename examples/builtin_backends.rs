@@ -23,6 +23,7 @@
 //! ```
 
 use anyhow::Result;
+use bytes::Bytes;
 use multi_tier_cache::{CacheBackend, CacheStrategy, CacheSystemBuilder};
 use std::sync::Arc;
 
@@ -95,18 +96,14 @@ async fn demo_dashmap_backend() -> Result<()> {
     let manager = cache.cache_manager();
 
     // Test operations
-    let test_data = serde_json::json!({
-        "user": "bob",
-        "role": "admin",
-        "permissions": ["read", "write", "delete"]
-    });
+    let test_data = Bytes::from("{\"user\": \"bob\", \"role\": \"admin\", \"permissions\": [\"read\", \"write\", \"delete\"]}");
 
     manager
         .set_with_strategy("user:bob", test_data.clone(), CacheStrategy::ShortTerm)
         .await?;
 
     if let Some(cached) = manager.get("user:bob").await? {
-        println!("✅ Retrieved from DashMapCache: {cached}");
+        println!("✅ Retrieved from DashMapCache: {:?}", cached);
     }
 
     // Show statistics
@@ -139,11 +136,7 @@ async fn demo_memcached_backend() -> Result<()> {
             println!("✅ Connected to Memcached");
 
             // Test direct operations with MemcachedCache
-            let test_data = serde_json::json!({
-                "product": "laptop",
-                "price": 999.99,
-                "stock": 42
-            });
+            let test_data = Bytes::from("{\"product\": \"laptop\", \"price\": 999.99, \"stock\": 42}");
 
             // Set with TTL
             memcached
@@ -156,7 +149,7 @@ async fn demo_memcached_backend() -> Result<()> {
 
             // Get the value
             if let Some(cached) = memcached.get("product:laptop").await {
-                println!("✅ Retrieved from MemcachedCache: {cached}");
+                println!("✅ Retrieved from MemcachedCache: {:?}", cached);
             }
 
             // Show server statistics
@@ -215,11 +208,7 @@ async fn demo_quickcache_backend() -> Result<()> {
     let manager = cache.cache_manager();
 
     // Test operations with high-performance cache
-    let test_data = serde_json::json!({
-        "session_id": "abc123",
-        "user_id": 42,
-        "expires_at": 1_234_567_890
-    });
+    let test_data = Bytes::from("{\"session_id\": \"abc123\", \"user_id\": 42, \"expires_at\": 1234567890}");
 
     manager
         .set_with_strategy(
@@ -230,7 +219,7 @@ async fn demo_quickcache_backend() -> Result<()> {
         .await?;
 
     if let Some(cached) = manager.get("session:abc123").await? {
-        println!("✅ Retrieved from QuickCache: {cached}");
+        println!("✅ Retrieved from QuickCache: {:?}", cached);
     }
 
     // Show statistics

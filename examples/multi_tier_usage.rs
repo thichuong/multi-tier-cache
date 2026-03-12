@@ -5,16 +5,17 @@
 //! Run with: cargo run --example `multi_tier_usage`
 
 use anyhow::Result;
-use multi_tier_cache::{async_trait, CacheBackend, CacheSystemBuilder, L2CacheBackend};
-use serde_json::Value;
+use bytes::Bytes;
+use multi_tier_cache::{CacheBackend, CacheSystemBuilder, L2CacheBackend};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use futures_util::future::BoxFuture;
 
 // ==================== Mock L3 Cache (Simulated Disk/Cold Storage) ====================
 
 /// A simulated "slow" cache backend to represent L3 (e.g., Disk, S3, `RocksDB`)
-type L3Store = Arc<RwLock<HashMap<String, (Value, Instant, Duration)>>>;
+type L3Store = Arc<RwLock<HashMap<String, (Bytes, Instant, Duration)>>>;
 
 struct MockL3Cache {
     name: String,
@@ -30,50 +31,58 @@ impl MockL3Cache {
     }
 }
 
-#[async_trait]
 impl CacheBackend for MockL3Cache {
-    async fn get(&self, key: &str) -> Option<Value> {
-        // Simulate latency for "disk" access
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        let store = Arc::clone(&self.store);
+        Box::pin(async move {
+            // Simulate latency for "disk" access
+            tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let store = self
-            .store
-            .read()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        store.get(key).and_then(|(value, expiry, _)| {
-            if *expiry > Instant::now() {
-                Some(value.clone())
-            } else {
-                None
-            }
+            let store = store
+                .read()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            store.get(key).and_then(|(value, expiry, _)| {
+                if *expiry > Instant::now() {
+                    Some(value.clone())
+                } else {
+                    None
+                }
+            })
         })
     }
 
-    async fn set_with_ttl(&self, key: &str, value: Value, ttl: Duration) -> Result<()> {
-        // Simulate latency
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    fn set_with_ttl<'a>(&'a self, key: &'a str, value: Bytes, ttl: Duration) -> BoxFuture<'a, Result<()>> {
+        let store = Arc::clone(&self.store);
+        let key = key.to_string();
+        let name = self.name.clone();
+        Box::pin(async move {
+            // Simulate latency
+            tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let mut store = self
-            .store
-            .write()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        let expiry = Instant::now() + ttl;
-        store.insert(key.to_string(), (value, expiry, ttl));
-        println!("💾 [{}] Cached '{}' with TTL {:?}", self.name, key, ttl);
-        Ok(())
+            let mut store = store
+                .write()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let expiry = Instant::now() + ttl;
+            store.insert(key.clone(), (value, expiry, ttl));
+            println!("💾 [{}] Cached '{}' with TTL {:?}", name, key, ttl);
+            Ok(())
+        })
     }
 
-    async fn remove(&self, key: &str) -> Result<()> {
-        let mut store = self
-            .store
-            .write()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        store.remove(key);
-        Ok(())
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+        let store = Arc::clone(&self.store);
+        let key = key.to_string();
+        Box::pin(async move {
+            let mut store = store
+                .write()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            store.remove(&key);
+            Ok(())
+        })
     }
 
-    async fn health_check(&self) -> bool {
-        true
+    fn health_check(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async move { true })
     }
 
     fn name(&self) -> &'static str {
@@ -81,24 +90,25 @@ impl CacheBackend for MockL3Cache {
     }
 }
 
-#[async_trait]
 impl L2CacheBackend for MockL3Cache {
-    async fn get_with_ttl(&self, key: &str) -> Option<(Value, Option<Duration>)> {
-        // Simulate latency
-        tokio::time::sleep(Duration::from_millis(50)).await;
+    fn get_with_ttl<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+        let store = Arc::clone(&self.store);
+        Box::pin(async move {
+            // Simulate latency
+            tokio::time::sleep(Duration::from_millis(50)).await;
 
-        let store = self
-            .store
-            .read()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        store.get(key).and_then(|(value, expiry, _)| {
-            let now = Instant::now();
-            if *expiry > now {
-                let remaining = expiry.duration_since(now);
-                Some((value.clone(), Some(remaining)))
-            } else {
-                None
-            }
+            let store = store
+                .read()
+                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            store.get(key).and_then(|(value, expiry, _)| {
+                let now = Instant::now();
+                if *expiry > now {
+                    let remaining = expiry.duration_since(now);
+                    Some((value.clone(), Some(remaining)))
+                } else {
+                    None
+                }
+            })
         })
     }
 }
@@ -135,11 +145,7 @@ async fn main() -> Result<()> {
 
     // 2. Store data
     println!("\n--- Storing Data ---");
-    let data = serde_json::json!({
-        "id": "user_123",
-        "name": "Alice",
-        "role": "premium"
-    });
+    let data = Bytes::from("{\"id\": \"user_123\", \"name\": \"Alice\", \"role\": \"premium\"}");
 
     // When we set data, it goes to ALL tiers
     // L3 will have 2x TTL by default (TierConfig::as_l3())
@@ -167,7 +173,7 @@ async fn main() -> Result<()> {
     // without keeping a reference to `l3_backend` before building.
 
     // Let's use a new key and pretend it was only in L3
-    let cold_data = serde_json::json!({"status": "archived"});
+    let cold_data = Bytes::from("{\"status\": \"archived\"}");
 
     // We can use the fact that we have `l3_backend` reference!
     // It's wrapped in Arc, so we can still use it.
@@ -187,7 +193,7 @@ async fn main() -> Result<()> {
 
     let start = Instant::now();
     if let Some(val) = cache.cache_manager().get("archive:doc1").await? {
-        println!("✅ Found value: {val}");
+        println!("✅ Found value: {:?}", val);
         println!("   Latency: {:?}", start.elapsed());
     } else {
         println!("❌ Value not found!");
@@ -197,7 +203,7 @@ async fn main() -> Result<()> {
     println!("Requesting 'archive:doc1' again (should hit L1)...");
     let start = Instant::now();
     if let Some(val) = cache.cache_manager().get("archive:doc1").await? {
-        println!("✅ Found value: {val}");
+        println!("✅ Found value: {:?}", val);
         println!("   Latency: {:?}", start.elapsed());
     }
 

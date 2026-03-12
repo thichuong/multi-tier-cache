@@ -97,8 +97,7 @@ pub use invalidation::{
 pub use redis_streams::RedisStreams;
 pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 
-// Re-export async_trait for user convenience
-pub use async_trait::async_trait;
+// Re-export backend types (maintains backward compatibility)
 
 /// Main entry point for the Multi-Tier Cache system
 ///

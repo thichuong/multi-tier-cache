@@ -4,17 +4,19 @@
 //!
 //! Run with: cargo run --example `advanced_usage`
 
+use bytes::Bytes;
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::time::Duration;
 
-async fn fetch_from_database(id: u32) -> anyhow::Result<serde_json::Value> {
+async fn fetch_from_database(id: u32) -> anyhow::Result<Bytes> {
     println!("   📦 Fetching from database (expensive operation)...");
     tokio::time::sleep(Duration::from_millis(200)).await;
-    Ok(serde_json::json!({
+    let json = serde_json::json!({
         "product_id": id,
         "name": format!("Product {id}"),
         "price": 100 + id
-    }))
+    });
+    Ok(Bytes::from(json.to_string()))
 }
 
 #[tokio::main]
@@ -30,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
     println!("=== Scenario 1: L2-to-L1 Cache Promotion ===\n");
 
     // Store data in L2 cache only (by first clearing L1)
-    let data = serde_json::json!({"message": "This data starts in L2"});
+    let data = Bytes::from("{\"message\": \"This data starts in L2\"}");
     cache
         .cache_manager()
         .set_with_strategy("promotion_test", data, CacheStrategy::MediumTerm)
@@ -68,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
             fetch_from_database(42)
         })
         .await?;
-    println!("   Result: {product1}\n");
+    println!("   Result: {:?}\n", product1);
 
     // Second call - cache hit, no computation
     println!("Second call - cache hit:");
@@ -78,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
             fetch_from_database(42)
         })
         .await?;
-    println!("   Result: {product2} (from cache, no DB call)\n");
+    println!("   Result: {:?} (from cache, no DB call)\n", product2);
 
     // Scenario 3: Concurrent cache operations
     println!("=== Scenario 3: Concurrent Operations ===\n");
@@ -87,10 +89,7 @@ async fn main() -> anyhow::Result<()> {
     for i in 1..=5 {
         let cache_clone = cache.clone();
         let handle = tokio::spawn(async move {
-            let data = serde_json::json!({
-                "worker_id": i,
-                "data": format!("Concurrent data from worker {}", i)
-            });
+            let data = Bytes::from(format!("{{\"worker_id\": {i}, \"data\": \"Concurrent data from worker {i}\"}}"));
             cache_clone
                 .cache_manager()
                 .set_with_strategy(&format!("concurrent:{i}"), data, CacheStrategy::ShortTerm)
@@ -111,7 +110,7 @@ async fn main() -> anyhow::Result<()> {
             .get(&format!("concurrent:{i}"))
             .await?
         {
-            println!("   concurrent:{i} = {value}");
+            println!("   concurrent:{i} = {:?}", value);
         }
     }
 

@@ -10,6 +10,18 @@
 use anyhow::Result;
 use multi_tier_cache::{CacheManager, CacheSystem, InvalidationConfig, L1Cache, L2Cache};
 use std::sync::Arc;
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
+/// Initialize tracing for tests
+pub fn init_test_tracing() {
+    INIT.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
+    });
+}
 
 /// Get Redis URL from environment or use default
 pub fn redis_url() -> String {
@@ -117,6 +129,11 @@ pub mod test_data {
         })
     }
 
+    /// Generate Bytes test data (JSON)
+    pub fn bytes_user(id: u64) -> bytes::Bytes {
+        bytes::Bytes::from(json_user(id).to_string())
+    }
+
     /// Generate JSON test data with specified size
     pub fn json_data_sized(size_kb: usize) -> serde_json::Value {
         let data_string = "x".repeat(size_kb * 1024);
@@ -124,6 +141,11 @@ pub mod test_data {
             "data": data_string,
             "size_kb": size_kb
         })
+    }
+
+    /// Generate Bytes test data with specified size
+    pub fn bytes_data_sized(size_kb: usize) -> bytes::Bytes {
+        bytes::Bytes::from(json_data_sized(size_kb).to_string())
     }
 }
 

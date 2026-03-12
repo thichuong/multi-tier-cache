@@ -395,20 +395,16 @@ impl CacheSystemBuilder {
             // Custom backend path
             info!("Building with custom backends");
 
+            // NEW: Multi-tier implementation (v0.5.0+)
             let l1_backend: Arc<dyn CacheBackend> = if let Some(backend) = self.l1_backend {
-                info!(backend = %backend.name(), "Using custom L1 backend");
                 backend
             } else {
-                info!("Using default L1 backend (Moka)");
-                let config = self.moka_config.unwrap_or_default();
-                Arc::new(L1Cache::new(config)?)
+                Arc::new(L1Cache::new(self.moka_config.clone().unwrap_or_default())?)
             };
 
             let l2_backend: Arc<dyn L2CacheBackend> = if let Some(backend) = self.l2_backend {
-                info!(backend = %backend.name(), "Using custom L2 backend");
                 backend
             } else {
-                info!("Using default L2 backend (Redis)");
                 Arc::new(L2Cache::new().await?)
             };
 

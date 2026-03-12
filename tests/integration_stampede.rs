@@ -33,7 +33,7 @@ async fn test_concurrent_cache_miss() {
                 .cache_manager()
                 .get_or_compute_with(&key_clone, CacheStrategy::ShortTerm, || {
                     counter_clone.fetch_add(1, Ordering::SeqCst);
-                    async move { Ok(test_data::json_user(1)) }
+                    async move { Ok(test_data::bytes_user(1)) }
                 })
                 .await
         });
@@ -71,7 +71,7 @@ async fn test_concurrent_cache_hits() {
             .unwrap_or_else(|_| panic!("Failed to setup cache system")),
     );
     let key = test_key("concurrent_hits");
-    let value = test_data::json_user(2);
+    let value = test_data::bytes_user(2);
 
     // Pre-populate cache
     cache
@@ -127,7 +127,7 @@ async fn test_stampede_latency_reduction() {
         .cache_manager()
         .get_or_compute_with(&key, CacheStrategy::ShortTerm, || async {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            Ok(test_data::json_user(3))
+            Ok(test_data::bytes_user(3))
         })
         .await
         .unwrap_or_else(|_| panic!("Failed to get/compute"));

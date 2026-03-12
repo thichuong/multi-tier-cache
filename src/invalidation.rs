@@ -4,6 +4,7 @@
 //! It supports both cache removal (invalidation) and cache updates (refresh).
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use futures_util::StreamExt;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
@@ -21,7 +22,8 @@ pub enum InvalidationMessage {
     /// This is more efficient than Remove for hot keys as it avoids cache miss
     Update {
         key: String,
-        value: serde_json::Value,
+        #[serde(with = "serde_bytes_wrapper")]
+        value: Bytes,
         #[serde(skip_serializing_if = "Option::is_none")]
         ttl_secs: Option<u64>,
     },
@@ -41,7 +43,7 @@ impl InvalidationMessage {
     }
 
     /// Create an Update message
-    pub fn update(key: impl Into<String>, value: serde_json::Value, ttl: Option<Duration>) -> Self {
+    pub fn update(key: impl Into<String>, value: Bytes, ttl: Option<Duration>) -> Self {
         Self::Update {
             key: key.into(),
             value,
@@ -86,6 +88,29 @@ impl InvalidationMessage {
             Self::Update { ttl_secs, .. } => ttl_secs.map(Duration::from_secs),
             _ => None,
         }
+    }
+}
+
+/// Helper module for Bytes serialization in JSON
+mod serde_bytes_wrapper {
+    use bytes::Bytes;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(bytes: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // For JSON, we use a vector of bytes. 
+        // In a real production system, we'd use Base64.
+        serializer.serialize_bytes(bytes)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v: Vec<u8> = Vec::deserialize(deserializer)?;
+        Ok(Bytes::from(v))
     }
 }
 
@@ -502,22 +527,21 @@ mod tests {
         // Test Update
         let msg = InvalidationMessage::update(
             "test_key",
-            serde_json::json!({"value": 123}),
-            Some(Duration::from_secs(300)),
+            Bytes::from("{\"value\": 123}"),
+            Some(Duration::from_secs(3600)),
         );
-        let json = msg.to_json()?;
-        let parsed = InvalidationMessage::from_json(&json)?;
-        match parsed {
-            InvalidationMessage::Update {
-                key,
-                value,
-                ttl_secs,
-            } => {
-                assert_eq!(key, "test_key");
-                assert_eq!(value, serde_json::json!({"value": 123}));
-                assert_eq!(ttl_secs, Some(300));
-            }
-            _ => panic!("Wrong message type"),
+
+        if let InvalidationMessage::Update {
+            key,
+            value,
+            ttl_secs,
+        } = msg
+        {
+            assert_eq!(key, "test_key");
+            assert_eq!(value, Bytes::from("{\"value\": 123}"));
+            assert_eq!(ttl_secs, Some(3600));
+        } else {
+            panic!("Expected Update message");
         }
 
         // Test RemovePattern

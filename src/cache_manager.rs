@@ -2,26 +2,29 @@
 //!
 //! Manages operations across L1 (Moka) and L2 (Redis) caches with intelligent fallback.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use dashmap::DashMap;
 use serde_json;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
+use tokio::sync::{broadcast, Mutex};
 
 use tracing::{debug, error, info, warn};
 
-use super::invalidation::{
+use crate::invalidation::{
     AtomicInvalidationStats, InvalidationConfig, InvalidationMessage, InvalidationPublisher,
     InvalidationStats, InvalidationSubscriber,
 };
-use crate::backends::{L1Cache, L2Cache};
 use crate::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
+use crate::{L1Cache, L2Cache};
+use bytes::Bytes;
+use futures_util::future::BoxFuture;
 
-/// Type alias for the in-flight requests map
-type InFlightMap = DashMap<String, Arc<Mutex<()>>>;
+///// Type alias for the in-flight requests map
+/// Stores a broadcast sender for each active key computation
+type InFlightMap = DashMap<String, broadcast::Sender<Result<Bytes, Arc<anyhow::Error>>>>;
 
 /// RAII cleanup guard for in-flight request tracking
 /// Ensures that entries are removed from `DashMap` even on early return or panic
@@ -105,17 +108,18 @@ impl TierStats {
 }
 
 /// A single cache tier in the multi-tier architecture
+#[derive(Clone)]
 pub struct CacheTier {
-    /// Cache backend for this tier
-    backend: Arc<dyn L2CacheBackend>,
-    /// Tier level (1 = hottest/fastest, higher = colder/slower)
-    tier_level: usize,
-    /// Enable automatic promotion to upper tiers on cache hit
-    promotion_enabled: bool,
-    /// TTL scale factor (multiplier for TTL when storing/promoting)
-    ttl_scale: f64,
+    /// The backend for this tier
+    pub backend: Arc<dyn L2CacheBackend>,
+    /// Tier level (1 for fastest, increases for slower/cheaper tiers)
+    pub tier_level: usize,
+    /// Whether to promote keys FROM lower tiers TO this tier
+    pub promotion_enabled: bool,
+    /// TTL multiplier for this tier (e.g., L2 might store for 2x L1 TTL)
+    pub ttl_scale: f64,
     /// Statistics for this tier
-    stats: TierStats,
+    pub stats: TierStats,
 }
 
 impl CacheTier {
@@ -137,12 +141,12 @@ impl CacheTier {
     }
 
     /// Get value with TTL from this tier
-    async fn get_with_ttl(&self, key: &str) -> Option<(serde_json::Value, Option<Duration>)> {
+    async fn get_with_ttl(&self, key: &str) -> Option<(Bytes, Option<Duration>)> {
         self.backend.get_with_ttl(key).await
     }
 
     /// Set value with TTL in this tier
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
+    async fn set_with_ttl(&self, key: &str, value: Bytes, ttl: Duration) -> Result<()> {
         let scaled_ttl = Duration::from_secs_f64(ttl.as_secs_f64() * self.ttl_scale);
         self.backend.set_with_ttl(key, value, scaled_ttl).await
     }
@@ -248,22 +252,30 @@ struct ProxyCacheBackend {
     backend: Arc<dyn L2CacheBackend>,
 }
 
-#[async_trait::async_trait]
 impl CacheBackend for ProxyCacheBackend {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        self.backend.get(key).await
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        self.backend.get(key)
     }
 
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        self.backend.set_with_ttl(key, value, ttl).await
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+        ttl: Duration,
+    ) -> BoxFuture<'a, Result<()>> {
+        self.backend.set_with_ttl(key, value, ttl)
     }
 
-    async fn remove(&self, key: &str) -> Result<()> {
-        self.backend.remove(key).await
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+        self.backend.remove(key)
     }
 
-    async fn health_check(&self) -> bool {
-        self.backend.health_check().await
+    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, Result<()>> {
+        self.backend.remove_pattern(pattern)
+    }
+
+    fn health_check(&self) -> BoxFuture<'_, bool> {
+        self.backend.health_check()
     }
 
     fn name(&self) -> &'static str {
@@ -271,38 +283,23 @@ impl CacheBackend for ProxyCacheBackend {
     }
 }
 
-/// Cache Manager - Unified operations across multiple cache tiers
-///
-/// Supports both legacy 2-tier (L1+L2) and new multi-tier (L1+L2+L3+L4+...) architectures.
-/// When `tiers` is Some, it uses the dynamic multi-tier system. Otherwise, falls back to
-/// legacy L1+L2 behavior for backward compatibility.
 pub struct CacheManager {
-    /// Dynamic multi-tier cache architecture (v0.5.0+)
-    /// If Some, this takes precedence over `l1_cache/l2_cache` fields
-    tiers: Option<Vec<CacheTier>>,
+    /// Ordered list of cache tiers (L1, L2, L3, ...)
+    tiers: Vec<CacheTier>,
 
-    // ===== Legacy fields (v0.1.0 - v0.4.x) =====
-    // Maintained for backward compatibility
-    /// L1 Cache (trait object for pluggable backends)
-    l1_cache: Arc<dyn CacheBackend>,
-    /// L2 Cache (trait object for pluggable backends)
-    l2_cache: Arc<dyn L2CacheBackend>,
-    /// L2 Cache concrete instance (for invalidation `scan_keys`)
-    l2_cache_concrete: Option<Arc<L2Cache>>,
-
-    /// Optional streaming backend (defaults to L2 if it implements `StreamingBackend`)
+    /// Optional streaming backend
     streaming_backend: Option<Arc<dyn StreamingBackend>>,
-    /// Statistics (`AtomicU64` is already thread-safe, no Arc needed)
+    /// Statistics
     total_requests: AtomicU64,
     l1_hits: AtomicU64,
     l2_hits: AtomicU64,
     misses: AtomicU64,
     promotions: AtomicUsize,
-    /// In-flight requests to prevent Cache Stampede on L2/compute operations
+    /// In-flight requests map (Broadcaster integration will replace this in Step 4)
     in_flight_requests: Arc<InFlightMap>,
-    /// Invalidation publisher (for broadcasting invalidation messages)
+    /// Invalidation publisher
     invalidation_publisher: Option<Arc<Mutex<InvalidationPublisher>>>,
-    /// Invalidation subscriber (for receiving invalidation messages)
+    /// Invalidation subscriber
     invalidation_subscriber: Option<Arc<InvalidationSubscriber>>,
     /// Invalidation statistics
     invalidation_stats: Arc<AtomicInvalidationStats>,
@@ -338,20 +335,15 @@ impl CacheManager {
         l2_cache: Arc<dyn L2CacheBackend>,
         streaming_backend: Option<Arc<dyn StreamingBackend>>,
     ) -> Result<Self> {
-        debug!("Initializing Cache Manager with custom backends...");
-        debug!("  L1: {}", l1_cache.name());
-        debug!("  L2: {}", l2_cache.name());
-        if streaming_backend.is_some() {
-            debug!("  Streaming: enabled");
-        } else {
-            debug!("  Streaming: disabled");
-        }
+        debug!("Initializing Cache Manager with L1+L2 backends...");
+
+        let tiers = vec![
+            CacheTier::new(Arc::new(ProxyL1ToL2(l1_cache)), 1, false, 1.0),
+            CacheTier::new(l2_cache, 2, true, 1.0),
+        ];
 
         Ok(Self {
-            tiers: None, // Legacy mode: use l1_cache/l2_cache fields
-            l1_cache,
-            l2_cache,
-            l2_cache_concrete: None,
+            tiers,
             streaming_backend,
             total_requests: AtomicU64::new(0),
             l1_hits: AtomicU64::new(0),
@@ -363,6 +355,11 @@ impl CacheManager {
             invalidation_subscriber: None,
             invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
         })
+    }
+
+    /// Proxy wrapper to allow using `CacheBackend` where `L2CacheBackend` is expected
+    fn proxy_l1(l1: Arc<dyn CacheBackend>) -> Arc<dyn L2CacheBackend> {
+        Arc::new(ProxyL1ToL2(l1))
     }
 
     /// Create new cache manager with default backends (backward compatible)
@@ -447,11 +444,13 @@ impl CacheManager {
         let subscriber = InvalidationSubscriber::new(redis_url, config.clone())?;
         let invalidation_stats = Arc::new(AtomicInvalidationStats::default());
 
+        let tiers = vec![
+            CacheTier::new(Arc::new(ProxyL1ToL2(l1_backend)), 1, false, 1.0),
+            CacheTier::new(l2_backend, 2, true, 1.0),
+        ];
+
         let manager = Self {
-            tiers: None, // Legacy mode: use l1_cache/l2_cache fields
-            l1_cache: l1_backend,
-            l2_cache: l2_backend,
-            l2_cache_concrete: Some(l2_cache),
+            tiers,
             streaming_backend: Some(streaming_backend),
             total_requests: AtomicU64::new(0),
             l1_hits: AtomicU64::new(0),
@@ -530,37 +529,8 @@ impl CacheManager {
             }
         }
 
-        // For backward compatibility with legacy code, we need dummy l1/l2 caches
-        // Use first tier as l1, second tier as l2 if available
-        let (l1_cache, l2_cache) = if tiers.len() >= 2 {
-            if let (Some(t0), Some(t1)) = (tiers.first(), tiers.get(1)) {
-                (t0.backend.clone(), t1.backend.clone())
-            } else {
-                // Should be unreachable due to len check
-                anyhow::bail!("Failed to access tiers 0 and 1");
-            }
-        } else if tiers.len() == 1 {
-            // Only one tier - use it for both
-            if let Some(t0) = tiers.first() {
-                let tier = t0.backend.clone();
-                (tier.clone(), tier)
-            } else {
-                anyhow::bail!("Failed to access tier 0");
-            }
-        } else {
-            anyhow::bail!("At least one cache tier is required");
-        };
-
-        // Convert to CacheBackend trait for l1 (L2CacheBackend extends CacheBackend)
-        let l1_backend: Arc<dyn CacheBackend> = Arc::new(ProxyCacheBackend {
-            backend: l1_cache.clone(),
-        });
-
         Ok(Self {
-            tiers: Some(tiers),
-            l1_cache: l1_backend,
-            l2_cache,
-            l2_cache_concrete: None,
+            tiers,
             streaming_backend,
             total_requests: AtomicU64::new(0),
             l1_hits: AtomicU64::new(0),
@@ -577,53 +547,48 @@ impl CacheManager {
     /// Start the invalidation subscriber background task
     fn start_invalidation_subscriber(&self) {
         if let Some(subscriber) = &self.invalidation_subscriber {
-            let l1_cache = Arc::clone(&self.l1_cache);
-            let l2_cache_concrete = self.l2_cache_concrete.clone();
+            let tiers = self.tiers.clone();
 
             subscriber.start(move |msg| {
-                let l1 = Arc::clone(&l1_cache);
-                let _l2 = l2_cache_concrete.clone();
-
+                let tiers = tiers.clone();
                 async move {
-                    match msg {
-                        InvalidationMessage::Remove { key } => {
-                            // Remove from L1
-                            l1.remove(&key).await?;
-                            debug!("Invalidation: Removed '{}' from L1", key);
-                        }
-                        InvalidationMessage::Update {
-                            key,
-                            value,
-                            ttl_secs,
-                        } => {
-                            // Update L1 with new value
-                            let ttl = ttl_secs
-                                .map_or_else(|| Duration::from_secs(300), Duration::from_secs);
-                            l1.set_with_ttl(&key, value, ttl).await?;
-                            debug!("Invalidation: Updated '{}' in L1", key);
-                        }
-                        InvalidationMessage::RemovePattern { pattern } => {
-                            // Remove matching keys from L1
-                            if let Err(e) = l1.remove_pattern(&pattern).await {
-                                warn!("Failed to remove pattern '{}' from L1: {}", pattern, e);
-                            }
-                            debug!("Invalidation: Pattern '{}' removed from L1", pattern);
-                        }
-                        InvalidationMessage::RemoveBulk { keys } => {
-                            // Remove multiple keys from L1
-                            for key in keys {
-                                if let Err(e) = l1.remove(&key).await {
-                                    warn!("Failed to remove '{}' from L1: {}", key, e);
+                    for tier in &tiers {
+                        match &msg {
+                            InvalidationMessage::Remove { key } => {
+                                if let Err(e) = tier.backend.remove(key).await {
+                                    warn!("Failed to remove '{}' from L{}: {}", key, tier.tier_level, e);
                                 }
                             }
-                            debug!("Invalidation: Bulk removed keys from L1");
+                            InvalidationMessage::Update {
+                                key,
+                                value,
+                                ttl_secs,
+                            } => {
+                                let ttl = ttl_secs
+                                    .map_or_else(|| Duration::from_secs(300), Duration::from_secs);
+                                if let Err(e) = tier.backend.set_with_ttl(key, value.clone(), ttl).await {
+                                    warn!("Failed to update '{}' in L{}: {}", key, tier.tier_level, e);
+                                }
+                            }
+                            InvalidationMessage::RemovePattern { pattern } => {
+                                if let Err(e) = tier.backend.remove_pattern(pattern).await {
+                                    warn!("Failed to remove pattern '{}' from L{}: {}", pattern, tier.tier_level, e);
+                                }
+                            }
+                            InvalidationMessage::RemoveBulk { keys } => {
+                                for key in keys {
+                                    if let Err(e) = tier.backend.remove(key).await {
+                                        warn!("Failed to remove '{}' from L{}: {}", key, tier.tier_level, e);
+                                    }
+                                }
+                            }
                         }
                     }
                     Ok(())
                 }
             });
 
-            info!("Invalidation subscriber started");
+            info!("Invalidation subscriber started across all tiers");
         }
     }
 
@@ -631,13 +596,9 @@ impl CacheManager {
     ///
     /// This method iterates through all configured tiers and automatically promotes
     /// to upper tiers on cache hit.
-    async fn get_multi_tier(&self, key: &str) -> Result<Option<serde_json::Value>> {
-        let Some(tiers) = self.tiers.as_ref() else {
-            panic!("Tiers must be initialized in multi-tier mode")
-        }; // Safe: only called when tiers is Some
-
+    async fn get_multi_tier(&self, key: &str) -> Result<Option<Bytes>> {
         // Try each tier sequentially (sorted by tier_level)
-        for (tier_index, tier) in tiers.iter().enumerate() {
+        for (tier_index, tier) in self.tiers.iter().enumerate() {
             if let Some((value, ttl)) = tier.get_with_ttl(key).await {
                 // Cache hit!
                 tier.record_hit();
@@ -647,7 +608,7 @@ impl CacheManager {
                     let promotion_ttl = ttl.unwrap_or_else(|| CacheStrategy::Default.to_duration());
 
                     // Promote to all tiers above this one
-                    for upper_tier in tiers.iter().take(tier_index).rev() {
+                    for upper_tier in self.tiers.iter().take(tier_index).rev() {
                         if let Err(e) = upper_tier
                             .set_with_ttl(key, value.clone(), promotion_ttl)
                             .await
@@ -696,141 +657,72 @@ impl CacheManager {
     /// # Panics
     ///
     /// Panics if tiers are not initialized in multi-tier mode (should not happen if constructed correctly).
-    pub async fn get(&self, key: &str) -> Result<Option<serde_json::Value>> {
+    pub async fn get(&self, key: &str) -> Result<Option<Bytes>> {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
 
-        // NEW: Multi-tier mode (v0.5.0+)
-        if self.tiers.is_some() {
-            // Fast path for L1 (first tier) - no locking needed
-            if let Some(tier1) = self
-                .tiers
-                .as_ref()
-                .unwrap_or_else(|| panic!("Tiers initialized"))
-                .first()
-            {
-                if let Some((value, _ttl)) = tier1.get_with_ttl(key).await {
-                    tier1.record_hit();
-                    // Update legacy stats for backward compatibility
-                    self.l1_hits.fetch_add(1, Ordering::Relaxed);
-                    return Ok(Some(value));
-                }
+        // Fast path for L1 (first tier) - no locking needed
+        if let Some(tier1) = self.tiers.first() {
+            if let Some((value, _ttl)) = tier1.get_with_ttl(key).await {
+                tier1.record_hit();
+                // Update legacy stats for backward compatibility
+                self.l1_hits.fetch_add(1, Ordering::Relaxed);
+                return Ok(Some(value));
             }
-
-            // L1 miss - use stampede protection for lower tiers
-            let key_owned = key.to_string();
-            let lock_guard = self
-                .in_flight_requests
-                .entry(key_owned.clone())
-                .or_insert_with(|| Arc::new(Mutex::new(())))
-                .clone();
-
-            let _guard = lock_guard.lock().await;
-            let cleanup_guard = CleanupGuard {
-                map: &self.in_flight_requests,
-                key: key_owned.clone(),
-            };
-
-            // Double-check L1 after acquiring lock
-            if let Some(tier1) = self
-                .tiers
-                .as_ref()
-                .unwrap_or_else(|| panic!("Tiers initialized"))
-                .first()
-            {
-                if let Some((value, _ttl)) = tier1.get_with_ttl(key).await {
-                    tier1.record_hit();
-                    self.l1_hits.fetch_add(1, Ordering::Relaxed);
-                    return Ok(Some(value));
-                }
-            }
-
-            // Check remaining tiers with promotion
-            let result = self.get_multi_tier(key).await?;
-
-            if result.is_some() {
-                // Hit in L2+ tier - update legacy stats
-                if self
-                    .tiers
-                    .as_ref()
-                    .unwrap_or_else(|| panic!("Tiers initialized"))
-                    .len()
-                    >= 2
-                {
-                    self.l2_hits.fetch_add(1, Ordering::Relaxed);
-                }
-            } else {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-            }
-
-            drop(cleanup_guard);
-            return Ok(result);
         }
 
-        // LEGACY: 2-tier mode (L1 + L2)
-        // Fast path: Try L1 first (no locking needed)
-        if let Some(value) = self.l1_cache.get(key).await {
-            self.l1_hits.fetch_add(1, Ordering::Relaxed);
-            return Ok(Some(value));
-        }
-
-        // L1 miss - implement Cache Stampede protection for L2 lookup
+        // L1 miss - use stampede protection for lower tiers
         let key_owned = key.to_string();
         let lock_guard = self
             .in_flight_requests
             .entry(key_owned.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .or_insert_with(|| broadcast::Sender::new(1))
             .clone();
 
-        let _guard = lock_guard.lock().await;
+        let mut rx = lock_guard.subscribe();
 
-        // RAII cleanup guard - ensures entry is removed even on early return or panic
-        let cleanup_guard = CleanupGuard {
-            map: &self.in_flight_requests,
-            key: key_owned.clone(),
-        };
-
-        // Double-check L1 cache after acquiring lock
-        // (Another concurrent request might have populated it while we were waiting)
-        if let Some(value) = self.l1_cache.get(key).await {
-            self.l1_hits.fetch_add(1, Ordering::Relaxed);
-            // cleanup_guard will auto-remove entry on drop
-            return Ok(Some(value));
-        }
-
-        // Check L2 cache with TTL information
-        if let Some((value, ttl)) = self.l2_cache.get_with_ttl(key).await {
-            self.l2_hits.fetch_add(1, Ordering::Relaxed);
-
-            // Promote to L1 with same TTL as Redis (or default if no TTL)
-            let promotion_ttl = ttl.unwrap_or_else(|| CacheStrategy::Default.to_duration());
-
-            if self
-                .l1_cache
-                .set_with_ttl(key, value.clone(), promotion_ttl)
-                .await
-                .is_err()
-            {
-                // L1 promotion failed, but we still have the data
-                warn!("Failed to promote key '{}' to L1 cache", key);
-            } else {
-                self.promotions.fetch_add(1, Ordering::Relaxed);
-                debug!(
-                    "Promoted '{}' from L2 to L1 with TTL {:?} (via get)",
-                    key, promotion_ttl
-                );
+        // If there are other receivers, someone else is computing, wait for it
+        if lock_guard.receiver_count() > 1 {
+            match rx.recv().await {
+                Ok(Ok(value)) => return Ok(Some(value)),
+                Ok(Err(e)) => return Err(anyhow::anyhow!("Computation failed in another thread: {}", e)),
+                Err(_) => {} // Fall through to re-compute if sender dropped or channel empty
             }
-
-            // cleanup_guard will auto-remove entry on drop
-            return Ok(Some(value));
         }
 
-        // Both L1 and L2 miss
-        self.misses.fetch_add(1, Ordering::Relaxed);
+        // Double-check L1 after acquiring lock (or if we are the first to compute)
+        if let Some(tier1) = self.tiers.first() {
+            if let Some((value, _ttl)) = tier1.get_with_ttl(key).await {
+                tier1.record_hit();
+                self.l1_hits.fetch_add(1, Ordering::Relaxed);
+                let _ = lock_guard.send(Ok(value.clone())); // Notify any waiting subscribers
+                return Ok(Some(value));
+            }
+        }
 
-        // cleanup_guard will auto-remove entry on drop
-        drop(cleanup_guard);
+        // Check remaining tiers with promotion
+        let result = self.get_multi_tier(key).await?;
 
-        Ok(None)
+        if result.is_some() {
+            // Hit in L2+ tier - update legacy stats
+            if self.tiers.len() >= 2 {
+                self.l2_hits.fetch_add(1, Ordering::Relaxed);
+            }
+        } else {
+            self.misses.fetch_add(1, Ordering::Relaxed);
+        }
+
+        // Notify any waiting subscribers
+        if let Some(value) = result.clone() {
+            let _ = lock_guard.send(Ok(value));
+        } else {
+            // If it was a miss, we might want to send an error or just let subscribers time out
+            // For now, we'll just let the sender drop, which will cause `recv()` to return `Err(RecvError::Closed)`
+        }
+
+        // Remove the in-flight entry after computation/retrieval
+        self.in_flight_requests.remove(key);
+
+        Ok(result)
     }
 
     /// Set value with specific cache strategy (all tiers)
@@ -843,78 +735,41 @@ impl CacheManager {
     pub async fn set_with_strategy(
         &self,
         key: &str,
-        value: serde_json::Value,
+        value: Bytes,
         strategy: CacheStrategy,
     ) -> Result<()> {
         let ttl = strategy.to_duration();
 
-        // NEW: Multi-tier mode (v0.5.0+)
-        if let Some(tiers) = &self.tiers {
-            // Store in ALL tiers with their respective TTL scaling
-            let mut success_count = 0;
-            let mut last_error = None;
+        let mut success_count = 0;
+        let mut last_error = None;
 
-            for tier in tiers {
-                match tier.set_with_ttl(key, value.clone(), ttl).await {
-                    Ok(()) => {
-                        success_count += 1;
-                    }
-                    Err(e) => {
-                        error!(
-                            "L{} cache set failed for key '{}': {}",
-                            tier.tier_level, key, e
-                        );
-                        last_error = Some(e);
-                    }
+        for tier in &self.tiers {
+            match tier.set_with_ttl(key, value.clone(), ttl).await {
+                Ok(()) => {
+                    success_count += 1;
+                }
+                Err(e) => {
+                    error!(
+                        "L{} cache set failed for key '{}': {}",
+                        tier.tier_level, key, e
+                    );
+                    last_error = Some(e);
                 }
             }
+        }
 
-            if success_count > 0 {
-                debug!(
-                    "[Multi-Tier] Cached '{}' in {}/{} tiers (base TTL: {:?})",
-                    key,
-                    success_count,
-                    tiers.len(),
-                    ttl
-                );
-                return Ok(());
-            }
-            return Err(
-                last_error.unwrap_or_else(|| anyhow::anyhow!("All tiers failed for key '{key}'"))
+        if success_count > 0 {
+            debug!(
+                "[Cache] Stored '{}' in {}/{} tiers (base TTL: {:?})",
+                key,
+                success_count,
+                self.tiers.len(),
+                ttl
             );
+            return Ok(());
         }
 
-        // LEGACY: 2-tier mode (L1 + L2)
-        // Store in both L1 and L2
-        let l1_result = self.l1_cache.set_with_ttl(key, value.clone(), ttl).await;
-        let l2_result = self.l2_cache.set_with_ttl(key, value, ttl).await;
-
-        // Return success if at least one cache succeeded
-        match (l1_result, l2_result) {
-            (Ok(()), Ok(())) => {
-                // Both succeeded
-                debug!("[L1+L2] Cached '{}' with TTL {:?}", key, ttl);
-                Ok(())
-            }
-            (Ok(()), Err(_)) => {
-                // L1 succeeded, L2 failed
-                warn!("L2 cache set failed for key '{}', continuing with L1", key);
-                debug!("[L1] Cached '{}' with TTL {:?}", key, ttl);
-                Ok(())
-            }
-            (Err(_), Ok(())) => {
-                // L1 failed, L2 succeeded
-                warn!("L1 cache set failed for key '{}', continuing with L2", key);
-                debug!("[L2] Cached '{}' with TTL {:?}", key, ttl);
-                Ok(())
-            }
-            (Err(e1), Err(_e2)) => {
-                // Both failed
-                Err(anyhow::anyhow!(
-                    "Both L1 and L2 cache set failed for key '{key}': {e1}"
-                ))
-            }
-        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All tiers failed for key '{key}'")))
     }
 
     /// Get or compute value with Cache Stampede protection across L1+L2+Compute
@@ -948,120 +803,87 @@ impl CacheManager {
         key: &str,
         strategy: CacheStrategy,
         compute_fn: F,
-    ) -> Result<serde_json::Value>
+    ) -> Result<Bytes>
     where
         F: FnOnce() -> Fut + Send,
-        Fut: Future<Output = Result<serde_json::Value>> + Send,
+        Fut: Future<Output = Result<Bytes>> + Send,
     {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
 
-        // 1. Try L1 cache first (with built-in Moka coalescing for hot data)
-        if let Some(value) = self.l1_cache.get(key).await {
-            self.l1_hits.fetch_add(1, Ordering::Relaxed);
-            return Ok(value);
-        }
+        // 1. Try tiers sequentially first
+        for (idx, tier) in self.tiers.iter().enumerate() {
+            if let Some((value, ttl)) = tier.get_with_ttl(key).await {
+                tier.record_hit();
+                if tier.tier_level == 1 {
+                    self.l1_hits.fetch_add(1, Ordering::Relaxed);
+                } else if tier.tier_level == 2 {
+                    self.l2_hits.fetch_add(1, Ordering::Relaxed);
+                }
 
-        // 2. L1 miss - try L2 with Cache Stampede protection
-        let key_owned = key.to_string();
-        let lock_guard = self
-            .in_flight_requests
-            .entry(key_owned.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone();
-
-        let _guard = lock_guard.lock().await;
-
-        // RAII cleanup guard - ensures entry is removed even on early return or panic
-        let _cleanup_guard = CleanupGuard {
-            map: &self.in_flight_requests,
-            key: key_owned,
-        };
-
-        // 3. Double-check L1 cache after acquiring lock
-        // (Another request might have populated it while we were waiting)
-        if let Some(value) = self.l1_cache.get(key).await {
-            self.l1_hits.fetch_add(1, Ordering::Relaxed);
-            // _cleanup_guard will auto-remove entry on drop
-            return Ok(value);
-        }
-
-        // 4. Check remaining tiers (L2, L3, L4...) with Stampede protection
-        if let Some(tiers) = &self.tiers {
-            // Check tiers starting from index 1 (skip L1 since already checked)
-            for tier in tiers.iter().skip(1) {
-                if let Some((value, ttl)) = tier.get_with_ttl(key).await {
-                    tier.record_hit();
-
+                // Promotion to L1 if hit was in a lower tier
+                if idx > 0 && tier.promotion_enabled {
                     let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
-
-                    // Promote to L1 (first tier)
-                    if let Some(l1_tier) = tiers.first() {
-                        if let Err(e) = l1_tier
-                            .set_with_ttl(key, value.clone(), promotion_ttl)
-                            .await
-                        {
-                            warn!(
-                                "Failed to promote '{}' from L{} to L1: {}",
-                                key, tier.tier_level, e
-                            );
-                        } else {
-                            self.promotions.fetch_add(1, Ordering::Relaxed);
-                            debug!(
-                                "Promoted '{}' from L{} to L1 with TTL {:?} (Stampede protected)",
-                                key, tier.tier_level, promotion_ttl
-                            );
-                        }
+                    if let Some(l1_tier) = self.tiers.first() {
+                        let _ = l1_tier.set_with_ttl(key, value.clone(), promotion_ttl).await;
                     }
-
-                    // _cleanup_guard will auto-remove entry on drop
-                    return Ok(value);
-                }
-            }
-        } else {
-            // LEGACY: Check L2 cache with TTL
-            if let Some((value, redis_ttl)) = self.l2_cache.get_with_ttl(key).await {
-                self.l2_hits.fetch_add(1, Ordering::Relaxed);
-
-                // Promote to L1 using Redis TTL (or strategy TTL as fallback)
-                let promotion_ttl = redis_ttl.unwrap_or_else(|| strategy.to_duration());
-
-                if let Err(e) = self
-                    .l1_cache
-                    .set_with_ttl(key, value.clone(), promotion_ttl)
-                    .await
-                {
-                    warn!("Failed to promote key '{}' to L1: {}", key, e);
-                } else {
-                    self.promotions.fetch_add(1, Ordering::Relaxed);
-                    debug!(
-                        "Promoted '{}' from L2 to L1 with TTL {:?}",
-                        key, promotion_ttl
-                    );
                 }
 
-                // _cleanup_guard will auto-remove entry on drop
                 return Ok(value);
             }
         }
 
-        // 5. Cache miss across all tiers - compute fresh data
-        debug!(
-            "Computing fresh data for key: '{}' (Cache Stampede protected)",
-            key
-        );
-        let fresh_data = compute_fn().await?;
+        // 2. Cache miss across all tiers - use stampede protection
+        let (tx, mut rx) = match self.in_flight_requests.entry(key.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(entry) => {
+                let tx = entry.get().clone();
+                (tx.clone(), tx.subscribe())
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                let (tx, _) = broadcast::channel(1);
+                entry.insert(tx.clone());
+                (tx.clone(), tx.subscribe())
+            }
+        };
 
-        // 6. Store in both caches
-        if let Err(e) = self
-            .set_with_strategy(key, fresh_data.clone(), strategy)
-            .await
-        {
-            warn!("Failed to cache computed data for key '{}': {}", key, e);
+        if tx.receiver_count() > 1 {
+            // Someone else is computing, wait for it
+            match rx.recv().await {
+                Ok(Ok(value)) => return Ok(value),
+                Ok(Err(e)) => return Err(anyhow::anyhow!("Computation failed in another thread: {}", e)),
+                Err(_) => {} // Fall through to re-compute
+            }
         }
 
-        // 7. _cleanup_guard will auto-remove entry on drop
+        // 3. Re-check cache after receiving/creating broadcaster (double-check pattern)
+        for tier in &self.tiers {
+            if let Some((value, _)) = tier.get_with_ttl(key).await {
+                let _ = tx.send(Ok(value.clone()));
+                return Ok(value);
+            }
+        }
 
-        Ok(fresh_data)
+        // 4. Miss - compute fresh data
+        debug!(
+            "Computing fresh data for key: '{}' (Stampede protected)",
+            key
+        );
+        
+        let result = compute_fn().await;
+        
+        // Remove from in_flight BEFORE broadcasting
+        self.in_flight_requests.remove(key);
+
+        match &result {
+            Ok(value) => {
+                let _ = self.set_with_strategy(key, value.clone(), strategy).await;
+                let _ = tx.send(Ok(value.clone()));
+            }
+            Err(e) => {
+                let _ = tx.send(Err(Arc::new(anyhow::anyhow!("{}", e))));
+            }
+        }
+
+        result
     }
 
     /// Get or compute typed value with Cache Stampede protection (Type-Safe Version)
@@ -1174,180 +996,58 @@ impl CacheManager {
         compute_fn: F,
     ) -> Result<T>
     where
-        T: serde::Serialize + serde::de::DeserializeOwned + Send + 'static,
+        T: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static,
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = Result<T>> + Send,
     {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
 
-        // 1. Try L1 cache first (with built-in Moka coalescing for hot data)
-        if let Some(cached_json) = self.l1_cache.get(key).await {
-            self.l1_hits.fetch_add(1, Ordering::Relaxed);
+        // 1. Try L1 first with zero-cost typed access (if backend supports it)
+        // Note: For now we still use bytes path in CacheManager to keep it generic,
+        // but backends like Moka use their internal typed cache.
+        // We might want a dedicated Tier trait method for typed access later.
 
-            // Attempt to deserialize from JSON to type T
-            match serde_json::from_value::<T>(cached_json) {
-                Ok(typed_value) => {
-                    debug!(
-                        "[L1 HIT] Deserialized '{}' to type {}",
-                        key,
-                        std::any::type_name::<T>()
-                    );
-                    return Ok(typed_value);
+        for (idx, tier) in self.tiers.iter().enumerate() {
+            if let Some((bytes, ttl)) = tier.get_with_ttl(key).await {
+                tier.record_hit();
+                if tier.tier_level == 1 {
+                    self.l1_hits.fetch_add(1, Ordering::Relaxed);
+                } else if tier.tier_level == 2 {
+                    self.l2_hits.fetch_add(1, Ordering::Relaxed);
                 }
-                Err(e) => {
-                    // Deserialization failed - cache data may be stale or corrupt
-                    warn!(
-                        "L1 cache deserialization failed for key '{}': {}. Will recompute.",
-                        key, e
-                    );
-                    // Fall through to recompute
-                }
-            }
-        }
 
-        // 2. L1 miss - try L2 with Cache Stampede protection
-        let key_owned = key.to_string();
-        let lock_guard = self
-            .in_flight_requests
-            .entry(key_owned.clone())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone();
-
-        let _guard = lock_guard.lock().await;
-
-        // RAII cleanup guard - ensures entry is removed even on early return or panic
-        let _cleanup_guard = CleanupGuard {
-            map: &self.in_flight_requests,
-            key: key_owned,
-        };
-
-        // 3. Double-check L1 cache after acquiring lock
-        // (Another request might have populated it while we were waiting)
-        if let Some(cached_json) = self.l1_cache.get(key).await {
-            self.l1_hits.fetch_add(1, Ordering::Relaxed);
-            if let Ok(typed_value) = serde_json::from_value::<T>(cached_json) {
-                debug!("[L1 HIT] Deserialized '{}' after lock acquisition", key);
-                return Ok(typed_value);
-            }
-        }
-
-        // 4. Check remaining tiers (L2, L3, L4...) with Stampede protection
-        if let Some(tiers) = &self.tiers {
-            // Check tiers starting from index 1 (skip L1 since already checked)
-            for tier in tiers.iter().skip(1) {
-                if let Some((cached_json, ttl)) = tier.get_with_ttl(key).await {
-                    tier.record_hit();
-
-                    // Attempt to deserialize
-                    match serde_json::from_value::<T>(cached_json.clone()) {
-                        Ok(typed_value) => {
-                            debug!(
-                                "[L{} HIT] Deserialized '{}' to type {}",
-                                tier.tier_level,
-                                key,
-                                std::any::type_name::<T>()
-                            );
-
-                            // Promote to L1 (first tier)
+                match serde_json::from_slice::<T>(&bytes) {
+                    Ok(value) => {
+                        // Promotion
+                        if idx > 0 && tier.promotion_enabled {
                             let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
-                            if let Some(tier) = tiers.first() {
-                                if let Err(e) =
-                                    tier.set_with_ttl(key, cached_json, promotion_ttl).await
-                                {
-                                    warn!(
-                                        "Failed to promote '{}' from L{} to L1: {}",
-                                        key, tier.tier_level, e
-                                    );
-                                } else {
-                                    self.promotions.fetch_add(1, Ordering::Relaxed);
-                                    debug!("Promoted '{}' from L{} to L1 with TTL {:?} (Stampede protected)",
-                                            key, tier.tier_level, promotion_ttl);
-                                }
+                            if let Some(l1_tier) = self.tiers.first() {
+                                let _ = l1_tier.set_with_ttl(key, bytes, promotion_ttl).await;
+                                self.promotions.fetch_add(1, Ordering::Relaxed);
                             }
-
-                            return Ok(typed_value);
                         }
-                        Err(e) => {
-                            warn!("L{} cache deserialization failed for key '{}': {}. Trying next tier.",
-                                     tier.tier_level, key, e);
-                            // Continue to next tier
-                        }
-                    }
-                }
-            }
-        } else {
-            // LEGACY: Check L2 cache with TTL
-            if let Some((cached_json, redis_ttl)) = self.l2_cache.get_with_ttl(key).await {
-                self.l2_hits.fetch_add(1, Ordering::Relaxed);
-
-                // Attempt to deserialize
-                match serde_json::from_value::<T>(cached_json.clone()) {
-                    Ok(typed_value) => {
-                        debug!("[L2 HIT] Deserialized '{}' from Redis", key);
-
-                        // Promote to L1 using Redis TTL (or strategy TTL as fallback)
-                        let promotion_ttl = redis_ttl.unwrap_or_else(|| strategy.to_duration());
-
-                        if let Err(e) = self
-                            .l1_cache
-                            .set_with_ttl(key, cached_json, promotion_ttl)
-                            .await
-                        {
-                            warn!("Failed to promote key '{}' to L1: {}", key, e);
-                        } else {
-                            self.promotions.fetch_add(1, Ordering::Relaxed);
-                            debug!(
-                                "Promoted '{}' from L2 to L1 with TTL {:?}",
-                                key, promotion_ttl
-                            );
-                        }
-
-                        return Ok(typed_value);
+                        return Ok(value);
                     }
                     Err(e) => {
-                        warn!(
-                            "L2 cache deserialization failed for key '{}': {}. Will recompute.",
-                            key, e
-                        );
-                        // Fall through to recompute
+                        warn!("Deserialization failed for key '{}': {}", key, e);
+                        // Fall through to next tier or compute
                     }
                 }
             }
         }
 
-        // 5. Cache miss across all tiers (or deserialization failed) - compute fresh data
-        debug!(
-            "Computing fresh typed data for key: '{}' (Cache Stampede protected)",
-            key
-        );
-        let typed_value = compute_fn().await?;
+        // 2. Compute with stampede protection (reuse get_or_compute_with logic for Bytes)
+        let compute_fn_wrapped = || async {
+            let val = compute_fn().await?;
+            Ok(Bytes::from(serde_json::to_vec(&val)?))
+        };
 
-        // 6. Serialize to JSON for storage
-        let json_value = serde_json::to_value(&typed_value).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to serialize type {} for caching: {}",
-                std::any::type_name::<T>(),
-                e
-            )
-        })?;
-
-        // 7. Store in both L1 and L2 caches
-        if let Err(e) = self.set_with_strategy(key, json_value, strategy).await {
-            warn!(
-                "Failed to cache computed typed data for key '{}': {}",
-                key, e
-            );
-        } else {
-            debug!(
-                "Cached typed value for '{}' (type: {})",
-                key,
-                std::any::type_name::<T>()
-            );
+        let bytes = self.get_or_compute_with(key, strategy, compute_fn_wrapped).await?;
+        
+        match serde_json::from_slice::<T>(&bytes) {
+            Ok(val) => Ok(val),
+            Err(e) => Err(anyhow::anyhow!("Coalesced result deserialization failed: {}", e)),
         }
-
-        // 8. _cleanup_guard will auto-remove entry on drop
-
-        Ok(typed_value)
     }
 
     /// Get comprehensive cache statistics
@@ -1404,11 +1104,56 @@ impl CacheManager {
     ///     }
     /// }
     /// ```
-    pub fn get_tier_stats(&self) -> Option<Vec<TierStats>> {
-        self.tiers
-            .as_ref()
-            .map(|tiers| tiers.iter().map(|tier| tier.stats.clone()).collect())
+    pub fn get_tier_stats(&self) -> Vec<TierStats> {
+        self.tiers.iter().map(|tier| tier.stats.clone()).collect()
     }
+}
+
+/// Proxy wrapper to allow using `CacheBackend` where `DynL2CacheBackend` is expected
+/// (Internal helper for `new_with_backends` to wrap L1 `CacheBackend` into `DynL2CacheBackend`)
+struct ProxyL1ToL2(Arc<dyn CacheBackend>);
+
+impl CacheBackend for ProxyL1ToL2 {
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        self.0.get(key)
+    }
+
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+        ttl: Duration,
+    ) -> BoxFuture<'a, Result<()>> {
+        self.0.set_with_ttl(key, value, ttl)
+    }
+
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+        self.0.remove(key)
+    }
+
+    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, Result<()>> {
+        self.0.remove_pattern(pattern)
+    }
+
+    fn health_check(&self) -> BoxFuture<'_, bool> {
+        self.0.health_check()
+    }
+
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+}
+
+impl L2CacheBackend for ProxyL1ToL2 {
+    fn get_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+        Box::pin(async move { self.0.get(key).await.map(|v| (v, None)) })
+    }
+}
+
+impl CacheManager {
 
     // ===== Redis Streams Methods =====
 
@@ -1513,21 +1258,14 @@ impl CacheManager {
     ///
     /// Returns an error if invalidation fails.
     pub async fn invalidate(&self, key: &str) -> Result<()> {
-        // NEW: Multi-tier mode (v0.5.0+)
-        if let Some(tiers) = &self.tiers {
-            // Remove from ALL tiers
-            for tier in tiers {
-                if let Err(e) = tier.remove(key).await {
-                    warn!(
-                        "Failed to remove '{}' from L{}: {}",
-                        key, tier.tier_level, e
-                    );
-                }
+        // Remove from ALL tiers
+        for tier in &self.tiers {
+            if let Err(e) = tier.remove(key).await {
+                warn!(
+                    "Failed to remove '{}' from L{}: {}",
+                    key, tier.tier_level, e
+                );
             }
-        } else {
-            // LEGACY: 2-tier mode
-            self.l1_cache.remove(key).await?;
-            self.l2_cache.remove(key).await?;
         }
 
         // Broadcast to other instances
@@ -1573,23 +1311,16 @@ impl CacheManager {
     pub async fn update_cache(
         &self,
         key: &str,
-        value: serde_json::Value,
+        value: Bytes,
         ttl: Option<Duration>,
     ) -> Result<()> {
         let ttl = ttl.unwrap_or_else(|| CacheStrategy::Default.to_duration());
 
-        // NEW: Multi-tier mode (v0.5.0+)
-        if let Some(tiers) = &self.tiers {
-            // Update ALL tiers with their respective TTL scaling
-            for tier in tiers {
-                if let Err(e) = tier.set_with_ttl(key, value.clone(), ttl).await {
-                    warn!("Failed to update '{}' in L{}: {}", key, tier.tier_level, e);
-                }
+        // Update ALL tiers
+        for tier in &self.tiers {
+            if let Err(e) = tier.set_with_ttl(key, value.clone(), ttl).await {
+                warn!("Failed to update '{}' in L{}: {}", key, tier.tier_level, e);
             }
-        } else {
-            // LEGACY: 2-tier mode
-            self.l1_cache.set_with_ttl(key, value.clone(), ttl).await?;
-            self.l2_cache.set_with_ttl(key, value.clone(), ttl).await?;
         }
 
         // Broadcast update to other instances
@@ -1635,56 +1366,21 @@ impl CacheManager {
     ///
     /// Returns an error if invalidation fails.
     pub async fn invalidate_pattern(&self, pattern: &str) -> Result<()> {
-        // Scan L2 for matching keys
-        // (Note: Pattern scanning requires concrete L2Cache with scan_keys support)
-        let keys = if let Some(l2) = &self.l2_cache_concrete {
-            l2.scan_keys(pattern).await?
-        } else {
-            return Err(anyhow::anyhow!(
-                "Pattern invalidation requires concrete L2Cache instance"
-            ));
-        };
+        debug!(pattern = %pattern, "Invalidating pattern across all tiers");
 
-        if keys.is_empty() {
-            debug!("No keys found matching pattern '{}'", pattern);
-            return Ok(());
+        // 1. Invalidate in all configured tiers
+        for tier in &self.tiers {
+            debug!(tier = %tier.tier_level, "Invalidating pattern in tier");
+            tier.backend.remove_pattern(pattern).await?;
         }
 
-        // NEW: Multi-tier mode (v0.5.0+)
-        if let Some(tiers) = &self.tiers {
-            // Remove from ALL tiers
-            for key in &keys {
-                for tier in tiers {
-                    if let Err(e) = tier.remove(key).await {
-                        warn!(
-                            "Failed to remove '{}' from L{}: {}",
-                            key, tier.tier_level, e
-                        );
-                    }
-                }
-            }
-        } else {
-            // LEGACY: 2-tier mode - Remove from L2 in bulk
-            if let Some(l2) = &self.l2_cache_concrete {
-                l2.remove_bulk(&keys).await?;
-            }
-        }
-
-        // Broadcast pattern invalidation
+        // 2. Broadcast invalidation if publisher is configured
         if let Some(publisher) = &self.invalidation_publisher {
-            let mut pub_lock = publisher.lock().await;
-            let msg = InvalidationMessage::remove_bulk(keys.clone());
-            pub_lock.publish(&msg).await?;
-            self.invalidation_stats
-                .messages_sent
-                .fetch_add(1, Ordering::Relaxed);
+            let msg = InvalidationMessage::remove_pattern(pattern);
+            publisher.lock().await.publish(&msg).await?;
+            debug!(pattern = %pattern, "Broadcasted pattern invalidation");
         }
 
-        debug!(
-            "Invalidated {} keys matching pattern '{}'",
-            keys.len(),
-            pattern
-        );
         Ok(())
     }
 
@@ -1714,7 +1410,7 @@ impl CacheManager {
     pub async fn set_with_broadcast(
         &self,
         key: &str,
-        value: serde_json::Value,
+        value: Bytes,
         strategy: CacheStrategy,
     ) -> Result<()> {
         let ttl = strategy.to_duration();

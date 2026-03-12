@@ -15,7 +15,7 @@ async fn test_basic_set_and_get() {
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("basic");
-    let value = test_data::json_user(1);
+    let value = test_data::bytes_user(1);
 
     // Set value
     cache
@@ -49,7 +49,7 @@ async fn test_l1_cache_hit() {
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("l1_hit");
-    let value = test_data::json_user(2);
+    let value = test_data::bytes_user(2);
 
     // Set value (populates L1)
     cache
@@ -93,7 +93,7 @@ async fn test_l2_to_l1_promotion() {
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("l2_promote");
-    let value = test_data::json_user(3);
+    let value = test_data::bytes_user(3);
 
     // Set directly in L2 (bypass L1)
     cache
@@ -161,7 +161,7 @@ async fn test_compute_on_miss() {
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("compute");
-    let expected_value = test_data::json_user(4);
+    let expected_value = test_data::bytes_user(4);
 
     // Compute on miss
     let value = cache
@@ -240,7 +240,7 @@ async fn test_ttl_expiration() {
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("ttl");
-    let value = test_data::json_user(6);
+    let value = test_data::bytes_user(6);
 
     // Set with very short TTL
     cache
@@ -288,7 +288,7 @@ async fn test_statistics_tracking() {
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("stats");
-    let value = test_data::json_user(7);
+    let value = test_data::bytes_user(7);
 
     // Initial stats
     let stats_before = cache.cache_manager().get_stats();
@@ -356,7 +356,7 @@ async fn test_cache_strategies() {
 
     for (name, strategy) in strategies {
         let key = test_key(name);
-        let value = test_data::json_user(8);
+        let value = test_data::bytes_user(8);
 
         cache
             .cache_manager()

@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -10,7 +11,7 @@ async fn test_real_time_strategy_expiry() -> anyhow::Result<()> {
     let cache = CacheSystem::new().await?;
     let manager = cache.cache_manager();
     let key = common::test_key("realtime");
-    let value = serde_json::json!({"status": "live"});
+    let value = Bytes::from("{\"status\": \"live\"}");
 
     // 1. Set with RealTime strategy (10s ideally, but we test expiration logic)
     // We use Custom for faster test execution
@@ -45,7 +46,7 @@ async fn test_manual_l1_invalidation_check() -> anyhow::Result<()> {
     let cache = CacheSystem::new().await?;
     let manager = cache.cache_manager();
     let key = common::test_key("manual_inv");
-    let value = serde_json::json!({"data": 123});
+    let value = Bytes::from("{\"data\": 123}");
 
     manager
         .set_with_strategy(&key, value.clone(), CacheStrategy::ShortTerm)

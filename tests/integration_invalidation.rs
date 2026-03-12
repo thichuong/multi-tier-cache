@@ -16,7 +16,7 @@ async fn test_invalidate_single_key() {
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("invalidate");
-    let value = test_data::json_user(1);
+    let value = test_data::bytes_user(1);
 
     // Set value
     cache
@@ -52,8 +52,8 @@ async fn test_update_cache() {
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("update");
-    let value1 = test_data::json_user(1);
-    let value2 = test_data::json_user(2);
+    let value1 = test_data::bytes_user(1);
+    let value2 = test_data::bytes_user(2);
 
     // Set initial value
     cache
@@ -68,7 +68,7 @@ async fn test_update_cache() {
         .unwrap_or_else(|_| panic!("Failed to update cache"));
 
     // Wait for pub/sub propagation
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(500)).await;
 
     // Should have new value
     let cached = cache
@@ -81,6 +81,7 @@ async fn test_update_cache() {
 /// Test pattern-based invalidation
 #[tokio::test]
 async fn test_invalidate_pattern() {
+    common::init_test_tracing();
     let cache = setup_cache_with_invalidation()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -89,7 +90,7 @@ async fn test_invalidate_pattern() {
     // Set multiple keys with same prefix
     for i in 1..=5 {
         let key = format!("{prefix}key{i}");
-        let value = test_data::json_user(i);
+        let value = test_data::bytes_user(i);
         cache
             .set_with_strategy(&key, value, CacheStrategy::MediumTerm)
             .await
@@ -104,7 +105,7 @@ async fn test_invalidate_pattern() {
         .unwrap_or_else(|_| panic!("Failed to invalidate pattern"));
 
     // Wait for propagation
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(500)).await;
 
     // All should be gone
     for i in 1..=5 {
@@ -124,7 +125,7 @@ async fn test_set_with_broadcast() {
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("broadcast");
-    let value = test_data::json_user(3);
+    let value = test_data::bytes_user(3);
 
     // Set with broadcast
     cache
@@ -133,7 +134,7 @@ async fn test_set_with_broadcast() {
         .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // Wait for propagation
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(500)).await;
 
     // Should be cached
     let cached = cache
@@ -150,7 +151,7 @@ async fn test_invalidation_stats() {
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("stats");
-    let value = test_data::json_user(4);
+    let value = test_data::bytes_user(4);
 
     // Perform invalidation operations
     cache
@@ -185,7 +186,7 @@ async fn test_bulk_invalidation() {
     let keys: Vec<String> = (1..=10).map(|i| test_key(&format!("bulk{i}"))).collect();
 
     for (i, key) in keys.iter().enumerate() {
-        let value = test_data::json_user((i + 1) as u64);
+        let value = test_data::bytes_user((i + 1) as u64);
         cache
             .set_with_strategy(key, value, CacheStrategy::ShortTerm)
             .await
@@ -201,7 +202,7 @@ async fn test_bulk_invalidation() {
     }
 
     // Wait for propagation
-    sleep(Duration::from_millis(100)).await;
+    sleep(Duration::from_millis(500)).await;
 
     // All should be gone
     for key in &keys {

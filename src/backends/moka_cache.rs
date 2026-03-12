@@ -1,10 +1,8 @@
-//! Moka Cache - In-Memory Cache Backend
-//!
-//! High-performance in-memory cache using Moka for hot data storage.
-
 use anyhow::Result;
+use bytes::Bytes;
+use futures_util::future::BoxFuture;
 use moka::future::Cache;
-use serde_json;
+use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,12 +11,12 @@ use tracing::{debug, info};
 /// Cache entry with TTL information
 #[derive(Debug, Clone)]
 struct CacheEntry {
-    value: serde_json::Value,
+    value: Bytes,
     expires_at: Instant,
 }
 
 impl CacheEntry {
-    fn new(value: serde_json::Value, ttl: Duration) -> Self {
+    fn new(value: Bytes, ttl: Duration) -> Self {
         Self {
             value,
             expires_at: Instant::now() + ttl,
@@ -26,6 +24,26 @@ impl CacheEntry {
     }
 
     fn is_expired(&self) -> bool {
+        Instant::now() > self.expires_at
+    }
+}
+
+/// Specialized entry for zero-cost deserialization on L1
+#[derive(Clone)]
+pub struct TypedCacheEntry {
+    pub value: Arc<dyn Any + Send + Sync>,
+    pub expires_at: Instant,
+}
+
+impl TypedCacheEntry {
+    pub fn new(value: Arc<dyn Any + Send + Sync>, ttl: Duration) -> Self {
+        Self {
+            value,
+            expires_at: Instant::now() + ttl,
+        }
+    }
+
+    pub fn is_expired(&self) -> bool {
         Instant::now() > self.expires_at
     }
 }
@@ -44,7 +62,7 @@ pub struct MokaCacheConfig {
 impl Default for MokaCacheConfig {
     fn default() -> Self {
         Self {
-            max_capacity: 2000,
+            max_capacity: 5000,
             time_to_live: Duration::from_secs(3600),
             time_to_idle: Duration::from_secs(120),
         }
@@ -52,31 +70,24 @@ impl Default for MokaCacheConfig {
 }
 
 /// Moka in-memory cache with per-key TTL support
-///
-/// This is the default L1 (hot tier) cache backend, providing:
-/// - Fast in-memory access (< 1ms latency)
-/// - Automatic eviction via LRU
-/// - Per-key TTL support
-/// - Statistics tracking
 pub struct MokaCache {
-    /// Moka cache instance
+    /// Moka cache instance for raw bytes
     cache: Cache<String, CacheEntry>,
+    /// Moka cache instance for typed objects (Zero-cost optimization)
+    typed_cache: Cache<String, TypedCacheEntry>,
     /// Hit counter
     hits: Arc<AtomicU64>,
     /// Miss counter
     misses: Arc<AtomicU64>,
     /// Set counter
     sets: Arc<AtomicU64>,
-    /// Coalesced requests counter (requests that waited for an ongoing computation)
+    /// Coalesced requests counter
     #[allow(dead_code)]
     coalesced_requests: Arc<AtomicU64>,
 }
 
 impl MokaCache {
     /// Create new Moka cache
-    /// # Errors
-    ///
-    /// Returns an error if the cache cannot be initialized.
     pub fn new(config: MokaCacheConfig) -> Result<Self> {
         info!("Initializing Moka Cache");
 
@@ -86,36 +97,45 @@ impl MokaCache {
             .time_to_idle(config.time_to_idle)
             .build();
 
+        let typed_cache = Cache::builder()
+            .max_capacity(config.max_capacity)
+            .time_to_live(config.time_to_live)
+            .time_to_idle(config.time_to_idle)
+            .build();
+
         info!(
             capacity = config.max_capacity,
-            "Moka Cache initialized with per-key TTL support"
+            "Moka Cache initialized with Byte and Typed storage"
         );
 
         Ok(Self {
             cache,
+            typed_cache,
             hits: Arc::new(AtomicU64::new(0)),
             misses: Arc::new(AtomicU64::new(0)),
             sets: Arc::new(AtomicU64::new(0)),
             coalesced_requests: Arc::new(AtomicU64::new(0)),
         })
     }
-}
 
-// ===== Trait Implementations =====
+    /// Set a typed value in the L1 cache (zero-cost optimization)
+    pub async fn set_typed(
+        &self,
+        key: &str,
+        value: Arc<dyn Any + Send + Sync>,
+        ttl: Duration,
+    ) -> Result<()> {
+        let entry = TypedCacheEntry::new(value, ttl);
+        self.typed_cache.insert(key.to_string(), entry).await;
+        self.sets.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
 
-use crate::traits::CacheBackend;
-use async_trait::async_trait;
-
-/// Implement `CacheBackend` trait for `MokaCache`
-///
-/// This allows `MokaCache` to be used as a pluggable backend in the multi-tier cache system.
-#[async_trait]
-impl CacheBackend for MokaCache {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        if let Some(entry) = self.cache.get(key).await {
+    /// Get a typed value from the L1 cache
+    pub async fn get_typed(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
+        if let Some(entry) = self.typed_cache.get(key).await {
             if entry.is_expired() {
-                // Remove expired entry
-                let _ = self.cache.remove(key).await;
+                let _ = self.typed_cache.remove(key).await;
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 None
             } else {
@@ -123,70 +143,144 @@ impl CacheBackend for MokaCache {
                 Some(entry.value)
             }
         } else {
-            self.misses.fetch_add(1, Ordering::Relaxed);
             None
         }
     }
+}
 
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let entry = CacheEntry::new(value, ttl);
-        self.cache.insert(key.to_string(), entry).await;
-        self.sets.fetch_add(1, Ordering::Relaxed);
-        debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Moka] Cached key with TTL");
-        Ok(())
-    }
+// ===== Trait Implementations =====
 
-    async fn remove(&self, key: &str) -> Result<()> {
-        self.cache.remove(key).await;
-        Ok(())
-    }
+use crate::traits::{CacheBackend, L2CacheBackend};
 
-    async fn health_check(&self) -> bool {
-        // Test basic functionality with custom TTL
-        let test_key = "health_check_moka";
-        let test_value = serde_json::json!({"test": true});
-
-        match self
-            .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
-            .await
-        {
-            Ok(()) => match self.get(test_key).await {
-                Some(retrieved) => {
-                    let _ = self.remove(test_key).await;
-                    retrieved == test_value
+/// Implement `CacheBackend` trait for `MokaCache`
+impl CacheBackend for MokaCache {
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        Box::pin(async move {
+            if let Some(entry) = self.cache.get(key).await {
+                if entry.is_expired() {
+                    let _ = self.cache.remove(key).await;
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                } else {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    Some(entry.value)
                 }
-                None => false,
-            },
-            Err(_) => false,
-        }
+            } else {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        })
     }
 
-    async fn remove_pattern(&self, pattern: &str) -> Result<()> {
-        let pattern_owned = pattern.to_string();
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+        ttl: Duration,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let entry = CacheEntry::new(value, ttl);
+            self.cache.insert(key.to_string(), entry).await;
+            self.sets.fetch_add(1, Ordering::Relaxed);
+            debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Moka] Cached key bytes with TTL");
+            Ok(())
+        })
+    }
 
-        // Use invalidate_entries_if for atomic removal of matching keys
-        // Note: Simple glob support (only supports trailing * for now)
-        let result = self.cache.invalidate_entries_if(move |k, _v| {
-            if pattern_owned.ends_with('*') {
-                let prefix = &pattern_owned[..pattern_owned.len() - 1];
-                k.starts_with(prefix)
-            } else {
-                k == &pattern_owned
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            self.cache.invalidate(key).await;
+            self.typed_cache.invalidate(key).await;
+            Ok(())
+        })
+    }
+
+    fn health_check(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            let test_key = "health_check_moka";
+            let test_value = Bytes::from("health_check");
+
+            match self
+                .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
+                .await
+            {
+                Ok(()) => match self.get(test_key).await {
+                    Some(retrieved) => {
+                        let _ = self.remove(test_key).await;
+                        retrieved == test_value
+                    }
+                    None => false,
+                },
+                Err(_) => false,
             }
-        });
+        })
+    }
 
-        if let Err(e) = result {
-            tracing::error!("Moka invalidation failed: {}", e);
-            // We return Ok even if internal invalidation failed, as we can't do much about it
-            // and don't want to crash the application.
-        }
+    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let pattern_owned = pattern.to_string();
 
-        debug!("Invalidated pattern '{}' from Moka cache", pattern);
-        Ok(())
+            let p1 = pattern_owned.clone();
+            let _ = self.cache.invalidate_entries_if(move |k, _v| {
+                if p1.ends_with('*') {
+                    let prefix = &p1[..p1.len() - 1];
+                    k.starts_with(prefix)
+                } else {
+                    k == &p1
+                }
+            });
+
+            let p2 = pattern_owned;
+            let _ = self.typed_cache.invalidate_entries_if(move |k, _v| {
+                if p2.ends_with('*') {
+                    let prefix = &p2[..p2.len() - 1];
+                    k.starts_with(prefix)
+                } else {
+                    k == &p2
+                }
+            });
+
+            // Ensure background invalidation tasks are processed
+            self.cache.run_pending_tasks().await;
+            self.typed_cache.run_pending_tasks().await;
+
+            debug!(pattern = %pattern, "[Moka] Invalidated pattern '{}' from Moka cache", pattern);
+            Ok(())
+        })
     }
 
     fn name(&self) -> &'static str {
         "Moka"
+    }
+}
+
+impl L2CacheBackend for MokaCache {
+    fn get_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+        Box::pin(async move {
+            // Moka doesn't easily expose remaining TTL for an entry
+            if let Some(entry) = self.cache.get(key).await {
+                if entry.is_expired() {
+                    let _ = self.cache.remove(key).await;
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                } else {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    let now = Instant::now();
+                    let remaining = if entry.expires_at > now {
+                        Some(entry.expires_at.duration_since(now))
+                    } else {
+                        None
+                    };
+                    Some((entry.value, remaining))
+                }
+            } else {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        })
     }
 }
 
