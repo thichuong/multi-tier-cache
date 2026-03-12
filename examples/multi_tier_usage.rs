@@ -6,11 +6,11 @@
 
 use anyhow::Result;
 use bytes::Bytes;
+use futures_util::future::BoxFuture;
 use multi_tier_cache::{CacheBackend, CacheSystemBuilder, L2CacheBackend};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use futures_util::future::BoxFuture;
 
 // ==================== Mock L3 Cache (Simulated Disk/Cold Storage) ====================
 
@@ -38,9 +38,7 @@ impl CacheBackend for MockL3Cache {
             // Simulate latency for "disk" access
             tokio::time::sleep(Duration::from_millis(50)).await;
 
-            let store = store
-                .read()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let store = store.read().unwrap_or_else(|_| panic!("Lock poisoned"));
             store.get(key).and_then(|(value, expiry, _)| {
                 if *expiry > Instant::now() {
                     Some(value.clone())
@@ -51,7 +49,12 @@ impl CacheBackend for MockL3Cache {
         })
     }
 
-    fn set_with_ttl<'a>(&'a self, key: &'a str, value: Bytes, ttl: Duration) -> BoxFuture<'a, Result<()>> {
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+        ttl: Duration,
+    ) -> BoxFuture<'a, Result<()>> {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
         let name = self.name.clone();
@@ -59,9 +62,7 @@ impl CacheBackend for MockL3Cache {
             // Simulate latency
             tokio::time::sleep(Duration::from_millis(50)).await;
 
-            let mut store = store
-                .write()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let mut store = store.write().unwrap_or_else(|_| panic!("Lock poisoned"));
             let expiry = Instant::now() + ttl;
             store.insert(key.clone(), (value, expiry, ttl));
             println!("💾 [{}] Cached '{}' with TTL {:?}", name, key, ttl);
@@ -73,9 +74,7 @@ impl CacheBackend for MockL3Cache {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
         Box::pin(async move {
-            let mut store = store
-                .write()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let mut store = store.write().unwrap_or_else(|_| panic!("Lock poisoned"));
             store.remove(&key);
             Ok(())
         })
@@ -91,15 +90,16 @@ impl CacheBackend for MockL3Cache {
 }
 
 impl L2CacheBackend for MockL3Cache {
-    fn get_with_ttl<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+    fn get_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
         let store = Arc::clone(&self.store);
         Box::pin(async move {
             // Simulate latency
             tokio::time::sleep(Duration::from_millis(50)).await;
 
-            let store = store
-                .read()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let store = store.read().unwrap_or_else(|_| panic!("Lock poisoned"));
             store.get(key).and_then(|(value, expiry, _)| {
                 let now = Instant::now();
                 if *expiry > now {

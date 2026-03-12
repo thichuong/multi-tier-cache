@@ -26,8 +26,6 @@ use futures_util::future::BoxFuture;
 /// Stores a broadcast sender for each active key computation
 type InFlightMap = DashMap<String, broadcast::Sender<Result<Bytes, Arc<anyhow::Error>>>>;
 
-
-
 /// Cache strategies for different data types
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -235,8 +233,6 @@ impl TierConfig {
     }
 }
 
-
-
 pub struct CacheManager {
     /// Ordered list of cache tiers (L1, L2, L3, ...)
     tiers: Vec<CacheTier>,
@@ -310,8 +306,6 @@ impl CacheManager {
             invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
         })
     }
-
-
 
     /// Create new cache manager with default backends (backward compatible)
     ///
@@ -507,7 +501,10 @@ impl CacheManager {
                         match &msg {
                             InvalidationMessage::Remove { key } => {
                                 if let Err(e) = tier.backend.remove(key).await {
-                                    warn!("Failed to remove '{}' from L{}: {}", key, tier.tier_level, e);
+                                    warn!(
+                                        "Failed to remove '{}' from L{}: {}",
+                                        key, tier.tier_level, e
+                                    );
                                 }
                             }
                             InvalidationMessage::Update {
@@ -517,19 +514,30 @@ impl CacheManager {
                             } => {
                                 let ttl = ttl_secs
                                     .map_or_else(|| Duration::from_secs(300), Duration::from_secs);
-                                if let Err(e) = tier.backend.set_with_ttl(key, value.clone(), ttl).await {
-                                    warn!("Failed to update '{}' in L{}: {}", key, tier.tier_level, e);
+                                if let Err(e) =
+                                    tier.backend.set_with_ttl(key, value.clone(), ttl).await
+                                {
+                                    warn!(
+                                        "Failed to update '{}' in L{}: {}",
+                                        key, tier.tier_level, e
+                                    );
                                 }
                             }
                             InvalidationMessage::RemovePattern { pattern } => {
                                 if let Err(e) = tier.backend.remove_pattern(pattern).await {
-                                    warn!("Failed to remove pattern '{}' from L{}: {}", pattern, tier.tier_level, e);
+                                    warn!(
+                                        "Failed to remove pattern '{}' from L{}: {}",
+                                        pattern, tier.tier_level, e
+                                    );
                                 }
                             }
                             InvalidationMessage::RemoveBulk { keys } => {
                                 for key in keys {
                                     if let Err(e) = tier.backend.remove(key).await {
-                                        warn!("Failed to remove '{}' from L{}: {}", key, tier.tier_level, e);
+                                        warn!(
+                                            "Failed to remove '{}' from L{}: {}",
+                                            key, tier.tier_level, e
+                                        );
                                     }
                                 }
                             }
@@ -635,7 +643,12 @@ impl CacheManager {
         if lock_guard.receiver_count() > 1 {
             match rx.recv().await {
                 Ok(Ok(value)) => return Ok(Some(value)),
-                Ok(Err(e)) => return Err(anyhow::anyhow!("Computation failed in another thread: {}", e)),
+                Ok(Err(e)) => {
+                    return Err(anyhow::anyhow!(
+                        "Computation failed in another thread: {}",
+                        e
+                    ))
+                }
                 Err(_) => {} // Fall through to re-compute if sender dropped or channel empty
             }
         }
@@ -658,23 +671,22 @@ impl CacheManager {
             if self.tiers.len() >= 2 {
                 self.l2_hits.fetch_add(1, Ordering::Relaxed);
             }
-            
+
             // Notify any waiting subscribers
             let _ = lock_guard.send(Ok(val.clone()));
-            
+
             // Remove the in-flight entry after computation/retrieval
             self.in_flight_requests.remove(key);
-            
+
             return Ok(Some(val));
         } else {
             self.misses.fetch_add(1, Ordering::Relaxed);
-            
+
             // Remove the in-flight entry after computation/retrieval
             self.in_flight_requests.remove(key);
-            
+
             return Ok(None);
         }
-
     }
 
     /// Set value with specific cache strategy (all tiers)
@@ -776,7 +788,9 @@ impl CacheManager {
                 if idx > 0 && tier.promotion_enabled {
                     let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
                     if let Some(l1_tier) = self.tiers.first() {
-                        let _ = l1_tier.set_with_ttl(key, value.clone(), promotion_ttl).await;
+                        let _ = l1_tier
+                            .set_with_ttl(key, value.clone(), promotion_ttl)
+                            .await;
                     }
                 }
 
@@ -801,7 +815,12 @@ impl CacheManager {
             // Someone else is computing, wait for it
             match rx.recv().await {
                 Ok(Ok(value)) => return Ok(value),
-                Ok(Err(e)) => return Err(anyhow::anyhow!("Computation failed in another thread: {}", e)),
+                Ok(Err(e)) => {
+                    return Err(anyhow::anyhow!(
+                        "Computation failed in another thread: {}",
+                        e
+                    ))
+                }
                 Err(_) => {} // Fall through to re-compute
             }
         }
@@ -819,9 +838,9 @@ impl CacheManager {
             "Computing fresh data for key: '{}' (Stampede protected)",
             key
         );
-        
+
         let result = compute_fn().await;
-        
+
         // Remove from in_flight BEFORE broadcasting
         self.in_flight_requests.remove(key);
 
@@ -994,11 +1013,16 @@ impl CacheManager {
             Ok(Bytes::from(serde_json::to_vec(&val)?))
         };
 
-        let bytes = self.get_or_compute_with(key, strategy, compute_fn_wrapped).await?;
-        
+        let bytes = self
+            .get_or_compute_with(key, strategy, compute_fn_wrapped)
+            .await?;
+
         match serde_json::from_slice::<T>(&bytes) {
             Ok(val) => Ok(val),
-            Err(e) => Err(anyhow::anyhow!("Coalesced result deserialization failed: {}", e)),
+            Err(e) => Err(anyhow::anyhow!(
+                "Coalesced result deserialization failed: {}",
+                e
+            )),
         }
     }
 
@@ -1106,7 +1130,6 @@ impl L2CacheBackend for ProxyL1ToL2 {
 }
 
 impl CacheManager {
-
     // ===== Redis Streams Methods =====
 
     /// Publish data to Redis Stream
@@ -1261,12 +1284,7 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if cache update fails.
-    pub async fn update_cache(
-        &self,
-        key: &str,
-        value: Bytes,
-        ttl: Option<Duration>,
-    ) -> Result<()> {
+    pub async fn update_cache(&self, key: &str, value: Bytes, ttl: Option<Duration>) -> Result<()> {
         let ttl = ttl.unwrap_or_else(|| CacheStrategy::Default.to_duration());
 
         // Update ALL tiers

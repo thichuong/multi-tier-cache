@@ -223,7 +223,7 @@ impl CacheBackend for MokaCache {
             // so clearing L1 is a safe and robust fallback to ensure no stale data remains.
             self.cache.invalidate_all();
             self.typed_cache.invalidate_all();
-            
+
             // Ensure background invalidation tasks are processed
             self.cache.run_pending_tasks().await;
             self.typed_cache.run_pending_tasks().await;

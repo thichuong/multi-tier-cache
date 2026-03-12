@@ -89,7 +89,9 @@ async fn main() -> anyhow::Result<()> {
     for i in 1..=5 {
         let cache_clone = cache.clone();
         let handle = tokio::spawn(async move {
-            let data = Bytes::from(format!("{{\"worker_id\": {i}, \"data\": \"Concurrent data from worker {i}\"}}"));
+            let data = Bytes::from(format!(
+                "{{\"worker_id\": {i}, \"data\": \"Concurrent data from worker {i}\"}}"
+            ));
             cache_clone
                 .cache_manager()
                 .set_with_strategy(&format!("concurrent:{i}"), data, CacheStrategy::ShortTerm)

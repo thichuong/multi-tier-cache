@@ -7,11 +7,11 @@
 
 use anyhow::Result;
 use bytes::Bytes;
+use futures_util::future::BoxFuture;
 use multi_tier_cache::{CacheBackend, CacheSystemBuilder, L2CacheBackend, TierConfig};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use futures_util::future::BoxFuture;
 
 // ==================== Example 1: Simple HashMap L1 Cache ====================
 
@@ -32,8 +32,6 @@ impl HashMapCache {
             store: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-
-
 }
 
 impl CacheBackend for HashMapCache {
@@ -47,9 +45,7 @@ impl CacheBackend for HashMapCache {
                 // In a real implementation, we'd avoid holding the write lock here if possible
             }
 
-            let store = store
-                .read()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let store = store.read().unwrap_or_else(|_| panic!("Lock poisoned"));
             store.get(&key).and_then(|(value, expiry)| {
                 if *expiry > Instant::now() {
                     Some(value.clone())
@@ -60,14 +56,17 @@ impl CacheBackend for HashMapCache {
         })
     }
 
-    fn set_with_ttl<'a>(&'a self, key: &'a str, value: Bytes, ttl: Duration) -> BoxFuture<'a, Result<()>> {
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+        ttl: Duration,
+    ) -> BoxFuture<'a, Result<()>> {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
 
         Box::pin(async move {
-            let mut store = store
-                .write()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let mut store = store.write().unwrap_or_else(|_| panic!("Lock poisoned"));
             let expiry = Instant::now() + ttl;
             store.insert(key.clone(), (value, expiry));
             println!("💾 [{}] Cached '{}' with TTL {:?}", self.name, key, ttl);
@@ -79,9 +78,7 @@ impl CacheBackend for HashMapCache {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
         Box::pin(async move {
-            let mut store = store
-                .write()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let mut store = store.write().unwrap_or_else(|_| panic!("Lock poisoned"));
             store.remove(&key);
             Ok(())
         })
@@ -125,9 +122,7 @@ impl CacheBackend for InMemoryL2Cache {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
         Box::pin(async move {
-            let store = store
-                .read()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let store = store.read().unwrap_or_else(|_| panic!("Lock poisoned"));
             store.get(&key).and_then(|(value, expiry, _)| {
                 if *expiry > Instant::now() {
                     Some(value.clone())
@@ -138,13 +133,16 @@ impl CacheBackend for InMemoryL2Cache {
         })
     }
 
-    fn set_with_ttl<'a>(&'a self, key: &'a str, value: Bytes, ttl: Duration) -> BoxFuture<'a, Result<()>> {
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+        ttl: Duration,
+    ) -> BoxFuture<'a, Result<()>> {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
         Box::pin(async move {
-            let mut store = store
-                .write()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let mut store = store.write().unwrap_or_else(|_| panic!("Lock poisoned"));
             let expiry = Instant::now() + ttl;
             store.insert(key.clone(), (value, expiry, ttl));
             println!("💾 [InMemory L2] Cached '{key}' with TTL {ttl:?}");
@@ -156,9 +154,7 @@ impl CacheBackend for InMemoryL2Cache {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
         Box::pin(async move {
-            let mut store = store
-                .write()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let mut store = store.write().unwrap_or_else(|_| panic!("Lock poisoned"));
             store.remove(&key);
             Ok(())
         })
@@ -166,9 +162,7 @@ impl CacheBackend for InMemoryL2Cache {
 
     fn health_check(&self) -> BoxFuture<'_, bool> {
         let store = Arc::clone(&self.store);
-        Box::pin(async move {
-            store.read().is_ok()
-        })
+        Box::pin(async move { store.read().is_ok() })
     }
 
     fn name(&self) -> &'static str {
@@ -177,13 +171,14 @@ impl CacheBackend for InMemoryL2Cache {
 }
 
 impl L2CacheBackend for InMemoryL2Cache {
-    fn get_with_ttl<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+    fn get_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
         Box::pin(async move {
-            let store = store
-                .read()
-                .unwrap_or_else(|_| panic!("Lock poisoned"));
+            let store = store.read().unwrap_or_else(|_| panic!("Lock poisoned"));
             store.get(&key).and_then(|(value, expiry, _original_ttl)| {
                 let now = Instant::now();
                 if *expiry > now {
@@ -227,7 +222,6 @@ impl CacheBackend for NoOpCache {
         _value: Bytes,
         ttl: Duration,
     ) -> BoxFuture<'a, Result<()>> {
-
         let key = key.to_string();
         Box::pin(async move {
             println!(
@@ -252,7 +246,10 @@ impl CacheBackend for NoOpCache {
 }
 
 impl L2CacheBackend for NoOpCache {
-    fn get_with_ttl<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+    fn get_with_ttl<'a>(
+        &'a self,
+        _key: &'a str,
+    ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
         Box::pin(async move { None })
     }
 }

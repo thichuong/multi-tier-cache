@@ -100,7 +100,7 @@ mod serde_bytes_wrapper {
     where
         S: Serializer,
     {
-        // For JSON, we use a vector of bytes. 
+        // For JSON, we use a vector of bytes.
         // In a real production system, we'd use Base64.
         serializer.serialize_bytes(bytes)
     }

@@ -17,7 +17,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 1. RealTime strategy (10 seconds) - for rapidly changing data
     println!("1. RealTime Strategy (10s TTL) - Fast-changing data");
-    let live_data = Bytes::from("{\"price\": 42000.50, \"volume\": 1000000, \"last_updated\": \"2025-01-01T00:00:00Z\"}");
+    let live_data = Bytes::from(
+        "{\"price\": 42000.50, \"volume\": 1000000, \"last_updated\": \"2025-01-01T00:00:00Z\"}",
+    );
     cache
         .cache_manager()
         .set_with_strategy("live_price", live_data, CacheStrategy::RealTime)
@@ -57,7 +59,8 @@ async fn main() -> anyhow::Result<()> {
 
     // 5. Custom strategy - for specific requirements
     println!("5. Custom Strategy (30s TTL) - Custom requirement");
-    let custom_data = Bytes::from("{\"metric\": \"cpu_usage\", \"value\": 45.2, \"threshold\": 80.0}");
+    let custom_data =
+        Bytes::from("{\"metric\": \"cpu_usage\", \"value\": 45.2, \"threshold\": 80.0}");
     cache
         .cache_manager()
         .set_with_strategy(

@@ -184,10 +184,8 @@ pub trait CacheBackend: Send + Sync {
 /// ```
 pub trait L2CacheBackend: CacheBackend {
     /// Get value with its remaining TTL from L2 cache
-    fn get_with_ttl<'a>(
-        &'a self,
-        key: &'a str,
-    ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>>;
+    fn get_with_ttl<'a>(&'a self, key: &'a str)
+        -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>>;
 }
 
 /// (No longer needed since traits are now dyn-compatible)

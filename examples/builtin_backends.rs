@@ -136,7 +136,8 @@ async fn demo_memcached_backend() -> Result<()> {
             println!("✅ Connected to Memcached");
 
             // Test direct operations with MemcachedCache
-            let test_data = Bytes::from("{\"product\": \"laptop\", \"price\": 999.99, \"stock\": 42}");
+            let test_data =
+                Bytes::from("{\"product\": \"laptop\", \"price\": 999.99, \"stock\": 42}");
 
             // Set with TTL
             memcached
@@ -208,7 +209,8 @@ async fn demo_quickcache_backend() -> Result<()> {
     let manager = cache.cache_manager();
 
     // Test operations with high-performance cache
-    let test_data = Bytes::from("{\"session_id\": \"abc123\", \"user_id\": 42, \"expires_at\": 1234567890}");
+    let test_data =
+        Bytes::from("{\"session_id\": \"abc123\", \"user_id\": 42, \"expires_at\": 1234567890}");
 
     manager
         .set_with_strategy(

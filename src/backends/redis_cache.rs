@@ -99,7 +99,6 @@ impl RedisCache {
 
 // ===== Trait Implementations =====
 
-
 /// Implement `CacheBackend` trait for `RedisCache`
 impl CacheBackend for RedisCache {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
@@ -127,7 +126,9 @@ impl CacheBackend for RedisCache {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
-            let result = conn.pset_ex(key, value.to_vec(), ttl.as_millis() as u64).await;
+            let result = conn
+                .pset_ex(key, value.to_vec(), ttl.as_millis() as u64)
+                .await;
             if result.is_ok() {
                 self.sets.fetch_add(1, Ordering::Relaxed);
                 debug!(key = %key, ttl_ms = %ttl.as_millis(), "[Redis] Cached key bytes with TTL");
@@ -148,7 +149,8 @@ impl CacheBackend for RedisCache {
     fn health_check(&self) -> BoxFuture<'_, bool> {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
-            let result: redis::RedisResult<String> = redis::cmd("PING").query_async(&mut conn).await;
+            let result: redis::RedisResult<String> =
+                redis::cmd("PING").query_async(&mut conn).await;
             result.is_ok()
         })
     }
@@ -176,15 +178,11 @@ impl L2CacheBackend for RedisCache {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
             // Pipelining is better:
-            let (bytes, ttl_secs): (Option<Vec<u8>>, i64) = match redis::pipe()
-                .get(key)
-                .ttl(key)
-                .query_async(&mut conn)
-                .await
-            {
-                Ok(res) => res,
-                Err(_) => return None,
-            };
+            let (bytes, ttl_secs): (Option<Vec<u8>>, i64) =
+                match redis::pipe().get(key).ttl(key).query_async(&mut conn).await {
+                    Ok(res) => res,
+                    Err(_) => return None,
+                };
 
             match bytes {
                 Some(b) if !b.is_empty() => {

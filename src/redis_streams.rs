@@ -82,11 +82,16 @@ impl StreamingBackend for RedisStreams {
                         if entry_parts.len() >= 2 {
                             if let Some(redis::Value::BulkString(id_bytes)) = entry_parts.first() {
                                 let id = String::from_utf8_lossy(id_bytes).to_string();
-                                if let Some(redis::Value::Array(field_values)) = entry_parts.get(1) {
+                                if let Some(redis::Value::Array(field_values)) = entry_parts.get(1)
+                                {
                                     let mut fields = Vec::new();
                                     for chunk in field_values.chunks(2) {
                                         if chunk.len() == 2 {
-                                            if let (Some(redis::Value::BulkString(f_bytes)), Some(redis::Value::BulkString(v_bytes))) = (chunk.first(), chunk.get(1)) {
+                                            if let (
+                                                Some(redis::Value::BulkString(f_bytes)),
+                                                Some(redis::Value::BulkString(v_bytes)),
+                                            ) = (chunk.first(), chunk.get(1))
+                                            {
                                                 fields.push((
                                                     String::from_utf8_lossy(f_bytes).to_string(),
                                                     String::from_utf8_lossy(v_bytes).to_string(),
@@ -124,10 +129,10 @@ impl StreamingBackend for RedisStreams {
                 options = options.block(ms);
             }
 
-            let raw_result: redis::Value =
-                conn.xread_options(&[stream_key], &[last_id], &options)
-                    .await
-                    .context("Failed to read from Redis stream using XREAD")?;
+            let raw_result: redis::Value = conn
+                .xread_options(&[stream_key], &[last_id], &options)
+                .await
+                .context("Failed to read from Redis stream using XREAD")?;
 
             let mut all_entries = Vec::new();
 
@@ -139,16 +144,35 @@ impl StreamingBackend for RedisStreams {
                                 for entry in entries {
                                     if let redis::Value::Array(entry_parts) = entry {
                                         if entry_parts.len() >= 2 {
-                                            if let Some(redis::Value::BulkString(id_bytes)) = entry_parts.first() {
-                                                let id = String::from_utf8_lossy(id_bytes).to_string();
-                                                if let Some(redis::Value::Array(field_values)) = entry_parts.get(1) {
+                                            if let Some(redis::Value::BulkString(id_bytes)) =
+                                                entry_parts.first()
+                                            {
+                                                let id =
+                                                    String::from_utf8_lossy(id_bytes).to_string();
+                                                if let Some(redis::Value::Array(field_values)) =
+                                                    entry_parts.get(1)
+                                                {
                                                     let mut fields = Vec::new();
                                                     for chunk in field_values.chunks(2) {
                                                         if chunk.len() == 2 {
-                                                            if let (Some(redis::Value::BulkString(f_bytes)), Some(redis::Value::BulkString(v_bytes))) = (chunk.first(), chunk.get(1)) {
+                                                            if let (
+                                                                Some(redis::Value::BulkString(
+                                                                    f_bytes,
+                                                                )),
+                                                                Some(redis::Value::BulkString(
+                                                                    v_bytes,
+                                                                )),
+                                                            ) = (chunk.first(), chunk.get(1))
+                                                            {
                                                                 fields.push((
-                                                                    String::from_utf8_lossy(f_bytes).to_string(),
-                                                                    String::from_utf8_lossy(v_bytes).to_string(),
+                                                                    String::from_utf8_lossy(
+                                                                        f_bytes,
+                                                                    )
+                                                                    .to_string(),
+                                                                    String::from_utf8_lossy(
+                                                                        v_bytes,
+                                                                    )
+                                                                    .to_string(),
                                                                 ));
                                                             }
                                                         }

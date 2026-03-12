@@ -114,16 +114,19 @@ async fn test_invalidate_pattern() {
                 still_present += 1;
             }
         }
-        
+
         if still_present == 0 {
             all_invalidated = true;
             break;
         }
-        
+
         sleep(Duration::from_millis(100)).await;
     }
-    
-    assert!(all_invalidated, "All keys matching pattern should be eventually invalidated");
+
+    assert!(
+        all_invalidated,
+        "All keys matching pattern should be eventually invalidated"
+    );
 }
 
 /// Test write-through broadcast

@@ -21,7 +21,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 3. Store data with different strategies
-    let user_data = Bytes::from("{\"id\": 1, \"name\": \"Alice\", \"email\": \"alice@example.com\", \"role\": \"admin\"}");
+    let user_data = Bytes::from(
+        "{\"id\": 1, \"name\": \"Alice\", \"email\": \"alice@example.com\", \"role\": \"admin\"}",
+    );
 
     println!("Storing user data with ShortTerm strategy (5 min TTL)...");
     cache
@@ -38,7 +40,9 @@ async fn main() -> anyhow::Result<()> {
     println!();
 
     // 5. Store API response with RealTime strategy
-    let api_response = Bytes::from("{\"timestamp\": \"2025-01-01T00:00:00Z\", \"temperature\": 25.5, \"humidity\": 60}");
+    let api_response = Bytes::from(
+        "{\"timestamp\": \"2025-01-01T00:00:00Z\", \"temperature\": 25.5, \"humidity\": 60}",
+    );
 
     println!("Storing API response with RealTime strategy (10 sec TTL)...");
     cache
