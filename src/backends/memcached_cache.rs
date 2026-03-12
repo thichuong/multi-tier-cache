@@ -3,7 +3,8 @@
 //! Memcached-based distributed cache for warm data storage with simple key-value operations.
 
 use anyhow::{anyhow, Result};
-use serde_json;
+use bytes::Bytes;
+use futures_util::future::BoxFuture;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -39,18 +40,6 @@ impl MemcachedCache {
     ///
     /// Uses `MEMCACHED_URL` environment variable or defaults to `memcache://127.0.0.1:11211`
     ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// # use multi_tier_cache::backends::MemcachedCache;
-    /// # async fn example() -> anyhow::Result<()> {
-    /// // Set environment variable (optional)
-    /// std::env::set_var("MEMCACHED_URL", "memcache://localhost:11211");
-    ///
-    /// let cache = MemcachedCache::new().await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     /// # Errors
     ///
     /// Returns an error if the Memcached client cannot be created.
@@ -94,7 +83,7 @@ impl MemcachedCache {
     ///
     /// # Errors
     ///
-    /// Returns an error if the Memcached client fails to retrieve statistics.
+    /// Returns an error if the stats cannot be retrieved.
     pub fn get_server_stats(
         &self,
     ) -> Result<Vec<(String, std::collections::HashMap<String, String>)>> {
@@ -107,82 +96,73 @@ impl MemcachedCache {
 // ===== Trait Implementations =====
 
 use crate::traits::CacheBackend;
-use async_trait::async_trait;
 
 /// Implement `CacheBackend` trait for `MemcachedCache`
-///
-/// This allows `MemcachedCache` to be used as a pluggable backend in the multi-tier cache system.
-#[async_trait]
 impl CacheBackend for MemcachedCache {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        if let Ok(Some(json_str)) = self.client.get::<String>(key) {
-            if let Ok(value) = serde_json::from_str(&json_str) {
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        Box::pin(async move {
+            if let Ok(Some(bytes_vec)) = self.client.get::<Vec<u8>>(key) {
                 self.hits.fetch_add(1, Ordering::Relaxed);
-                Some(value)
+                Some(Bytes::from(bytes_vec))
             } else {
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 None
             }
-        } else {
-            self.misses.fetch_add(1, Ordering::Relaxed);
-            None
-        }
+        })
     }
 
-    async fn set_with_ttl(&self, key: &str, value: serde_json::Value, ttl: Duration) -> Result<()> {
-        let json_str = serde_json::to_string(&value)?;
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
+        ttl: Duration,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            self.client
+                .set(
+                    key,
+                    value.to_vec(),
+                    u32::try_from(ttl.as_secs()).unwrap_or(u32::MAX),
+                )
+                .map_err(|e| anyhow!("Memcached SET failed: {e}"))?;
 
-        self.client
-            .set(
-                key,
-                json_str,
-                u32::try_from(ttl.as_secs()).unwrap_or(u32::MAX),
-            )
-            .map_err(|e| anyhow!("Memcached SET failed: {e}"))?;
-
-        self.sets.fetch_add(1, Ordering::Relaxed);
-        debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Memcached] Cached key with TTL");
-        Ok(())
+            self.sets.fetch_add(1, Ordering::Relaxed);
+            debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Memcached] Cached key with TTL");
+            Ok(())
+        })
     }
 
-    async fn remove(&self, key: &str) -> Result<()> {
-        self.client
-            .delete(key)
-            .map_err(|e| anyhow!("Memcached DELETE failed: {e}"))?;
-        Ok(())
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            self.client
+                .delete(key)
+                .map_err(|e| anyhow!("Memcached DELETE failed: {e}"))?;
+            Ok(())
+        })
     }
 
-    async fn health_check(&self) -> bool {
-        let test_key = "health_check_memcached";
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or(Duration::from_secs(0))
-            .as_secs();
-        let test_value = serde_json::json!({"test": true, "timestamp": timestamp});
+    fn health_check(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            let test_key = "health_check_memcached";
+            let test_value = Bytes::from_static(b"health_check");
 
-        match self
-            .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10))
-            .await
-        {
-            Ok(()) => match self.get(test_key).await {
-                Some(retrieved) => {
-                    let _ = self.remove(test_key).await;
-                    retrieved
-                        .get("test")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false)
-                }
-                None => false,
-            },
-            Err(_) => false,
-        }
+            match self
+                .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10))
+                .await
+            {
+                Ok(()) => match self.get(test_key).await {
+                    Some(retrieved) => {
+                        let _ = self.remove(test_key).await;
+                        retrieved == test_value
+                    }
+                    None => false,
+                },
+                Err(_) => false,
+            }
+        })
     }
 
     fn name(&self) -> &'static str {
         "Memcached"
     }
 }
-
-// Note: MemcachedCache does NOT implement L2CacheBackend trait because
-// Memcached does not support TTL introspection (cannot get remaining TTL).
-// This means it can be used as L2, but without automatic L2->L1 promotion based on TTL.

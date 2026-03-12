@@ -8,12 +8,8 @@ use std::time::Duration;
 mod common;
 use common::{test_data, test_key};
 use multi_tier_cache::{
-    CacheBackend, CacheManager, CacheStrategy, CacheSystemBuilder, L1Cache, L2Cache,
-    L2CacheBackend, TierConfig,
+    CacheBackend, CacheManager, CacheStrategy, CacheSystemBuilder, L2Cache, TierConfig,
 };
-use std::sync::atomic::{AtomicU32, Ordering};
-use tokio::task::JoinSet;
-use tokio::time::Instant;
 
 /// Test basic multi-tier get/set operations
 #[tokio::test]
@@ -178,10 +174,12 @@ async fn test_backward_compatibility_legacy_mode() {
         .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(result, Some(test_data));
 
-    // Tier stats should be empty for legacy mode
-    assert!(
-        manager.get_tier_stats().is_empty(),
-        "Legacy mode should not have tier stats"
+    // Tier stats should now reflect the 2-tier setup even in legacy mode (unified architecture)
+    let tier_stats = manager.get_tier_stats();
+    assert_eq!(
+        tier_stats.len(),
+        2,
+        "Legacy mode should have 2 tiers in unified architecture"
     );
 
     // Regular stats should work

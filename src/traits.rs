@@ -12,29 +12,32 @@
 //! # Example: Custom L1 Backend
 //!
 /// ```rust,no_run
-/// use multi_tier_cache::CacheBackend;
-/// use std::time::Duration;
 /// use anyhow::Result;
 /// use bytes::Bytes;
+/// use std::time::Duration;
+/// use futures_util::future::BoxFuture;
+/// use multi_tier_cache::CacheBackend;
 ///
 /// struct MyCustomCache;
 ///
 /// impl CacheBackend for MyCustomCache {
-///     async fn get(&self, key: &str) -> Option<Bytes> {
-///         None
+///     fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+///         Box::pin(async move { None })
 ///     }
 ///
-///     async fn set_with_ttl(&self, key: &str, value: Bytes, ttl: Duration) -> Result<()> {
-///         Ok(())
+///     fn set_with_ttl<'a>(&'a self, _key: &'a str, _value: Bytes, _ttl: Duration) -> BoxFuture<'a, Result<()>> {
+///         Box::pin(async move { Ok(()) })
 ///     }
 ///
-///     async fn remove(&self, key: &str) -> Result<()> {
-///         Ok(())
+///     fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Result<()>> {
+///         Box::pin(async move { Ok(()) })
 ///     }
 ///
-///     async fn health_check(&self) -> bool {
-///         true
+///     fn health_check(&self) -> BoxFuture<'_, bool> {
+///         Box::pin(async move { true })
 ///     }
+///
+///     fn name(&self) -> &'static str { "MyCache" }
 /// }
 /// ```
 use anyhow::Result;
@@ -157,24 +160,25 @@ pub trait CacheBackend: Send + Sync {
 /// # Example
 ///
 /// ```rust,no_run
-/// use multi_tier_cache::{CacheBackend, L2CacheBackend};
-/// use std::time::Duration;
 /// use anyhow::Result;
 /// use bytes::Bytes;
+/// use std::time::Duration;
+/// use futures_util::future::BoxFuture;
+/// use multi_tier_cache::{CacheBackend, L2CacheBackend};
 ///
 /// struct MyDistributedCache;
 ///
 /// impl CacheBackend for MyDistributedCache {
-///     async fn get(&self, _key: &str) -> Option<Bytes> { None }
-///     async fn set_with_ttl(&self, _k: &str, _v: Bytes, _t: Duration) -> Result<()> { Ok(()) }
-///     async fn remove(&self, _k: &str) -> Result<()> { Ok(()) }
-///     async fn health_check(&self) -> bool { true }
+///     fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> { Box::pin(async move { None }) }
+///     fn set_with_ttl<'a>(&'a self, _k: &'a str, _v: Bytes, _t: Duration) -> BoxFuture<'a, Result<()>> { Box::pin(async move { Ok(()) }) }
+///     fn remove<'a>(&'a self, _k: &'a str) -> BoxFuture<'a, Result<()>> { Box::pin(async move { Ok(()) }) }
+///     fn health_check(&self) -> BoxFuture<'_, bool> { Box::pin(async move { true }) }
+///     fn name(&self) -> &'static str { "MyDistCache" }
 /// }
 ///
 /// impl L2CacheBackend for MyDistributedCache {
-///     async fn get_with_ttl(&self, key: &str) -> Option<(Bytes, Option<Duration>)> {
-///         // Retrieve value and calculate remaining TTL
-///         None
+///     fn get_with_ttl<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+///         Box::pin(async move { None })
 ///     }
 /// }
 /// ```
@@ -210,35 +214,36 @@ pub trait L2CacheBackend: CacheBackend {
 /// ```rust,no_run
 /// use multi_tier_cache::StreamingBackend;
 /// use anyhow::Result;
+/// use futures_util::future::BoxFuture;
 ///
 /// struct MyStreamingCache;
 ///
 /// impl StreamingBackend for MyStreamingCache {
-///     async fn stream_add(
-///         &self,
-///         stream_key: &str,
-///         fields: Vec<(String, String)>,
-///         maxlen: Option<usize>,
-///     ) -> Result<String> {
-///         Ok("entry-id".to_string())
+///     fn stream_add<'a>(
+///         &'a self,
+///         _stream_key: &'a str,
+///         _fields: Vec<(String, String)>,
+///         _maxlen: Option<usize>,
+///     ) -> BoxFuture<'a, Result<String>> {
+///         Box::pin(async move { Ok("entry-id".to_string()) })
 ///     }
 ///
-///     async fn stream_read_latest(
-///         &self,
-///         stream_key: &str,
-///         count: usize,
-///     ) -> Result<Vec<(String, Vec<(String, String)>)>> {
-///         Ok(vec![])
+///     fn stream_read_latest<'a>(
+///         &'a self,
+///         _stream_key: &'a str,
+///         _count: usize,
+///     ) -> BoxFuture<'a, Result<Vec<(String, Vec<(String, String)>)>>> {
+///         Box::pin(async move { Ok(vec![]) })
 ///     }
 ///
-///     async fn stream_read(
-///         &self,
-///         stream_key: &str,
-///         last_id: &str,
-///         count: usize,
-///         block_ms: Option<usize>,
-///     ) -> Result<Vec<(String, Vec<(String, String)>)>> {
-///         Ok(vec![])
+///     fn stream_read<'a>(
+///         &'a self,
+///         _stream_key: &'a str,
+///         _last_id: &'a str,
+///         _count: usize,
+///         _block_ms: Option<usize>,
+///     ) -> BoxFuture<'a, Result<Vec<(String, Vec<(String, String)>)>>> {
+///         Box::pin(async move { Ok(vec![]) })
 ///     }
 /// }
 /// ```

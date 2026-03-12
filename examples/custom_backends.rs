@@ -33,21 +33,14 @@ impl HashMapCache {
         }
     }
 
-    fn cleanup_expired(&self) {
-        let mut store = self
-            .store
-            .write()
-            .unwrap_or_else(|_| panic!("Lock poisoned"));
-        let now = Instant::now();
-        store.retain(|_, (_, expiry)| *expiry > now);
-    }
+
 }
 
 impl CacheBackend for HashMapCache {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
-        let name = self.name.clone();
+
         Box::pin(async move {
             // Clean up expired entries periodically (simple simulation)
             if rand::random::<f32>() < 0.1 {
@@ -70,14 +63,14 @@ impl CacheBackend for HashMapCache {
     fn set_with_ttl<'a>(&'a self, key: &'a str, value: Bytes, ttl: Duration) -> BoxFuture<'a, Result<()>> {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
-        let name = self.name.clone();
+
         Box::pin(async move {
             let mut store = store
                 .write()
                 .unwrap_or_else(|_| panic!("Lock poisoned"));
             let expiry = Instant::now() + ttl;
             store.insert(key.clone(), (value, expiry));
-            println!("💾 [{}] Cached '{}' with TTL {:?}", name, key, ttl);
+            println!("💾 [{}] Cached '{}' with TTL {:?}", self.name, key, ttl);
             Ok(())
         })
     }
@@ -234,12 +227,12 @@ impl CacheBackend for NoOpCache {
         _value: Bytes,
         ttl: Duration,
     ) -> BoxFuture<'a, Result<()>> {
-        let name = self.name.clone();
+
         let key = key.to_string();
         Box::pin(async move {
             println!(
                 "💾 [{}] Would cache '{}' with TTL {:?} (no-op)",
-                name, key, ttl
+                self.name, key, ttl
             );
             Ok(())
         })

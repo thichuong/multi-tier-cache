@@ -94,7 +94,7 @@ impl InvalidationMessage {
 /// Helper module for Bytes serialization in JSON
 mod serde_bytes_wrapper {
     use bytes::Bytes;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(bytes: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
     where

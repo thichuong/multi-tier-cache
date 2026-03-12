@@ -19,14 +19,14 @@
 //!     let cache = CacheSystem::new().await?;
 //!
 //!     // Store data with cache strategy
-//!     let data = serde_json::json!({"user": "alice", "score": 100});
+//!     let data = bytes::Bytes::from("{\"user\": \"alice\", \"score\": 100}");
 //!     cache.cache_manager()
 //!         .set_with_strategy("user:1", data, CacheStrategy::ShortTerm)
 //!         .await?;
 //!
 //!     // Retrieve data (L1 first, then L2 fallback)
 //!     if let Some(cached) = cache.cache_manager().get("user:1").await? {
-//!         tracing::info!("Cached data: {}", cached);
+//!         tracing::info!("Cached data: {:?}", cached);
 //!     }
 //!
 //!     // Get statistics

@@ -118,6 +118,7 @@ impl CacheBackend for DashMapCache {
         Box::pin(async move {
             let entry = CacheEntry::new(value, ttl);
             self.map.insert(key.to_string(), entry);
+            self.sets.fetch_add(1, Ordering::Relaxed);
             debug!(key = %key, ttl_secs = %ttl.as_secs(), "[DashMap] Cached key bytes with TTL");
             Ok(())
         })

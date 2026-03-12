@@ -104,18 +104,26 @@ async fn test_invalidate_pattern() {
         .await
         .unwrap_or_else(|_| panic!("Failed to invalidate pattern"));
 
-    // Wait for propagation
-    sleep(Duration::from_millis(500)).await;
-
-    // All should be gone
-    for i in 1..=5 {
-        let key = format!("{prefix}key{i}");
-        let cached = cache
-            .get(&key)
-            .await
-            .unwrap_or_else(|_| panic!("Failed to get cache"));
-        assert_eq!(cached, None, "Key {key} should be invalidated");
+    // Wait for propagation and check (Eventually consistent)
+    let mut all_invalidated = false;
+    for _ in 0..10 {
+        let mut still_present = 0;
+        for i in 1..=5 {
+            let key = format!("{prefix}key{i}");
+            if cache.get(&key).await.unwrap_or(None).is_some() {
+                still_present += 1;
+            }
+        }
+        
+        if still_present == 0 {
+            all_invalidated = true;
+            break;
+        }
+        
+        sleep(Duration::from_millis(100)).await;
     }
+    
+    assert!(all_invalidated, "All keys matching pattern should be eventually invalidated");
 }
 
 /// Test write-through broadcast

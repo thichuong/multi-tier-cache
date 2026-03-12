@@ -2,7 +2,7 @@
 //!
 //! Manages operations across L1 (Moka) and L2 (Redis) caches with intelligent fallback.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use dashmap::DashMap;
 use serde_json;
 use std::future::Future;
@@ -26,18 +26,7 @@ use futures_util::future::BoxFuture;
 /// Stores a broadcast sender for each active key computation
 type InFlightMap = DashMap<String, broadcast::Sender<Result<Bytes, Arc<anyhow::Error>>>>;
 
-/// RAII cleanup guard for in-flight request tracking
-/// Ensures that entries are removed from `DashMap` even on early return or panic
-struct CleanupGuard<'a> {
-    map: &'a InFlightMap,
-    key: String,
-}
 
-impl Drop for CleanupGuard<'_> {
-    fn drop(&mut self) {
-        self.map.remove(&self.key);
-    }
-}
 
 /// Cache strategies for different data types
 #[derive(Debug, Clone)]
@@ -246,42 +235,7 @@ impl TierConfig {
     }
 }
 
-/// Proxy wrapper to convert `L2CacheBackend` to `CacheBackend`
-/// (Rust doesn't support automatic trait upcasting for trait objects)
-struct ProxyCacheBackend {
-    backend: Arc<dyn L2CacheBackend>,
-}
 
-impl CacheBackend for ProxyCacheBackend {
-    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
-        self.backend.get(key)
-    }
-
-    fn set_with_ttl<'a>(
-        &'a self,
-        key: &'a str,
-        value: Bytes,
-        ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
-        self.backend.set_with_ttl(key, value, ttl)
-    }
-
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
-        self.backend.remove(key)
-    }
-
-    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, Result<()>> {
-        self.backend.remove_pattern(pattern)
-    }
-
-    fn health_check(&self) -> BoxFuture<'_, bool> {
-        self.backend.health_check()
-    }
-
-    fn name(&self) -> &'static str {
-        self.backend.name()
-    }
-}
 
 pub struct CacheManager {
     /// Ordered list of cache tiers (L1, L2, L3, ...)
@@ -357,10 +311,7 @@ impl CacheManager {
         })
     }
 
-    /// Proxy wrapper to allow using `CacheBackend` where `L2CacheBackend` is expected
-    fn proxy_l1(l1: Arc<dyn CacheBackend>) -> Arc<dyn L2CacheBackend> {
-        Arc::new(ProxyL1ToL2(l1))
-    }
+
 
     /// Create new cache manager with default backends (backward compatible)
     ///
@@ -702,27 +653,28 @@ impl CacheManager {
         // Check remaining tiers with promotion
         let result = self.get_multi_tier(key).await?;
 
-        if result.is_some() {
+        if let Some(val) = result.clone() {
             // Hit in L2+ tier - update legacy stats
             if self.tiers.len() >= 2 {
                 self.l2_hits.fetch_add(1, Ordering::Relaxed);
             }
+            
+            // Notify any waiting subscribers
+            let _ = lock_guard.send(Ok(val.clone()));
+            
+            // Remove the in-flight entry after computation/retrieval
+            self.in_flight_requests.remove(key);
+            
+            return Ok(Some(val));
         } else {
             self.misses.fetch_add(1, Ordering::Relaxed);
+            
+            // Remove the in-flight entry after computation/retrieval
+            self.in_flight_requests.remove(key);
+            
+            return Ok(None);
         }
 
-        // Notify any waiting subscribers
-        if let Some(value) = result.clone() {
-            let _ = lock_guard.send(Ok(value));
-        } else {
-            // If it was a miss, we might want to send an error or just let subscribers time out
-            // For now, we'll just let the sender drop, which will cause `recv()` to return `Err(RecvError::Closed)`
-        }
-
-        // Remove the in-flight entry after computation/retrieval
-        self.in_flight_requests.remove(key);
-
-        Ok(result)
     }
 
     /// Set value with specific cache strategy (all tiers)
@@ -1298,9 +1250,10 @@ impl CacheManager {
     /// ```rust,no_run
     /// # use multi_tier_cache::CacheManager;
     /// # use std::time::Duration;
+    /// # use bytes::Bytes;
     /// # async fn example(cache_manager: &CacheManager) -> anyhow::Result<()> {
     /// // Update user cache with new data
-    /// let user_data = serde_json::json!({"id": 123, "name": "Alice"});
+    /// let user_data = Bytes::from("alice");
     /// cache_manager.update_cache("user:123", user_data, Some(Duration::from_secs(3600))).await?;
     /// # Ok(())
     /// # }
@@ -1397,9 +1350,10 @@ impl CacheManager {
     /// # Example
     /// ```rust,no_run
     /// # use multi_tier_cache::{CacheManager, CacheStrategy};
+    /// # use bytes::Bytes;
     /// # async fn example(cache_manager: &CacheManager) -> anyhow::Result<()> {
     /// // Update and broadcast in one call
-    /// let data = serde_json::json!({"status": "active"});
+    /// let data = Bytes::from("active");
     /// cache_manager.set_with_broadcast("user:123", data, CacheStrategy::MediumTerm).await?;
     /// # Ok(())
     /// # }

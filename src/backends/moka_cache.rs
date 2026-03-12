@@ -218,33 +218,17 @@ impl CacheBackend for MokaCache {
 
     fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            let pattern_owned = pattern.to_string();
-
-            let p1 = pattern_owned.clone();
-            let _ = self.cache.invalidate_entries_if(move |k, _v| {
-                if p1.ends_with('*') {
-                    let prefix = &p1[..p1.len() - 1];
-                    k.starts_with(prefix)
-                } else {
-                    k == &p1
-                }
-            });
-
-            let p2 = pattern_owned;
-            let _ = self.typed_cache.invalidate_entries_if(move |k, _v| {
-                if p2.ends_with('*') {
-                    let prefix = &p2[..p2.len() - 1];
-                    k.starts_with(prefix)
-                } else {
-                    k == &p2
-                }
-            });
-
+            // For Moka (L1), we'll do a full invalidation for pattern requests to ensure consistency.
+            // Pattern invalidation is usually relatively rare compared to single-key lookups,
+            // so clearing L1 is a safe and robust fallback to ensure no stale data remains.
+            self.cache.invalidate_all();
+            self.typed_cache.invalidate_all();
+            
             // Ensure background invalidation tasks are processed
             self.cache.run_pending_tasks().await;
             self.typed_cache.run_pending_tasks().await;
 
-            debug!(pattern = %pattern, "[Moka] Invalidated pattern '{}' from Moka cache", pattern);
+            debug!(pattern = %pattern, "[Moka] Invalidated all entries due to pattern '{}' request", pattern);
             Ok(())
         })
     }
