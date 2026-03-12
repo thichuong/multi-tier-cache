@@ -1,1 +1,4 @@
 /target
+dump.rdb
+**/*.rs.bk
+.DS_Store

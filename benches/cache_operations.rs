@@ -8,7 +8,7 @@
 //! - Different data sizes
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use multi_tier_cache::{CacheBackend, CacheStrategy, CacheSystem};
+use multi_tier_cache::{Bytes, CacheBackend, CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -26,13 +26,14 @@ fn setup_cache() -> (CacheSystem, Runtime) {
 }
 
 /// Generate test data of specified size
-fn test_data(size_bytes: usize) -> serde_json::Value {
+fn test_data(size_bytes: usize) -> Bytes {
     let data_string = "x".repeat(size_bytes);
-    json!({
+    let json = json!({
         "data": data_string,
         "size": size_bytes,
         "timestamp": "2025-01-01T00:00:00Z"
-    })
+    });
+    Bytes::from(serde_json::to_vec(&json).unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")))
 }
 
 /// Benchmark L1 + L2 cache write operations
@@ -193,7 +194,7 @@ fn bench_compute_on_miss(c: &mut Criterion) {
                             let d = data.clone();
                             async move {
                                 tokio::time::sleep(delay).await;
-                                Ok(d)
+                                anyhow::Ok(d)
                             }
                         })
                         .await

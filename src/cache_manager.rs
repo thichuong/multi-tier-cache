@@ -645,8 +645,7 @@ impl CacheManager {
                 Ok(Ok(value)) => return Ok(Some(value)),
                 Ok(Err(e)) => {
                     return Err(anyhow::anyhow!(
-                        "Computation failed in another thread: {}",
-                        e
+                        "Computation failed in another thread: {e}"
                     ))
                 }
                 Err(_) => {} // Fall through to re-compute if sender dropped or channel empty
@@ -678,14 +677,14 @@ impl CacheManager {
             // Remove the in-flight entry after computation/retrieval
             self.in_flight_requests.remove(key);
 
-            return Ok(Some(val));
+            Ok(Some(val))
         } else {
             self.misses.fetch_add(1, Ordering::Relaxed);
 
             // Remove the in-flight entry after computation/retrieval
             self.in_flight_requests.remove(key);
 
-            return Ok(None);
+            Ok(None)
         }
     }
 
@@ -817,8 +816,7 @@ impl CacheManager {
                 Ok(Ok(value)) => return Ok(value),
                 Ok(Err(e)) => {
                     return Err(anyhow::anyhow!(
-                        "Computation failed in another thread: {}",
-                        e
+                        "Computation failed in another thread: {e}"
                     ))
                 }
                 Err(_) => {} // Fall through to re-compute
@@ -850,7 +848,7 @@ impl CacheManager {
                 let _ = tx.send(Ok(value.clone()));
             }
             Err(e) => {
-                let _ = tx.send(Err(Arc::new(anyhow::anyhow!("{}", e))));
+                let _ = tx.send(Err(Arc::new(anyhow::anyhow!("{e}"))));
             }
         }
 
@@ -1020,8 +1018,7 @@ impl CacheManager {
         match serde_json::from_slice::<T>(&bytes) {
             Ok(val) => Ok(val),
             Err(e) => Err(anyhow::anyhow!(
-                "Coalesced result deserialization failed: {}",
-                e
+                "Coalesced result deserialization failed: {e}"
             )),
         }
     }

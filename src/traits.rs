@@ -143,7 +143,7 @@ pub trait CacheBackend: Send + Sync {
     fn name(&self) -> &'static str;
 }
 
-/// (No longer needed since traits are now dyn-compatible)
+// (No longer needed since traits are now dyn-compatible)
 
 /// Extended trait for L2 cache backends with TTL introspection
 ///
@@ -188,7 +188,14 @@ pub trait L2CacheBackend: CacheBackend {
         -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>>;
 }
 
-/// (No longer needed since traits are now dyn-compatible)
+// (No longer needed since traits are now dyn-compatible)
+
+/// Optional trait for cache backends that support event streaming
+///
+/// # Type Definitions
+///
+/// * `StreamEntry` - A single entry in a stream: `(id, fields)` where fields are `Vec<(key, value)>`
+pub type StreamEntry = (String, Vec<(String, String)>);
 
 /// Optional trait for cache backends that support event streaming
 ///
@@ -259,7 +266,7 @@ pub trait StreamingBackend: Send + Sync {
         &'a self,
         stream_key: &'a str,
         count: usize,
-    ) -> BoxFuture<'a, Result<Vec<(String, Vec<(String, String)>)>>>;
+    ) -> BoxFuture<'a, Result<Vec<StreamEntry>>>;
 
     /// Read entries from a stream with optional blocking
     fn stream_read<'a>(
@@ -268,5 +275,5 @@ pub trait StreamingBackend: Send + Sync {
         last_id: &'a str,
         count: usize,
         block_ms: Option<usize>,
-    ) -> BoxFuture<'a, Result<Vec<(String, Vec<(String, String)>)>>>;
+    ) -> BoxFuture<'a, Result<Vec<StreamEntry>>>;
 }

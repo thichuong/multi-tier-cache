@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
 
     for key in keys {
         if let Some(value) = cache.cache_manager().get(key).await? {
-            println!("✅ {key}: {:?}", value);
+            println!("✅ {key}: {value:?}");
         }
     }
 

@@ -95,6 +95,7 @@ pub use invalidation::{
     InvalidationSubscriber,
 };
 pub use redis_streams::RedisStreams;
+pub use bytes::Bytes;
 pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 
 // Re-export backend types (maintains backward compatibility)

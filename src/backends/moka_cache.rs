@@ -43,6 +43,7 @@ impl TypedCacheEntry {
         }
     }
 
+    #[must_use] 
     pub fn is_expired(&self) -> bool {
         Instant::now() > self.expires_at
     }
@@ -88,6 +89,10 @@ pub struct MokaCache {
 
 impl MokaCache {
     /// Create new Moka cache
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if cache configuration is invalid.
     pub fn new(config: MokaCacheConfig) -> Result<Self> {
         info!("Initializing Moka Cache");
 
@@ -119,6 +124,10 @@ impl MokaCache {
     }
 
     /// Set a typed value in the L1 cache (zero-cost optimization)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the key or value cannot be inserted into the cache.
     pub async fn set_typed(
         &self,
         key: &str,

@@ -287,7 +287,7 @@ async fn main() -> Result<()> {
         .await?;
 
     if let Some(cached) = manager.get("user:alice").await? {
-        println!("✅ Retrieved from cache: {:?}", cached);
+        println!("✅ Retrieved from cache: {cached:?}");
     }
 
     // Example 2: No-Op caches (for testing/development)

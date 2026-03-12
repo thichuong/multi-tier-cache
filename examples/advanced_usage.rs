@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
             fetch_from_database(42)
         })
         .await?;
-    println!("   Result: {:?}\n", product1);
+    println!("   Result: {product1:?}\n");
 
     // Second call - cache hit, no computation
     println!("Second call - cache hit:");
@@ -80,7 +80,7 @@ async fn main() -> anyhow::Result<()> {
             fetch_from_database(42)
         })
         .await?;
-    println!("   Result: {:?} (from cache, no DB call)\n", product2);
+    println!("   Result: {product2:?} (from cache, no DB call)\n");
 
     // Scenario 3: Concurrent cache operations
     println!("=== Scenario 3: Concurrent Operations ===\n");
@@ -112,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
             .get(&format!("concurrent:{i}"))
             .await?
         {
-            println!("   concurrent:{i} = {:?}", value);
+            println!("   concurrent:{i} = {value:?}");
         }
     }
 

@@ -23,6 +23,10 @@ pub struct RedisCache {
 
 impl RedisCache {
     /// Create new Redis cache
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Redis URL is invalid or connection fails.
     pub async fn new() -> Result<Self> {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
@@ -30,6 +34,10 @@ impl RedisCache {
     }
 
     /// Create new Redis cache with custom URL
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Redis URL is invalid or connection fails.
     pub async fn with_url(redis_url: &str) -> Result<Self> {
         info!(redis_url = %redis_url, "Initializing Redis Cache with ConnectionManager");
 
@@ -57,6 +65,10 @@ impl RedisCache {
     }
 
     /// Scan keys matching a pattern
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the SCAN command fails.
     pub async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
         let mut conn = self.conn_manager.clone();
         let mut keys = Vec::new();
@@ -85,6 +97,10 @@ impl RedisCache {
     }
 
     /// Remove multiple keys at once
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DEL command fails.
     pub async fn remove_bulk(&self, keys: &[String]) -> Result<usize> {
         if keys.is_empty() {
             return Ok(0);
@@ -126,14 +142,15 @@ impl CacheBackend for RedisCache {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
+            let ttl_ms = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX);
             let result = conn
-                .pset_ex(key, value.to_vec(), ttl.as_millis() as u64)
+                .pset_ex(key, value.to_vec(), ttl_ms)
                 .await;
             if result.is_ok() {
                 self.sets.fetch_add(1, Ordering::Relaxed);
                 debug!(key = %key, ttl_ms = %ttl.as_millis(), "[Redis] Cached key bytes with TTL");
             }
-            result.map_err(|e| anyhow::anyhow!("Redis set failed: {}", e))
+            result.map_err(|e| anyhow::anyhow!("Redis set failed: {e}"))
         })
     }
 
@@ -142,7 +159,7 @@ impl CacheBackend for RedisCache {
             let mut conn = self.conn_manager.clone();
             conn.del(key)
                 .await
-                .map_err(|e| anyhow::anyhow!("Redis del failed: {}", e))
+                .map_err(|e| anyhow::anyhow!("Redis del failed: {e}"))
         })
     }
 

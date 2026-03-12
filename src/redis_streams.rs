@@ -1,12 +1,9 @@
-use crate::traits::StreamingBackend;
+use crate::traits::{StreamEntry, StreamingBackend};
 use anyhow::{Context, Result};
 use futures_util::future::BoxFuture;
 use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
 use tracing::debug;
-
-/// Type alias for Redis Stream entry: (ID, Field-Value Pairs)
-pub type StreamEntry = (String, Vec<(String, String)>);
 
 /// Redis Streams client for event-driven architectures
 #[derive(Clone)]
@@ -16,6 +13,10 @@ pub struct RedisStreams {
 
 impl RedisStreams {
     /// Create a new `RedisStreams` instance
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Redis connection fails.
     pub async fn new(redis_url: &str) -> Result<Self> {
         let client = redis::Client::open(redis_url)?;
         let conn_manager = ConnectionManager::new(client).await?;
@@ -59,7 +60,7 @@ impl StreamingBackend for RedisStreams {
         &'a self,
         stream_key: &'a str,
         count: usize,
-    ) -> BoxFuture<'a, Result<Vec<(String, Vec<(String, String)>)>>> {
+    ) -> BoxFuture<'a, Result<Vec<StreamEntry>>> {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
             // XREVRANGE is more appropriate for "latest" N entries.
@@ -121,7 +122,7 @@ impl StreamingBackend for RedisStreams {
         last_id: &'a str,
         count: usize,
         block_ms: Option<usize>,
-    ) -> BoxFuture<'a, Result<Vec<(String, Vec<(String, String)>)>>> {
+    ) -> BoxFuture<'a, Result<Vec<StreamEntry>>> {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
             let mut options = redis::streams::StreamReadOptions::default().count(count);

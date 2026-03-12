@@ -65,7 +65,7 @@ impl CacheBackend for MockL3Cache {
             let mut store = store.write().unwrap_or_else(|_| panic!("Lock poisoned"));
             let expiry = Instant::now() + ttl;
             store.insert(key.clone(), (value, expiry, ttl));
-            println!("💾 [{}] Cached '{}' with TTL {:?}", name, key, ttl);
+            println!("💾 [{name}] Cached '{key}' with TTL {ttl:?}");
             Ok(())
         })
     }
@@ -193,7 +193,7 @@ async fn main() -> Result<()> {
 
     let start = Instant::now();
     if let Some(val) = cache.cache_manager().get("archive:doc1").await? {
-        println!("✅ Found value: {:?}", val);
+        println!("✅ Found value: {val:?}");
         println!("   Latency: {:?}", start.elapsed());
     } else {
         println!("❌ Value not found!");
@@ -203,7 +203,7 @@ async fn main() -> Result<()> {
     println!("Requesting 'archive:doc1' again (should hit L1)...");
     let start = Instant::now();
     if let Some(val) = cache.cache_manager().get("archive:doc1").await? {
-        println!("✅ Found value: {:?}", val);
+        println!("✅ Found value: {val:?}");
         println!("   Latency: {:?}", start.elapsed());
     }
 

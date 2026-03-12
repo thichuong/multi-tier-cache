@@ -59,7 +59,9 @@ async fn test_multi_tier_basic_operations() {
 
     // Verify tier stats
     let tier_stats = manager.get_tier_stats();
-    if !tier_stats.is_empty() {
+    if tier_stats.is_empty() {
+        panic!("Expected tier stats for multi-tier mode");
+    } else {
         println!("Multi-tier stats:");
         for stats in &tier_stats {
             println!(
@@ -70,8 +72,6 @@ async fn test_multi_tier_basic_operations() {
             );
         }
         assert_eq!(tier_stats.len(), 3, "Should have 3 tiers");
-    } else {
-        panic!("Expected tier stats for multi-tier mode");
     }
 
     println!("✅ Multi-tier basic operations test passed");

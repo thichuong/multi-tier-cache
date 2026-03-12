@@ -1,7 +1,8 @@
 //! Benchmarks for serialization and type-safe caching
 
+use anyhow::Context;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use multi_tier_cache::{CacheStrategy, CacheSystem};
+use multi_tier_cache::{Bytes, CacheStrategy, CacheSystem};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Duration;
@@ -51,20 +52,22 @@ fn bench_json_vs_typed(c: &mut Criterion) {
                     "email": "test@example.com"
                 });
 
+                let user_bytes = Bytes::from(serde_json::to_vec(&user)?);
                 cache
                     .cache_manager()
-                    .set_with_strategy(&key, user, CacheStrategy::ShortTerm)
+                    .set_with_strategy(&key, user_bytes, CacheStrategy::ShortTerm)
                     .await
-                    .unwrap_or_else(|_| panic!("Failed to set cache"));
+                    .context("Failed to set cache")?;
 
                 black_box(
                     cache
                         .cache_manager()
                         .get(&key)
                         .await
-                        .unwrap_or_else(|_| panic!("Failed to get cache")),
+                        .context("Failed to get cache")?,
                 );
-            });
+                Ok::<(), anyhow::Error>(())
+            }).unwrap_or_else(|e| panic!("Benchmark execution failed: {e:?}"));
         });
     });
 
@@ -117,20 +120,22 @@ fn bench_data_sizes(c: &mut Criterion) {
                     let key = format!("bench:size:{}", rand::random::<u32>());
                     let data = json!({"data": "x".repeat(size)});
 
+                    let data_bytes = Bytes::from(serde_json::to_vec(&data)?);
                     cache
                         .cache_manager()
-                        .set_with_strategy(&key, data, CacheStrategy::ShortTerm)
+                        .set_with_strategy(&key, data_bytes, CacheStrategy::ShortTerm)
                         .await
-                        .unwrap_or_else(|_| panic!("Failed to set cache"));
+                        .context("Failed to set cache")?;
 
                     black_box(
                         cache
                             .cache_manager()
                             .get(&key)
                             .await
-                            .unwrap_or_else(|_| panic!("Failed to get cache")),
+                            .context("Failed to get cache")?,
                     );
-                });
+                    Ok::<(), anyhow::Error>(())
+                }).unwrap_or_else(|e| panic!("Benchmark execution failed: {e:?}"));
             });
         });
     }

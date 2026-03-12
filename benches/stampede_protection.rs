@@ -1,7 +1,7 @@
 //! Benchmarks for cache stampede protection
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use multi_tier_cache::{CacheStrategy, CacheSystem};
+use multi_tier_cache::{Bytes, CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -37,7 +37,7 @@ fn bench_stampede_protection(c: &mut Criterion) {
                             .cache_manager()
                             .get_or_compute_with(&key, CacheStrategy::ShortTerm, || async {
                                 tokio::time::sleep(Duration::from_millis(10)).await;
-                                Ok(json!({"computed": true}))
+                                anyhow::Ok(Bytes::from(serde_json::to_vec(&json!({"computed": true}))?))
                             })
                             .await
                             .unwrap_or_else(|_| panic!("Failed to compute"))

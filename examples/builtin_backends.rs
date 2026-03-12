@@ -103,7 +103,7 @@ async fn demo_dashmap_backend() -> Result<()> {
         .await?;
 
     if let Some(cached) = manager.get("user:bob").await? {
-        println!("✅ Retrieved from DashMapCache: {:?}", cached);
+        println!("✅ Retrieved from DashMapCache: {cached:?}");
     }
 
     // Show statistics
