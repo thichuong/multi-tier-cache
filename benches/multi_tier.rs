@@ -1,7 +1,9 @@
 //! Benchmarks for multi-tier cache operations (v0.5.0+)
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use multi_tier_cache::{Bytes, CacheStrategy, CacheSystem, CacheSystemBuilder, L2Cache, TierConfig};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use multi_tier_cache::{
+    Bytes, CacheStrategy, CacheSystem, CacheSystemBuilder, L2Cache, TierConfig,
+};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,7 +17,9 @@ fn test_data(size_bytes: usize) -> Bytes {
         "size": size_bytes,
         "timestamp": "2025-01-01T00:00:00Z"
     });
-    Bytes::from(serde_json::to_vec(&json).unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")))
+    Bytes::from(
+        serde_json::to_vec(&json).unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")),
+    )
 }
 
 /// Helper to build a 2-tier cache system

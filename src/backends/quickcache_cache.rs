@@ -7,8 +7,8 @@ use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use parking_lot::RwLock;
 use quick_cache::sync::Cache;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 

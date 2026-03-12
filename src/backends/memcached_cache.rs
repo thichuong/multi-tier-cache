@@ -2,11 +2,11 @@
 //!
 //! Memcached-based distributed cache for warm data storage with simple key-value operations.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tracing::{debug, info};
 

@@ -4,8 +4,8 @@ use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, Client};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tracing::{debug, info};
 
@@ -143,9 +143,7 @@ impl CacheBackend for RedisCache {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
             let ttl_ms = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX);
-            let result = conn
-                .pset_ex(key, value.to_vec(), ttl_ms)
-                .await;
+            let result = conn.pset_ex(key, value.to_vec(), ttl_ms).await;
             if result.is_ok() {
                 self.sets.fetch_add(1, Ordering::Relaxed);
                 debug!(key = %key, ttl_ms = %ttl.as_millis(), "[Redis] Cached key bytes with TTL");

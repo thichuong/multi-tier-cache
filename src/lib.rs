@@ -81,6 +81,7 @@ pub use backends::MemcachedCache;
 #[cfg(feature = "backend-quickcache")]
 pub use backends::QuickCacheBackend;
 pub use builder::CacheSystemBuilder;
+pub use bytes::Bytes;
 pub use cache_manager::{
     CacheManager,
     CacheManagerStats,
@@ -95,7 +96,6 @@ pub use invalidation::{
     InvalidationSubscriber,
 };
 pub use redis_streams::RedisStreams;
-pub use bytes::Bytes;
 pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 
 // Re-export backend types (maintains backward compatibility)
@@ -151,7 +151,7 @@ impl CacheSystem {
     /// #[tokio::main]
     /// async fn main() -> anyhow::Result<()> {
     ///     // Set environment variable (optional)
-    ///     std::env::set_var("REDIS_URL", "redis://localhost:6379");
+    ///     unsafe { std::env::set_var("REDIS_URL", "redis://localhost:6379") };
     ///
     ///     let cache = CacheSystem::new().await?;
     ///     Ok(())

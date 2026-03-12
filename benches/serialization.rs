@@ -1,7 +1,7 @@
 //! Benchmarks for serialization and type-safe caching
 
 use anyhow::Context;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use multi_tier_cache::{Bytes, CacheStrategy, CacheSystem};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -28,7 +28,8 @@ impl User {
 fn setup_cache() -> (CacheSystem, Runtime) {
     let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
     let cache = rt.block_on(async {
-        std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379") };
         CacheSystem::new()
             .await
             .unwrap_or_else(|_| panic!("Failed to create cache system"))
@@ -67,7 +68,8 @@ fn bench_json_vs_typed(c: &mut Criterion) {
                         .context("Failed to get cache")?,
                 );
                 Ok::<(), anyhow::Error>(())
-            }).unwrap_or_else(|e| panic!("Benchmark execution failed: {e:?}"));
+            })
+            .unwrap_or_else(|e| panic!("Benchmark execution failed: {e:?}"));
         });
     });
 
@@ -135,7 +137,8 @@ fn bench_data_sizes(c: &mut Criterion) {
                             .context("Failed to get cache")?,
                     );
                     Ok::<(), anyhow::Error>(())
-                }).unwrap_or_else(|e| panic!("Benchmark execution failed: {e:?}"));
+                })
+                .unwrap_or_else(|e| panic!("Benchmark execution failed: {e:?}"));
             });
         });
     }

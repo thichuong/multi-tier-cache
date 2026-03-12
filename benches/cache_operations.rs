@@ -7,7 +7,7 @@
 //! - Cache hit vs miss latency
 //! - Different data sizes
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use multi_tier_cache::{Bytes, CacheBackend, CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::time::Duration;
@@ -17,7 +17,8 @@ use tokio::runtime::Runtime;
 fn setup_cache() -> (CacheSystem, Runtime) {
     let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
     let cache = rt.block_on(async {
-        std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379") };
         CacheSystem::new()
             .await
             .unwrap_or_else(|_| panic!("Failed to create cache system"))
@@ -33,7 +34,9 @@ fn test_data(size_bytes: usize) -> Bytes {
         "size": size_bytes,
         "timestamp": "2025-01-01T00:00:00Z"
     });
-    Bytes::from(serde_json::to_vec(&json).unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")))
+    Bytes::from(
+        serde_json::to_vec(&json).unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")),
+    )
 }
 
 /// Benchmark L1 + L2 cache write operations

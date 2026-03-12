@@ -6,10 +6,10 @@ use anyhow::Result;
 use dashmap::DashMap;
 use serde_json;
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 
 use tracing::{debug, error, info, warn};
 
@@ -463,15 +463,14 @@ impl CacheManager {
 
         // Validate tiers are sorted by level
         for i in 1..tiers.len() {
-            if let (Some(current), Some(prev)) = (tiers.get(i), tiers.get(i - 1)) {
-                if current.tier_level <= prev.tier_level {
+            if let (Some(current), Some(prev)) = (tiers.get(i), tiers.get(i - 1))
+                && current.tier_level <= prev.tier_level {
                     anyhow::bail!(
                         "Tiers must be sorted by tier_level ascending (found L{} after L{})",
                         current.tier_level,
                         prev.tier_level
                     );
                 }
-            }
         }
 
         Ok(Self {
@@ -570,8 +569,7 @@ impl CacheManager {
                     for upper_tier in self.tiers.iter().take(tier_index).rev() {
                         if let Err(e) = upper_tier
                             .set_with_ttl(key, value.clone(), promotion_ttl)
-                            .await
-                        {
+                            .await {
                             warn!(
                                 "Failed to promote '{}' from L{} to L{}: {}",
                                 key, tier.tier_level, upper_tier.tier_level, e
@@ -620,14 +618,13 @@ impl CacheManager {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
 
         // Fast path for L1 (first tier) - no locking needed
-        if let Some(tier1) = self.tiers.first() {
-            if let Some((value, _ttl)) = tier1.get_with_ttl(key).await {
+        if let Some(tier1) = self.tiers.first()
+            && let Some((value, _ttl)) = tier1.get_with_ttl(key).await {
                 tier1.record_hit();
                 // Update legacy stats for backward compatibility
                 self.l1_hits.fetch_add(1, Ordering::Relaxed);
                 return Ok(Some(value));
             }
-        }
 
         // L1 miss - use stampede protection for lower tiers
         let key_owned = key.to_string();
@@ -644,23 +641,20 @@ impl CacheManager {
             match rx.recv().await {
                 Ok(Ok(value)) => return Ok(Some(value)),
                 Ok(Err(e)) => {
-                    return Err(anyhow::anyhow!(
-                        "Computation failed in another thread: {e}"
-                    ))
+                    return Err(anyhow::anyhow!("Computation failed in another thread: {e}"));
                 }
                 Err(_) => {} // Fall through to re-compute if sender dropped or channel empty
             }
         }
 
         // Double-check L1 after acquiring lock (or if we are the first to compute)
-        if let Some(tier1) = self.tiers.first() {
-            if let Some((value, _ttl)) = tier1.get_with_ttl(key).await {
+        if let Some(tier1) = self.tiers.first()
+            && let Some((value, _ttl)) = tier1.get_with_ttl(key).await {
                 tier1.record_hit();
                 self.l1_hits.fetch_add(1, Ordering::Relaxed);
                 let _ = lock_guard.send(Ok(value.clone())); // Notify any waiting subscribers
                 return Ok(Some(value));
             }
-        }
 
         // Check remaining tiers with promotion
         let result = self.get_multi_tier(key).await?;
@@ -815,9 +809,7 @@ impl CacheManager {
             match rx.recv().await {
                 Ok(Ok(value)) => return Ok(value),
                 Ok(Err(e)) => {
-                    return Err(anyhow::anyhow!(
-                        "Computation failed in another thread: {e}"
-                    ))
+                    return Err(anyhow::anyhow!("Computation failed in another thread: {e}"));
                 }
                 Err(_) => {} // Fall through to re-compute
             }

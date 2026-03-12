@@ -45,7 +45,8 @@ pub fn test_key(name: &str) -> String {
 
 /// Initialize a basic cache system for testing
 pub async fn setup_cache_system() -> Result<CacheSystem> {
-    std::env::set_var("REDIS_URL", redis_url());
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("REDIS_URL", redis_url()) };
     CacheSystem::new().await
 }
 
@@ -154,7 +155,7 @@ pub async fn wait_for<F>(mut condition: F, timeout_ms: u64) -> bool
 where
     F: FnMut() -> bool,
 {
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     let start = std::time::Instant::now();
     let timeout = Duration::from_millis(timeout_ms);
@@ -172,7 +173,7 @@ where
 /// Assert that cache stats meet expectations
 #[macro_export]
 macro_rules! assert_cache_stats {
-    ($cache:expr, $field:ident > $value:expr) => {
+    ($cache:expr_2021, $field:ident > $value:expr_2021) => {
         let stats = $cache.cache_manager().get_stats();
         assert!(
             stats.$field > $value,
@@ -182,7 +183,7 @@ macro_rules! assert_cache_stats {
             stats.$field
         );
     };
-    ($cache:expr, $field:ident == $value:expr) => {
+    ($cache:expr_2021, $field:ident == $value:expr_2021) => {
         let stats = $cache.cache_manager().get_stats();
         assert_eq!(
             stats.$field,

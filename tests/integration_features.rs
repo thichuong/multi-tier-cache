@@ -78,7 +78,13 @@ async fn test_get_or_compute_error_propagation() -> anyhow::Result<()> {
         .await;
 
     assert!(result.is_err());
-    assert_eq!(result.err().unwrap_or_else(|| panic!("Should be error")).to_string(), "Database failure");
+    assert_eq!(
+        result
+            .err()
+            .unwrap_or_else(|| panic!("Should be error"))
+            .to_string(),
+        "Database failure"
+    );
 
     // Verify nothing cached
     assert!(manager.get(&key).await?.is_none());

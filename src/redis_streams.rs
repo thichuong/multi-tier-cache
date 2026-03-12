@@ -1,8 +1,8 @@
 use crate::traits::{StreamEntry, StreamingBackend};
 use anyhow::{Context, Result};
 use futures_util::future::BoxFuture;
-use redis::aio::ConnectionManager;
 use redis::AsyncCommands;
+use redis::aio::ConnectionManager;
 use tracing::debug;
 
 /// Redis Streams client for event-driven architectures
@@ -79,16 +79,16 @@ impl StreamingBackend for RedisStreams {
             let mut entries = Vec::new();
             if let redis::Value::Array(redis_entries) = raw_result {
                 for entry_val in redis_entries {
-                    if let redis::Value::Array(entry_parts) = entry_val {
-                        if entry_parts.len() >= 2 {
-                            if let Some(redis::Value::BulkString(id_bytes)) = entry_parts.first() {
+                    if let redis::Value::Array(entry_parts) = entry_val
+                        && entry_parts.len() >= 2
+                            && let Some(redis::Value::BulkString(id_bytes)) = entry_parts.first() {
                                 let id = String::from_utf8_lossy(id_bytes).to_string();
                                 if let Some(redis::Value::Array(field_values)) = entry_parts.get(1)
                                 {
                                     let mut fields = Vec::new();
                                     for chunk in field_values.chunks(2) {
-                                        if chunk.len() == 2 {
-                                            if let (
+                                        if chunk.len() == 2
+                                            && let (
                                                 Some(redis::Value::BulkString(f_bytes)),
                                                 Some(redis::Value::BulkString(v_bytes)),
                                             ) = (chunk.first(), chunk.get(1))
@@ -98,13 +98,10 @@ impl StreamingBackend for RedisStreams {
                                                     String::from_utf8_lossy(v_bytes).to_string(),
                                                 ));
                                             }
-                                        }
                                     }
                                     entries.push((id, fields));
                                 }
                             }
-                        }
-                    }
                 }
             }
             debug!(
@@ -139,13 +136,13 @@ impl StreamingBackend for RedisStreams {
 
             if let redis::Value::Array(streams) = raw_result {
                 for stream in streams {
-                    if let redis::Value::Array(stream_parts) = stream {
-                        if stream_parts.len() >= 2 {
-                            if let Some(redis::Value::Array(entries)) = stream_parts.get(1) {
+                    if let redis::Value::Array(stream_parts) = stream
+                        && stream_parts.len() >= 2
+                            && let Some(redis::Value::Array(entries)) = stream_parts.get(1) {
                                 for entry in entries {
-                                    if let redis::Value::Array(entry_parts) = entry {
-                                        if entry_parts.len() >= 2 {
-                                            if let Some(redis::Value::BulkString(id_bytes)) =
+                                    if let redis::Value::Array(entry_parts) = entry
+                                        && entry_parts.len() >= 2
+                                            && let Some(redis::Value::BulkString(id_bytes)) =
                                                 entry_parts.first()
                                             {
                                                 let id =
@@ -155,8 +152,8 @@ impl StreamingBackend for RedisStreams {
                                                 {
                                                     let mut fields = Vec::new();
                                                     for chunk in field_values.chunks(2) {
-                                                        if chunk.len() == 2 {
-                                                            if let (
+                                                        if chunk.len() == 2
+                                                            && let (
                                                                 Some(redis::Value::BulkString(
                                                                     f_bytes,
                                                                 )),
@@ -176,17 +173,12 @@ impl StreamingBackend for RedisStreams {
                                                                     .to_string(),
                                                                 ));
                                                             }
-                                                        }
                                                     }
                                                     all_entries.push((id, fields));
                                                 }
                                             }
-                                        }
-                                    }
                                 }
                             }
-                        }
-                    }
                 }
             }
 

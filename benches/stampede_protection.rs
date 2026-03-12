@@ -1,6 +1,6 @@
 //! Benchmarks for cache stampede protection
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use multi_tier_cache::{Bytes, CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::sync::Arc;
@@ -10,7 +10,8 @@ use tokio::runtime::Runtime;
 fn setup_cache() -> (CacheSystem, Runtime) {
     let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
     let cache = rt.block_on(async {
-        std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379") };
         CacheSystem::new()
             .await
             .unwrap_or_else(|_| panic!("Failed to create cache system"))
@@ -37,7 +38,9 @@ fn bench_stampede_protection(c: &mut Criterion) {
                             .cache_manager()
                             .get_or_compute_with(&key, CacheStrategy::ShortTerm, || async {
                                 tokio::time::sleep(Duration::from_millis(10)).await;
-                                anyhow::Ok(Bytes::from(serde_json::to_vec(&json!({"computed": true}))?))
+                                anyhow::Ok(Bytes::from(serde_json::to_vec(
+                                    &json!({"computed": true}),
+                                )?))
                             })
                             .await
                             .unwrap_or_else(|_| panic!("Failed to compute"))

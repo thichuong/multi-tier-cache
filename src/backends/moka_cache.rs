@@ -3,8 +3,8 @@ use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use moka::future::Cache;
 use std::any::Any;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
@@ -43,7 +43,7 @@ impl TypedCacheEntry {
         }
     }
 
-    #[must_use] 
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         Instant::now() > self.expires_at
     }
@@ -142,17 +142,18 @@ impl MokaCache {
 
     /// Get a typed value from the L1 cache
     pub async fn get_typed(&self, key: &str) -> Option<Arc<dyn Any + Send + Sync>> {
-        if let Some(entry) = self.typed_cache.get(key).await {
-            if entry.is_expired() {
-                let _ = self.typed_cache.remove(key).await;
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
-            } else {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                Some(entry.value)
+        match self.typed_cache.get(key).await {
+            Some(entry) => {
+                if entry.is_expired() {
+                    let _ = self.typed_cache.remove(key).await;
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                } else {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    Some(entry.value)
+                }
             }
-        } else {
-            None
+            _ => None,
         }
     }
 }

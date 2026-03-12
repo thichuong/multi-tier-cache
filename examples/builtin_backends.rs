@@ -96,7 +96,9 @@ async fn demo_dashmap_backend() -> Result<()> {
     let manager = cache.cache_manager();
 
     // Test operations
-    let test_data = Bytes::from("{\"user\": \"bob\", \"role\": \"admin\", \"permissions\": [\"read\", \"write\", \"delete\"]}");
+    let test_data = Bytes::from(
+        "{\"user\": \"bob\", \"role\": \"admin\", \"permissions\": [\"read\", \"write\", \"delete\"]}",
+    );
 
     manager
         .set_with_strategy("user:bob", test_data.clone(), CacheStrategy::ShortTerm)
@@ -178,7 +180,9 @@ async fn demo_memcached_backend() -> Result<()> {
 
             println!("\n💡 Note: MemcachedCache implements CacheBackend but not L2CacheBackend");
             println!("   This is because Memcached doesn't support TTL introspection.");
-            println!("   You can use it standalone or wrap it in a custom backend that implements L2CacheBackend.");
+            println!(
+                "   You can use it standalone or wrap it in a custom backend that implements L2CacheBackend."
+            );
         }
         Err(e) => {
             println!("❌ Failed to connect to Memcached: {e}");

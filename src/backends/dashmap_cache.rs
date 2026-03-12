@@ -3,8 +3,8 @@ use anyhow::Result;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::future::BoxFuture;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
@@ -95,16 +95,17 @@ impl Default for DashMapCache {
 impl CacheBackend for DashMapCache {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
         Box::pin(async move {
-            if let Some(entry) = self.map.get(key) {
-                if entry.is_expired() {
-                    drop(entry);
-                    self.map.remove(key);
-                    None
-                } else {
-                    Some(entry.value.clone())
+            match self.map.get(key) {
+                Some(entry) => {
+                    if entry.is_expired() {
+                        drop(entry);
+                        self.map.remove(key);
+                        None
+                    } else {
+                        Some(entry.value.clone())
+                    }
                 }
-            } else {
-                None
+                _ => None,
             }
         })
     }

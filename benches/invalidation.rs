@@ -1,6 +1,6 @@
 //! Benchmarks for cache invalidation operations
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use multi_tier_cache::{
     Bytes, CacheManager, CacheStrategy, InvalidationConfig, L1Cache, L2Cache, MokaCacheConfig,
 };
@@ -43,7 +43,10 @@ fn bench_invalidate_single_key(c: &mut Criterion) {
     rt.block_on(async {
         for i in 0..100 {
             let key = format!("bench:inv:{i}");
-            let val = Bytes::from(serde_json::to_vec(&json!({"id": i})).unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")));
+            let val = Bytes::from(
+                serde_json::to_vec(&json!({"id": i}))
+                    .unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")),
+            );
             cache
                 .set_with_strategy(&key, val, CacheStrategy::MediumTerm)
                 .await
@@ -72,7 +75,10 @@ fn bench_update_cache(c: &mut Criterion) {
     rt.block_on(async {
         for i in 0..100 {
             let key = format!("bench:upd:{i}");
-            let val = Bytes::from(serde_json::to_vec(&json!({"id": i})).unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")));
+            let val = Bytes::from(
+                serde_json::to_vec(&json!({"id": i}))
+                    .unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")),
+            );
             cache
                 .set_with_strategy(&key, val, CacheStrategy::MediumTerm)
                 .await
@@ -84,7 +90,10 @@ fn bench_update_cache(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let key = format!("bench:upd:{}", rand::random::<u8>() % 100);
-                let new_value = Bytes::from(serde_json::to_vec(&json!({"id": 999, "value": "updated"})).unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")));
+                let new_value = Bytes::from(
+                    serde_json::to_vec(&json!({"id": 999, "value": "updated"}))
+                        .unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")),
+                );
                 let _: () = cache
                     .update_cache(&key, new_value, Some(Duration::from_secs(300)))
                     .await

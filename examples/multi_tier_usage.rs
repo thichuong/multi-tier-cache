@@ -192,11 +192,14 @@ async fn main() -> Result<()> {
     println!("Requesting 'archive:doc1' (should miss L1/L2, hit L3, and promote)...");
 
     let start = Instant::now();
-    if let Some(val) = cache.cache_manager().get("archive:doc1").await? {
-        println!("✅ Found value: {val:?}");
-        println!("   Latency: {:?}", start.elapsed());
-    } else {
-        println!("❌ Value not found!");
+    match cache.cache_manager().get("archive:doc1").await? {
+        Some(val) => {
+            println!("✅ Found value: {val:?}");
+            println!("   Latency: {:?}", start.elapsed());
+        }
+        _ => {
+            println!("❌ Value not found!");
+        }
     }
 
     // Now it should be in L1 (fast access)
