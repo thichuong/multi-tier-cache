@@ -81,27 +81,27 @@ impl StreamingBackend for RedisStreams {
                 for entry_val in redis_entries {
                     if let redis::Value::Array(entry_parts) = entry_val
                         && entry_parts.len() >= 2
-                            && let Some(redis::Value::BulkString(id_bytes)) = entry_parts.first() {
-                                let id = String::from_utf8_lossy(id_bytes).to_string();
-                                if let Some(redis::Value::Array(field_values)) = entry_parts.get(1)
+                        && let Some(redis::Value::BulkString(id_bytes)) = entry_parts.first()
+                    {
+                        let id = String::from_utf8_lossy(id_bytes).to_string();
+                        if let Some(redis::Value::Array(field_values)) = entry_parts.get(1) {
+                            let mut fields = Vec::new();
+                            for chunk in field_values.chunks(2) {
+                                if chunk.len() == 2
+                                    && let (
+                                        Some(redis::Value::BulkString(f_bytes)),
+                                        Some(redis::Value::BulkString(v_bytes)),
+                                    ) = (chunk.first(), chunk.get(1))
                                 {
-                                    let mut fields = Vec::new();
-                                    for chunk in field_values.chunks(2) {
-                                        if chunk.len() == 2
-                                            && let (
-                                                Some(redis::Value::BulkString(f_bytes)),
-                                                Some(redis::Value::BulkString(v_bytes)),
-                                            ) = (chunk.first(), chunk.get(1))
-                                            {
-                                                fields.push((
-                                                    String::from_utf8_lossy(f_bytes).to_string(),
-                                                    String::from_utf8_lossy(v_bytes).to_string(),
-                                                ));
-                                            }
-                                    }
-                                    entries.push((id, fields));
+                                    fields.push((
+                                        String::from_utf8_lossy(f_bytes).to_string(),
+                                        String::from_utf8_lossy(v_bytes).to_string(),
+                                    ));
                                 }
                             }
+                            entries.push((id, fields));
+                        }
+                    }
                 }
             }
             debug!(
@@ -138,47 +138,36 @@ impl StreamingBackend for RedisStreams {
                 for stream in streams {
                     if let redis::Value::Array(stream_parts) = stream
                         && stream_parts.len() >= 2
-                            && let Some(redis::Value::Array(entries)) = stream_parts.get(1) {
-                                for entry in entries {
-                                    if let redis::Value::Array(entry_parts) = entry
-                                        && entry_parts.len() >= 2
-                                            && let Some(redis::Value::BulkString(id_bytes)) =
-                                                entry_parts.first()
-                                            {
-                                                let id =
-                                                    String::from_utf8_lossy(id_bytes).to_string();
-                                                if let Some(redis::Value::Array(field_values)) =
-                                                    entry_parts.get(1)
-                                                {
-                                                    let mut fields = Vec::new();
-                                                    for chunk in field_values.chunks(2) {
-                                                        if chunk.len() == 2
-                                                            && let (
-                                                                Some(redis::Value::BulkString(
-                                                                    f_bytes,
-                                                                )),
-                                                                Some(redis::Value::BulkString(
-                                                                    v_bytes,
-                                                                )),
-                                                            ) = (chunk.first(), chunk.get(1))
-                                                            {
-                                                                fields.push((
-                                                                    String::from_utf8_lossy(
-                                                                        f_bytes,
-                                                                    )
-                                                                    .to_string(),
-                                                                    String::from_utf8_lossy(
-                                                                        v_bytes,
-                                                                    )
-                                                                    .to_string(),
-                                                                ));
-                                                            }
-                                                    }
-                                                    all_entries.push((id, fields));
-                                                }
-                                            }
+                        && let Some(redis::Value::Array(entries)) = stream_parts.get(1)
+                    {
+                        for entry in entries {
+                            if let redis::Value::Array(entry_parts) = entry
+                                && entry_parts.len() >= 2
+                                && let Some(redis::Value::BulkString(id_bytes)) =
+                                    entry_parts.first()
+                            {
+                                let id = String::from_utf8_lossy(id_bytes).to_string();
+                                if let Some(redis::Value::Array(field_values)) = entry_parts.get(1)
+                                {
+                                    let mut fields = Vec::new();
+                                    for chunk in field_values.chunks(2) {
+                                        if chunk.len() == 2
+                                            && let (
+                                                Some(redis::Value::BulkString(f_bytes)),
+                                                Some(redis::Value::BulkString(v_bytes)),
+                                            ) = (chunk.first(), chunk.get(1))
+                                        {
+                                            fields.push((
+                                                String::from_utf8_lossy(f_bytes).to_string(),
+                                                String::from_utf8_lossy(v_bytes).to_string(),
+                                            ));
+                                        }
+                                    }
+                                    all_entries.push((id, fields));
                                 }
                             }
+                        }
+                    }
                 }
             }
 

@@ -175,10 +175,11 @@ impl InvalidationPublisher {
 
         // Optionally publish to audit stream
         if self.config.enable_audit_stream
-            && let Err(e) = self.publish_to_audit_stream(message).await {
-                // Don't fail the invalidation if audit logging fails
-                warn!("Failed to publish to audit stream: {}", e);
-            }
+            && let Err(e) = self.publish_to_audit_stream(message).await
+        {
+            // Don't fail the invalidation if audit logging fails
+            warn!("Failed to publish to audit stream: {}", e);
+        }
 
         Ok(())
     }

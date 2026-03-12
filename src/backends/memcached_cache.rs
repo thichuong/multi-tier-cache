@@ -121,7 +121,7 @@ impl CacheBackend for MemcachedCache {
             self.client
                 .set(
                     key,
-                    value.to_vec(),
+                    value.as_ref(),
                     u32::try_from(ttl.as_secs()).unwrap_or(u32::MAX),
                 )
                 .map_err(|e| anyhow!("Memcached SET failed: {e}"))?;

@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 
 - Metrics export (Prometheus format)
+## [0.6.1] - 2026-03-12
+
+### Changed
+- Upgraded the crate to **Rust Edition 2024**, leveraging new lifetime capture rules and optimizations.
+- Migrated all asynchronous traits (`CacheBackend`, `L2CacheBackend`, `StreamingBackend`) to use Rust's native Async Functions in Traits (AFIT), completely removing the `async-trait` macro dependency.
+- Replaced `serde_json::Value` with `bytes::Bytes` in the core cache trait signatures to eliminate unnecessary intermediate AST allocations.
+- Unified the internal architecture in `CacheManager`: deprecated fragmented legacy fields (`l1_cache`, `l2_cache`) in favor of a single, scalable `tiers: Vec<CacheTier>` system for both 2-tier and multi-tier configurations.
+
+### Performance
+- **Cache Stampede Protection Re-engineered**: Replaced the sequential `Mutex`-based locking mechanism in `DashMap` with an asynchronous broadcast channel approach. This eliminates massive latency spikes for concurrent cache misses by waking up all waiting requests simultaneously once the data is computed.
+- **Zero-Cost L1 Hits**: Implemented direct byte-to-type deserialization (`serde_json::from_slice`) to drastically reduce memory overhead and CPU cycles during high-concurrency L2 fetch and compute phases.
+
 ## [0.5.7] - 2026-01-24
 
 ### Fixed
