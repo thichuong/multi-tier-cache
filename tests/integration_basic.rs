@@ -89,7 +89,7 @@ async fn test_l1_cache_hit() {
 /// Test L2-to-L1 promotion
 #[tokio::test]
 async fn test_l2_to_l1_promotion() {
-    let cache = setup_cache_system()
+    let cache = setup_cache_with_n(1)
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("l2_promote");

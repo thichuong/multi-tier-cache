@@ -12,6 +12,7 @@ use std::time::Duration;
 use tokio::sync::{Mutex, broadcast};
 
 use tracing::{debug, error, info, warn};
+use rand::Rng;
 
 use crate::invalidation::{
     AtomicInvalidationStats, InvalidationConfig, InvalidationMessage, InvalidationPublisher,
@@ -103,6 +104,8 @@ pub struct CacheTier {
     pub tier_level: usize,
     /// Whether to promote keys FROM lower tiers TO this tier
     pub promotion_enabled: bool,
+    /// Promotion frequency (N) - promote with 1/N probability
+    pub promotion_frequency: usize,
     /// TTL multiplier for this tier (e.g., L2 might store for 2x L1 TTL)
     pub ttl_scale: f64,
     /// Statistics for this tier
@@ -115,6 +118,7 @@ impl CacheTier {
         backend: Arc<dyn L2CacheBackend>,
         tier_level: usize,
         promotion_enabled: bool,
+        promotion_frequency: usize,
         ttl_scale: f64,
     ) -> Self {
         let backend_name = backend.name().to_string();
@@ -122,6 +126,7 @@ impl CacheTier {
             backend,
             tier_level,
             promotion_enabled,
+            promotion_frequency,
             ttl_scale,
             stats: TierStats::new(tier_level, backend_name),
         }
@@ -156,6 +161,8 @@ pub struct TierConfig {
     pub tier_level: usize,
     /// Enable promotion to upper tiers on hit
     pub promotion_enabled: bool,
+    /// Promotion frequency (N) - promote with 1/N probability (default 10)
+    pub promotion_frequency: usize,
     /// TTL scale factor (1.0 = same as base TTL)
     pub ttl_scale: f64,
 }
@@ -167,6 +174,7 @@ impl TierConfig {
         Self {
             tier_level,
             promotion_enabled: true,
+            promotion_frequency: 10,
             ttl_scale: 1.0,
         }
     }
@@ -177,6 +185,7 @@ impl TierConfig {
         Self {
             tier_level: 1,
             promotion_enabled: false, // L1 is already top tier
+            promotion_frequency: 1,   // Doesn't matter but use 1
             ttl_scale: 1.0,
         }
     }
@@ -187,6 +196,7 @@ impl TierConfig {
         Self {
             tier_level: 2,
             promotion_enabled: true,
+            promotion_frequency: 10,
             ttl_scale: 1.0,
         }
     }
@@ -197,6 +207,7 @@ impl TierConfig {
         Self {
             tier_level: 3,
             promotion_enabled: true,
+            promotion_frequency: 10,
             ttl_scale: 2.0, // Keep data 2x longer
         }
     }
@@ -207,6 +218,7 @@ impl TierConfig {
         Self {
             tier_level: 4,
             promotion_enabled: true,
+            promotion_frequency: 10,
             ttl_scale: 8.0, // Keep data 8x longer
         }
     }
@@ -215,6 +227,13 @@ impl TierConfig {
     #[must_use]
     pub fn with_promotion(mut self, enabled: bool) -> Self {
         self.promotion_enabled = enabled;
+        self
+    }
+
+    /// Set promotion frequency (N)
+    #[must_use]
+    pub fn with_promotion_frequency(mut self, n: usize) -> Self {
+        self.promotion_frequency = n;
         self
     }
 
@@ -288,8 +307,8 @@ impl CacheManager {
         debug!("Initializing Cache Manager with L1+L2 backends...");
 
         let tiers = vec![
-            CacheTier::new(Arc::new(ProxyL1ToL2(l1_cache)), 1, false, 1.0),
-            CacheTier::new(l2_cache, 2, true, 1.0),
+            CacheTier::new(Arc::new(ProxyL1ToL2(l1_cache)), 1, false, 1, 1.0),
+            CacheTier::new(l2_cache, 2, true, 10, 1.0),
         ];
 
         Ok(Self {
@@ -390,8 +409,8 @@ impl CacheManager {
         let invalidation_stats = Arc::new(AtomicInvalidationStats::default());
 
         let tiers = vec![
-            CacheTier::new(Arc::new(ProxyL1ToL2(l1_backend)), 1, false, 1.0),
-            CacheTier::new(l2_backend, 2, true, 1.0),
+            CacheTier::new(Arc::new(ProxyL1ToL2(l1_backend)), 1, false, 1, 1.0),
+            CacheTier::new(l2_backend, 2, true, 10, 1.0),
         ];
 
         let manager = Self {
@@ -564,25 +583,40 @@ impl CacheManager {
 
                 // Promote to all upper tiers (if promotion enabled)
                 if tier.promotion_enabled && tier_index > 0 {
-                    let promotion_ttl = ttl.unwrap_or_else(|| CacheStrategy::Default.to_duration());
+                    // Probabilistic Promotion Check
+                    let should_promote = if tier.promotion_frequency <= 1 {
+                        true
+                    } else {
+                        rand::thread_rng().gen_ratio(1, tier.promotion_frequency as u32)
+                    };
 
-                    // Promote to all tiers above this one
-                    for upper_tier in self.tiers.iter().take(tier_index).rev() {
-                        if let Err(e) = upper_tier
-                            .set_with_ttl(key, value.clone(), promotion_ttl)
-                            .await
-                        {
-                            warn!(
-                                "Failed to promote '{}' from L{} to L{}: {}",
-                                key, tier.tier_level, upper_tier.tier_level, e
-                            );
-                        } else {
-                            self.promotions.fetch_add(1, Ordering::Relaxed);
-                            debug!(
-                                "Promoted '{}' from L{} to L{} (TTL: {:?})",
-                                key, tier.tier_level, upper_tier.tier_level, promotion_ttl
-                            );
+                    if should_promote {
+                        let promotion_ttl =
+                            ttl.unwrap_or_else(|| CacheStrategy::Default.to_duration());
+
+                        // Promote to all tiers above this one
+                        for upper_tier in self.tiers.iter().take(tier_index).rev() {
+                            if let Err(e) = upper_tier
+                                .set_with_ttl(key, value.clone(), promotion_ttl)
+                                .await
+                            {
+                                warn!(
+                                    "Failed to promote '{}' from L{} to L{}: {}",
+                                    key, tier.tier_level, upper_tier.tier_level, e
+                                );
+                            } else {
+                                self.promotions.fetch_add(1, Ordering::Relaxed);
+                                debug!(
+                                    "Promoted '{}' from L{} to L{} (TTL: {:?})",
+                                    key, tier.tier_level, upper_tier.tier_level, promotion_ttl
+                                );
+                            }
                         }
+                    } else {
+                        debug!(
+                            "Probabilistic skip promotion for '{}' from L{} (N={})",
+                            key, tier.tier_level, tier.promotion_frequency
+                        );
                     }
                 }
 
@@ -783,11 +817,20 @@ impl CacheManager {
 
                 // Promotion to L1 if hit was in a lower tier
                 if idx > 0 && tier.promotion_enabled {
-                    let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
-                    if let Some(l1_tier) = self.tiers.first() {
-                        let _ = l1_tier
-                            .set_with_ttl(key, value.clone(), promotion_ttl)
-                            .await;
+                    // Probabilistic Promotion Check
+                    let should_promote = if tier.promotion_frequency <= 1 {
+                        true
+                    } else {
+                        rand::thread_rng().gen_ratio(1, tier.promotion_frequency as u32)
+                    };
+
+                    if should_promote {
+                        let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
+                        if let Some(l1_tier) = self.tiers.first() {
+                            let _ = l1_tier
+                                .set_with_ttl(key, value.clone(), promotion_ttl)
+                                .await;
+                        }
                     }
                 }
 

@@ -350,6 +350,7 @@ impl CacheSystemBuilder {
                         backend,
                         config.tier_level,
                         config.promotion_enabled,
+                        config.promotion_frequency,
                         config.ttl_scale,
                     )
                 })

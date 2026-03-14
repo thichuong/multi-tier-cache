@@ -8,7 +8,8 @@
 //! - Test environment setup
 
 use anyhow::Result;
-use multi_tier_cache::{CacheManager, CacheSystem, InvalidationConfig, L1Cache, L2Cache};
+use multi_tier_cache::{CacheManager, CacheSystem, InvalidationConfig, L1Cache, L2Cache, L2CacheBackend, TierConfig, CacheSystemBuilder};
+use multi_tier_cache::backends::MokaCacheConfig;
 use std::sync::Arc;
 use std::sync::Once;
 
@@ -50,7 +51,24 @@ pub async fn setup_cache_system() -> Result<CacheSystem> {
     CacheSystem::new().await
 }
 
-use multi_tier_cache::backends::MokaCacheConfig;
+/// Initialize cache system with custom promotion frequency N for testing
+pub async fn setup_cache_with_n(n: usize) -> Result<CacheSystem> {
+    let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
+    let l2 = Arc::new(L2Cache::new().await?);
+    
+    let cache = CacheSystemBuilder::new()
+        .with_tier(Arc::clone(&l1) as Arc<dyn L2CacheBackend>, TierConfig::as_l1())
+        .with_tier(Arc::clone(&l2) as Arc<dyn L2CacheBackend>, TierConfig::as_l2().with_promotion_frequency(n))
+        .build()
+        .await?;
+    
+    // Manually set the Option fields for backward compatibility in tests
+    let mut cache = cache;
+    cache.l1_cache = Some(l1);
+    cache.l2_cache = Some(l2);
+    
+    Ok(cache)
+}
 
 /// Initialize cache manager with invalidation for testing
 pub async fn setup_cache_with_invalidation() -> Result<Arc<CacheManager>> {
