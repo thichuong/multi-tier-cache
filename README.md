@@ -44,6 +44,7 @@
 - **⚡ Automatic Tier Promotion**: Intelligent cache tier promotion for frequently accessed data with TTL preservation and per-tier scaling
 - **📈 Comprehensive Statistics**: Hit rates per tier, promotions, in-flight request tracking, invalidation metrics
 - **🎯 Zero-Cost L1 Hits**: L2 payload caching uses raw `bytes::Bytes`, while L1 skips intermediate JSON AST allocations for maximum performance.
+- **🎲 Probabilistic Promotion** *(v0.6.3+)*: Configure promotion frequency (1/N) to prevent L1 pollution from infrequent (long-tail) access patterns. ⭐ **NEW**
 - **✅ Production-Proven**: Battle-tested at **16,829+ RPS** with **5.2ms latency** and **95% hit rate**
 
 ## 🏗️ Architecture
@@ -66,13 +67,14 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-multi-tier-cache = "0.6.2"
+multi-tier-cache = "0.6.3"
 tokio = { version = "1.43", features = ["full"] }
 serde_json = "1.0"
 ```
 
 **Version Guide:**
-- **v0.5.0+**: Dynamic multi-tier architecture (L1+L2+L3+L4+...), per-tier statistics ⭐ **NEW**
+- **v0.6.3+**: Probabilistic Promotion (1/N) and optimized concurrent benchmarks ⭐ **NEW**
+- **v0.5.0+**: Dynamic multi-tier architecture (L1+L2+L3+L4+...), per-tier statistics
 - **v0.4.0+**: Cross-instance cache invalidation via Redis Pub/Sub
 - **v0.3.0+**: Pluggable backends, trait-based architecture
 - **v0.2.0+**: Type-safe database caching with `get_or_compute_typed()`

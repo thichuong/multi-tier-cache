@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 
 - Metrics export (Prometheus format)
+## [0.6.3] - 2026-03-14
+
+### Added
+- **Probabilistic Promotion**: Introduced `promotion_frequency` (N) to control how often items are promoted from lower to higher tiers. Promotion occurs with a probability of 1/N. Default N=10 for all tiers except L1.
+- Added `with_promotion_frequency(n)` to `TierConfig` builder API for fine-grained control over tier promotion rates.
+
+### Changed
+- **Benchmark Optimization**: Refactored `benches/storm_requests.rs` to use `join_all`, correctly simulating concurrent "storm" request patterns instead of sequential access.
+- Added a dedicated L2-only benchmark scenario to measure pure backend performance without L1 promotion interference.
+
 ## [0.6.2] - 2026-03-12
 
 **[Docs / Fixed]**
