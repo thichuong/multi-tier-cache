@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 
 - Metrics export (Prometheus format)
+## [0.6.4] - 2026-03-15
+
+### Added
+- **Custom Error Types**: Introduced a comprehensive `CacheError` enum and `CacheResult` type for structured, strongly-typed error handling across the entire library.
+- **Feature-Gated Backends**: Enhanced modularity by feature-gating all cache backends. Users can now selectively enable `moka`, `redis`, `memcached`, and `quick_cache` to minimize dependency footprints.
+
+### Changed
+- **Builder Refactoring**: Optimized `CacheSystemBuilder` internal logic with dedicated initialization paths for default 2-tier, custom 2-tier, and multi-tier configurations, improving maintainability and code clarity.
+- Updated crate documentation to reflect the new error handling patterns and feature flag availability.
+
 ## [0.6.3] - 2026-03-14
 
 ### Added

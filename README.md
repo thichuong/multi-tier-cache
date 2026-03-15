@@ -21,6 +21,8 @@
   - [6. Available Backends](#6-available-backends-new-in-052-) ⭐ **NEW**
   - [7. Custom Cache Backends](#7-custom-cache-backends-new-in-030-)
   - [8. Multi-Tier Architecture](#8-multi-tier-architecture-new-in-050-)
+- [9. Error Handling](#9-error-handling-new-in-064-) ⭐ **NEW**
+- [10. Feature Flags](#10-feature-flags-new-in-064-) ⭐ **NEW**
 - [Feature Compatibility](#%EF%B8%8F-feature-compatibility)
 - [Performance Benchmarks](#-performance-benchmarks)
 - [Configuration](#-configuration)
@@ -34,7 +36,8 @@
 
 ## ✨ Features
 
-- **🦀 Rust Edition 2024** *(v0.6.1+)*: Leverages native **Async Functions in Traits (AFIT)**, eliminating the `async-trait` dependency for a lighter, faster build. ⭐ **NEW**
+- **🦀 Rust Edition 2024** *(v0.6.1+)*: Leverages native **Async Functions in Traits (AFIT)**, eliminating the `async-trait` dependency for a lighter, faster build.
+- **🛡️ Custom Error Handling** *(v0.6.4+)*: Introduced `CacheError` enum for structured, strongly-typed error handling across all backends. ⭐ **NEW**
 - **🔥 Multi-Tier Architecture**: Combines fast in-memory (Moka) with persistent distributed (Redis) caching
 - **🌐 Dynamic Multi-Tier** *(v0.5.0+)*: Support for 3, 4, or more cache tiers (L1+L2+L3+L4+...) with flexible configuration
 - **🔄 Cross-Instance Cache Invalidation** *(v0.4.0+)*: Real-time cache synchronization across all instances via Redis Pub/Sub
@@ -67,13 +70,14 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-multi-tier-cache = "0.6.3"
+multi-tier-cache = "0.6.4"
 tokio = { version = "1.43", features = ["full"] }
 serde_json = "1.0"
 ```
 
 **Version Guide:**
-- **v0.6.3+**: Probabilistic Promotion (1/N) and optimized concurrent benchmarks ⭐ **NEW**
+- **v0.6.4+**: Custom Error Types (`CacheError`) and Feature-Gated backends ⭐ **NEW**
+- **v0.6.3+**: Probabilistic Promotion (1/N) and optimized concurrent benchmarks
 - **v0.5.0+**: Dynamic multi-tier architecture (L1+L2+L3+L4+...), per-tier statistics
 - **v0.4.0+**: Cross-instance cache invalidation via Redis Pub/Sub
 - **v0.3.0+**: Pluggable backends, trait-based architecture
@@ -799,6 +803,42 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 ```
+
+### 9. Error Handling (New in 0.6.4! 🎉)
+
+Starting from **v0.6.4**, the library uses a structured `CacheError` enum for all operations.
+
+```rust
+use multi_tier_cache::CacheError;
+
+match cache.cache_manager().get("key").await {
+    Ok(Some(value)) => println!("Got value"),
+    Ok(None) => println!("Cache miss"),
+    Err(CacheError::BackendError(msg)) => eprintln!("Redis error: {}", msg),
+    Err(CacheError::SerializationError(msg)) => eprintln!("JSON error: {}", msg),
+    Err(e) => eprintln!("Other error: {}", e),
+}
+```
+
+### 10. Feature Flags (New in 0.6.4! 🎉)
+
+To keep the dependency tree lean, all backends are now optional.
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `moka` | Enable Moka (L1) in-memory cache | ✅ Yes |
+| `redis` | Enable Redis (L2) distributed cache | ✅ Yes |
+| `full` | Enable all backends and serializers | ❌ No |
+| `backend-memcached` | Enable Memcached L2 backend | ❌ No |
+| `backend-quickcache` | Enable QuickCache L1 backend | ❌ No |
+| `bincode` | Enable Bincode serialization | ❌ No |
+| `msgpack` | Enable MessagePack serialization | ❌ No |
+
+```toml
+# Pure in-memory usage (no Redis)
+multi-tier-cache = { version = "0.6.4", default-features = false, features = ["moka"] }
+```
+
 
 ## ⚖️ Feature Compatibility
 
