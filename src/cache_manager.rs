@@ -2,30 +2,35 @@
 //!
 //! Manages operations across L1 (Moka) and L2 (Redis) caches with intelligent fallback.
 
-use anyhow::Result;
+use crate::error::CacheResult;
 use dashmap::DashMap;
-use serde_json;
+use rand::Rng;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
-use tokio::sync::{Mutex, broadcast};
-
+#[cfg(feature = "redis")]
+use tokio::sync::Mutex;
+use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
-use rand::Rng;
 
+#[cfg(feature = "moka")]
+use crate::L1Cache;
+#[cfg(feature = "redis")]
+use crate::L2Cache;
+#[cfg(feature = "redis")]
 use crate::invalidation::{
     AtomicInvalidationStats, InvalidationConfig, InvalidationMessage, InvalidationPublisher,
-    InvalidationStats, InvalidationSubscriber,
+    InvalidationSubscriber,
 };
+use crate::serialization::{CacheSerializer, JsonSerializer};
 use crate::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
-use crate::{L1Cache, L2Cache};
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 
 ///// Type alias for the in-flight requests map
 /// Stores a broadcast sender for each active key computation
-type InFlightMap = DashMap<String, broadcast::Sender<Result<Bytes, Arc<anyhow::Error>>>>;
+type InFlightMap = DashMap<String, broadcast::Sender<CacheResult<Bytes>>>;
 
 /// Cache strategies for different data types
 #[derive(Debug, Clone)]
@@ -138,13 +143,13 @@ impl CacheTier {
     }
 
     /// Set value with TTL in this tier
-    async fn set_with_ttl(&self, key: &str, value: Bytes, ttl: Duration) -> Result<()> {
+    async fn set_with_ttl(&self, key: &str, value: Bytes, ttl: Duration) -> CacheResult<()> {
         let scaled_ttl = Duration::from_secs_f64(ttl.as_secs_f64() * self.ttl_scale);
         self.backend.set_with_ttl(key, value, scaled_ttl).await
     }
 
     /// Remove value from this tier
-    async fn remove(&self, key: &str) -> Result<()> {
+    async fn remove(&self, key: &str) -> CacheResult<()> {
         self.backend.remove(key).await
     }
 
@@ -263,15 +268,21 @@ pub struct CacheManager {
     l1_hits: AtomicU64,
     l2_hits: AtomicU64,
     misses: AtomicU64,
-    promotions: AtomicUsize,
     /// In-flight requests map (Broadcaster integration will replace this in Step 4)
     in_flight_requests: Arc<InFlightMap>,
+    /// Pluggable serializer
+    serializer: Arc<CacheSerializer>,
     /// Invalidation publisher
+    #[cfg(feature = "redis")]
     invalidation_publisher: Option<Arc<Mutex<InvalidationPublisher>>>,
     /// Invalidation subscriber
+    #[cfg(feature = "redis")]
     invalidation_subscriber: Option<Arc<InvalidationSubscriber>>,
     /// Invalidation statistics
+    #[cfg(feature = "redis")]
     invalidation_stats: Arc<AtomicInvalidationStats>,
+    /// Number of promotions performed
+    promotions: AtomicUsize,
 }
 
 impl CacheManager {
@@ -303,7 +314,7 @@ impl CacheManager {
         l1_cache: Arc<dyn CacheBackend>,
         l2_cache: Arc<dyn L2CacheBackend>,
         streaming_backend: Option<Arc<dyn StreamingBackend>>,
-    ) -> Result<Self> {
+    ) -> CacheResult<Self> {
         debug!("Initializing Cache Manager with L1+L2 backends...");
 
         let tiers = vec![
@@ -320,8 +331,13 @@ impl CacheManager {
             misses: AtomicU64::new(0),
             promotions: AtomicUsize::new(0),
             in_flight_requests: Arc::new(DashMap::new()),
+            serializer: Arc::new(CacheSerializer::Json(JsonSerializer)),
+            #[cfg(feature = "redis")]
             invalidation_publisher: None,
+            #[cfg(feature = "redis")]
             invalidation_subscriber: None,
+            #[cfg(feature = "redis")]
+            #[cfg(feature = "redis")]
             invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
         })
     }
@@ -338,7 +354,8 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if Redis connection fails.
-    pub async fn new(l1_cache: Arc<L1Cache>, l2_cache: Arc<L2Cache>) -> Result<Self> {
+    #[cfg(all(feature = "moka", feature = "redis"))]
+    pub async fn new(l1_cache: Arc<L1Cache>, l2_cache: Arc<L2Cache>) -> CacheResult<Self> {
         debug!("Initializing Cache Manager...");
 
         // Convert concrete types to trait objects
@@ -346,12 +363,14 @@ impl CacheManager {
         let l2_backend: Arc<dyn L2CacheBackend> = l2_cache.clone();
 
         // Create RedisStreams backend for streaming functionality
-        let redis_url =
-            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-        let redis_streams = crate::redis_streams::RedisStreams::new(&redis_url).await?;
-        let streaming_backend: Arc<dyn StreamingBackend> = Arc::new(redis_streams);
+        let streaming_backend: Option<Arc<dyn StreamingBackend>> = {
+            let redis_url =
+                std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+            let redis_streams = crate::redis_streams::RedisStreams::new(&redis_url).await?;
+            Some(Arc::new(redis_streams))
+        };
 
-        Self::new_with_backends(l1_backend, l2_backend, Some(streaming_backend))
+        Self::new_with_backends(l1_backend, l2_backend, streaming_backend)
     }
 
     /// Create new cache manager with invalidation support
@@ -382,12 +401,13 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if Redis connection fails or invalidation setup fails.
+    #[cfg(all(feature = "moka", feature = "redis"))]
     pub async fn new_with_invalidation(
         l1_cache: Arc<L1Cache>,
         l2_cache: Arc<L2Cache>,
         redis_url: &str,
         config: InvalidationConfig,
-    ) -> Result<Self> {
+    ) -> CacheResult<Self> {
         debug!("Initializing Cache Manager with Invalidation...");
         debug!("  Pub/Sub channel: {}", config.channel);
 
@@ -396,16 +416,25 @@ impl CacheManager {
         let l2_backend: Arc<dyn L2CacheBackend> = l2_cache.clone();
 
         // Create RedisStreams backend for streaming functionality
-        let redis_streams = crate::redis_streams::RedisStreams::new(redis_url).await?;
-        let streaming_backend: Arc<dyn StreamingBackend> = Arc::new(redis_streams);
+        let streaming_backend: Option<Arc<dyn StreamingBackend>> = {
+            let redis_streams = crate::redis_streams::RedisStreams::new(redis_url).await?;
+            Some(Arc::new(redis_streams))
+        };
 
         // Create publisher
-        let client = redis::Client::open(redis_url)?;
-        let conn_manager = redis::aio::ConnectionManager::new(client).await?;
-        let publisher = InvalidationPublisher::new(conn_manager, config.clone());
+        let (invalidation_publisher, invalidation_subscriber) = {
+            let client = redis::Client::open(redis_url)?;
+            let conn_manager = redis::aio::ConnectionManager::new(client).await?;
+            let publisher = InvalidationPublisher::new(conn_manager, config.clone());
 
-        // Create subscriber
-        let subscriber = InvalidationSubscriber::new(redis_url, config.clone())?;
+            // Create subscriber
+            let subscriber = InvalidationSubscriber::new(redis_url, config.clone())?;
+            (
+                Some(Arc::new(Mutex::new(publisher))),
+                Some(Arc::new(subscriber)),
+            )
+        };
+
         let invalidation_stats = Arc::new(AtomicInvalidationStats::default());
 
         let tiers = vec![
@@ -415,15 +444,16 @@ impl CacheManager {
 
         let manager = Self {
             tiers,
-            streaming_backend: Some(streaming_backend),
+            streaming_backend,
             total_requests: AtomicU64::new(0),
             l1_hits: AtomicU64::new(0),
             l2_hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
             promotions: AtomicUsize::new(0),
             in_flight_requests: Arc::new(DashMap::new()),
-            invalidation_publisher: Some(Arc::new(Mutex::new(publisher))),
-            invalidation_subscriber: Some(Arc::new(subscriber)),
+            serializer: Arc::new(CacheSerializer::Json(JsonSerializer)),
+            invalidation_publisher,
+            invalidation_subscriber,
             invalidation_stats,
         };
 
@@ -470,7 +500,7 @@ impl CacheManager {
     pub fn new_with_tiers(
         tiers: Vec<CacheTier>,
         streaming_backend: Option<Arc<dyn StreamingBackend>>,
-    ) -> Result<Self> {
+    ) -> CacheResult<Self> {
         debug!("Initializing Multi-Tier Cache Manager...");
         debug!("  Tier count: {}", tiers.len());
         for tier in &tiers {
@@ -485,11 +515,10 @@ impl CacheManager {
             if let (Some(current), Some(prev)) = (tiers.get(i), tiers.get(i - 1))
                 && current.tier_level <= prev.tier_level
             {
-                anyhow::bail!(
+                return Err(crate::error::CacheError::ConfigError(format!(
                     "Tiers must be sorted by tier_level ascending (found L{} after L{})",
-                    current.tier_level,
-                    prev.tier_level
-                );
+                    current.tier_level, prev.tier_level
+                )));
             }
         }
 
@@ -502,44 +531,54 @@ impl CacheManager {
             misses: AtomicU64::new(0),
             promotions: AtomicUsize::new(0),
             in_flight_requests: Arc::new(DashMap::new()),
+            serializer: Arc::new(CacheSerializer::Json(JsonSerializer)),
+            #[cfg(feature = "redis")]
             invalidation_publisher: None,
+            #[cfg(feature = "redis")]
             invalidation_subscriber: None,
+            #[cfg(feature = "redis")]
+            #[cfg(feature = "redis")]
             invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
         })
     }
 
+    /// Set a custom serializer for the cache manager
+    pub fn set_serializer(&mut self, serializer: CacheSerializer) {
+        debug!(name = %serializer.name(), "Switching cache serializer");
+        self.serializer = Arc::new(serializer);
+    }
+
     /// Start the invalidation subscriber background task
+    #[cfg(feature = "redis")]
     fn start_invalidation_subscriber(&self) {
+        #[cfg(feature = "redis")]
         if let Some(subscriber) = &self.invalidation_subscriber {
             let tiers = self.tiers.clone();
 
-            subscriber.start(move |msg| {
+            subscriber.start(move |msg: crate::invalidation::InvalidationMessage| {
                 let tiers = tiers.clone();
                 async move {
                     for tier in &tiers {
                         match &msg {
                             InvalidationMessage::Remove { key } => {
-                                if let Err(e) = tier.backend.remove(key).await {
-                                    warn!(
-                                        "Failed to remove '{}' from L{}: {}",
-                                        key, tier.tier_level, e
-                                    );
-                                }
+                                tier.backend.remove(key).await.ok();
                             }
                             InvalidationMessage::Update {
                                 key,
                                 value,
                                 ttl_secs,
                             } => {
-                                let ttl = ttl_secs
-                                    .map_or_else(|| Duration::from_secs(300), Duration::from_secs);
-                                if let Err(e) =
-                                    tier.backend.set_with_ttl(key, value.clone(), ttl).await
-                                {
-                                    warn!(
-                                        "Failed to update '{}' in L{}: {}",
-                                        key, tier.tier_level, e
-                                    );
+                                if let Some(secs) = ttl_secs {
+                                    tier.backend
+                                        .set_with_ttl(
+                                            key,
+                                            value.clone(),
+                                            Duration::from_secs(*secs),
+                                        )
+                                        .await
+                                        .ok();
+                                } else {
+                                    tier.backend.set(key, value.clone()).await.ok();
                                 }
                             }
                             InvalidationMessage::RemovePattern { pattern } => {
@@ -574,7 +613,7 @@ impl CacheManager {
     ///
     /// This method iterates through all configured tiers and automatically promotes
     /// to upper tiers on cache hit.
-    async fn get_multi_tier(&self, key: &str) -> Result<Option<Bytes>> {
+    async fn get_multi_tier(&self, key: &str) -> CacheResult<Option<Bytes>> {
         // Try each tier sequentially (sorted by tier_level)
         for (tier_index, tier) in self.tiers.iter().enumerate() {
             if let Some((value, ttl)) = tier.get_with_ttl(key).await {
@@ -650,7 +689,7 @@ impl CacheManager {
     /// # Panics
     ///
     /// Panics if tiers are not initialized in multi-tier mode (should not happen if constructed correctly).
-    pub async fn get(&self, key: &str) -> Result<Option<Bytes>> {
+    pub async fn get(&self, key: &str) -> CacheResult<Option<Bytes>> {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
 
         // Fast path for L1 (first tier) - no locking needed
@@ -678,7 +717,9 @@ impl CacheManager {
             match rx.recv().await {
                 Ok(Ok(value)) => return Ok(Some(value)),
                 Ok(Err(e)) => {
-                    return Err(anyhow::anyhow!("Computation failed in another thread: {e}"));
+                    return Err(crate::error::CacheError::BackendError(format!(
+                        "Computation failed in another thread: {e}"
+                    )));
                 }
                 Err(_) => {} // Fall through to re-compute if sender dropped or channel empty
             }
@@ -720,6 +761,17 @@ impl CacheManager {
         }
     }
 
+    /// Get a value from cache and deserialize it (Type-Safe Version)
+    pub async fn get_typed<T>(&self, key: &str) -> CacheResult<Option<T>>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        if let Some(bytes) = self.get(key).await? {
+            return Ok(Some(self.serializer.deserialize::<T>(&bytes)?));
+        }
+        Ok(None)
+    }
+
     /// Set value with specific cache strategy (all tiers)
     ///
     /// Supports both legacy 2-tier mode and new multi-tier mode (v0.5.0+).
@@ -732,7 +784,7 @@ impl CacheManager {
         key: &str,
         value: Bytes,
         strategy: CacheStrategy,
-    ) -> Result<()> {
+    ) -> CacheResult<()> {
         let ttl = strategy.to_duration();
 
         let mut success_count = 0;
@@ -764,7 +816,9 @@ impl CacheManager {
             return Ok(());
         }
 
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All tiers failed for key '{key}'")))
+        Err(last_error.unwrap_or_else(|| {
+            crate::error::CacheError::InternalError("All tiers failed".to_string())
+        }))
     }
 
     /// Get or compute value with Cache Stampede protection across L1+L2+Compute
@@ -798,16 +852,16 @@ impl CacheManager {
         key: &str,
         strategy: CacheStrategy,
         compute_fn: F,
-    ) -> Result<Bytes>
+    ) -> CacheResult<Bytes>
     where
         F: FnOnce() -> Fut + Send,
-        Fut: Future<Output = Result<Bytes>> + Send,
+        Fut: Future<Output = CacheResult<Bytes>> + Send,
     {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
 
         // 1. Try tiers sequentially first
         for (idx, tier) in self.tiers.iter().enumerate() {
-            if let Some((value, ttl)) = tier.get_with_ttl(key).await {
+            if let Some((value, _ttl)) = tier.get_with_ttl(key).await {
                 tier.record_hit();
                 if tier.tier_level == 1 {
                     self.l1_hits.fetch_add(1, Ordering::Relaxed);
@@ -825,27 +879,29 @@ impl CacheManager {
                     };
 
                     if should_promote {
-                        let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
                         if let Some(l1_tier) = self.tiers.first() {
                             let _ = l1_tier
-                                .set_with_ttl(key, value.clone(), promotion_ttl)
+                                .set_with_ttl(key, value.clone(), strategy.to_duration())
                                 .await;
+                            self.promotions.fetch_add(1, Ordering::Relaxed);
                         }
                     }
                 }
-
                 return Ok(value);
             }
         }
 
         // 2. Cache miss across all tiers - use stampede protection
-        let (tx, mut rx) = match self.in_flight_requests.entry(key.to_string()) {
+        let (tx, mut rx): (
+            tokio::sync::broadcast::Sender<CacheResult<Bytes>>,
+            tokio::sync::broadcast::Receiver<CacheResult<Bytes>>,
+        ) = match self.in_flight_requests.entry(key.to_string()) {
             dashmap::mapref::entry::Entry::Occupied(entry) => {
                 let tx = entry.get().clone();
                 (tx.clone(), tx.subscribe())
             }
             dashmap::mapref::entry::Entry::Vacant(entry) => {
-                let (tx, _) = broadcast::channel(1);
+                let (tx, _) = tokio::sync::broadcast::channel(1);
                 entry.insert(tx.clone());
                 (tx.clone(), tx.subscribe())
             }
@@ -856,7 +912,9 @@ impl CacheManager {
             match rx.recv().await {
                 Ok(Ok(value)) => return Ok(value),
                 Ok(Err(e)) => {
-                    return Err(anyhow::anyhow!("Computation failed in another thread: {e}"));
+                    return Err(crate::error::CacheError::BackendError(format!(
+                        "Computation failed in another thread: {e}"
+                    )));
                 }
                 Err(_) => {} // Fall through to re-compute
             }
@@ -887,7 +945,7 @@ impl CacheManager {
                 let _ = tx.send(Ok(value.clone()));
             }
             Err(e) => {
-                let _ = tx.send(Err(Arc::new(anyhow::anyhow!("{e}"))));
+                let _ = tx.send(Err(e.clone()));
             }
         }
 
@@ -1002,64 +1060,28 @@ impl CacheManager {
         key: &str,
         strategy: CacheStrategy,
         compute_fn: F,
-    ) -> Result<T>
+    ) -> CacheResult<T>
     where
         T: serde::Serialize + serde::de::DeserializeOwned + Send + Sync + 'static,
         F: FnOnce() -> Fut + Send,
-        Fut: Future<Output = Result<T>> + Send,
+        Fut: Future<Output = CacheResult<T>> + Send,
     {
-        self.total_requests.fetch_add(1, Ordering::Relaxed);
-
-        // 1. Try L1 first with zero-cost typed access (if backend supports it)
-        // Note: For now we still use bytes path in CacheManager to keep it generic,
-        // but backends like Moka use their internal typed cache.
-        // We might want a dedicated Tier trait method for typed access later.
-
-        for (idx, tier) in self.tiers.iter().enumerate() {
-            if let Some((bytes, ttl)) = tier.get_with_ttl(key).await {
-                tier.record_hit();
-                if tier.tier_level == 1 {
-                    self.l1_hits.fetch_add(1, Ordering::Relaxed);
-                } else if tier.tier_level == 2 {
-                    self.l2_hits.fetch_add(1, Ordering::Relaxed);
-                }
-
-                match serde_json::from_slice::<T>(&bytes) {
-                    Ok(value) => {
-                        // Promotion
-                        if idx > 0 && tier.promotion_enabled {
-                            let promotion_ttl = ttl.unwrap_or_else(|| strategy.to_duration());
-                            if let Some(l1_tier) = self.tiers.first() {
-                                let _ = l1_tier.set_with_ttl(key, bytes, promotion_ttl).await;
-                                self.promotions.fetch_add(1, Ordering::Relaxed);
-                            }
-                        }
-                        return Ok(value);
-                    }
-                    Err(e) => {
-                        warn!("Deserialization failed for key '{}': {}", key, e);
-                        // Fall through to next tier or compute
-                    }
-                }
-            }
+        // 1. Try to get typed from cache first
+        if let Some(value) = self.get_typed::<T>(key).await? {
+            return Ok(value);
         }
 
-        // 2. Compute with stampede protection (reuse get_or_compute_with logic for Bytes)
-        let compute_fn_wrapped = || async {
-            let val = compute_fn().await?;
-            Ok(Bytes::from(serde_json::to_vec(&val)?))
-        };
-
-        let bytes = self
-            .get_or_compute_with(key, strategy, compute_fn_wrapped)
+        // 2. Use get_or_compute_with to handle stampede protection
+        let serializer = self.serializer.clone();
+        let bytes_result = self
+            .get_or_compute_with(key, strategy, || async move {
+                let val = compute_fn().await?;
+                serializer.serialize(&val)
+            })
             .await?;
 
-        match serde_json::from_slice::<T>(&bytes) {
-            Ok(val) => Ok(val),
-            Err(e) => Err(anyhow::anyhow!(
-                "Coalesced result deserialization failed: {e}"
-            )),
-        }
+        // 3. Deserialize result
+        self.serializer.deserialize::<T>(&bytes_result)
     }
 
     /// Get comprehensive cache statistics
@@ -1135,15 +1157,15 @@ impl CacheBackend for ProxyL1ToL2 {
         key: &'a str,
         value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'a, CacheResult<()>> {
         self.0.set_with_ttl(key, value, ttl)
     }
 
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         self.0.remove(key)
     }
 
-    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         self.0.remove_pattern(pattern)
     }
 
@@ -1185,10 +1207,12 @@ impl CacheManager {
         stream_key: &str,
         fields: Vec<(String, String)>,
         maxlen: Option<usize>,
-    ) -> Result<String> {
+    ) -> CacheResult<String> {
         match &self.streaming_backend {
             Some(backend) => backend.stream_add(stream_key, fields, maxlen).await,
-            None => Err(anyhow::anyhow!("Streaming backend not configured")),
+            None => Err(crate::error::CacheError::ConfigError(
+                "Streaming backend not configured".to_string(),
+            )),
         }
     }
 
@@ -1207,10 +1231,15 @@ impl CacheManager {
         &self,
         stream_key: &str,
         count: usize,
-    ) -> Result<Vec<(String, Vec<(String, String)>)>> {
+    ) -> CacheResult<Vec<(String, Vec<(String, String)>)>> {
         match &self.streaming_backend {
-            Some(backend) => backend.stream_read_latest(stream_key, count).await,
-            None => Err(anyhow::anyhow!("Streaming backend not configured")),
+            Some(backend) => backend
+                .stream_read_latest(stream_key, count)
+                .await
+                .map_err(Into::into),
+            None => Err(crate::error::CacheError::ConfigError(
+                "Streaming backend not configured".to_string(),
+            )),
         }
     }
 
@@ -1233,14 +1262,16 @@ impl CacheManager {
         last_id: &str,
         count: usize,
         block_ms: Option<usize>,
-    ) -> Result<Vec<(String, Vec<(String, String)>)>> {
+    ) -> CacheResult<Vec<(String, Vec<(String, String)>)>> {
         match &self.streaming_backend {
             Some(backend) => {
                 backend
                     .stream_read(stream_key, last_id, count, block_ms)
                     .await
             }
-            None => Err(anyhow::anyhow!("Streaming backend not configured")),
+            None => Err(crate::error::CacheError::ConfigError(
+                "Streaming backend not configured".to_string(),
+            )),
         }
     }
 
@@ -1268,7 +1299,7 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if invalidation fails.
-    pub async fn invalidate(&self, key: &str) -> Result<()> {
+    pub async fn invalidate(&self, key: &str) -> CacheResult<()> {
         // Remove from ALL tiers
         for tier in &self.tiers {
             if let Err(e) = tier.remove(key).await {
@@ -1280,13 +1311,19 @@ impl CacheManager {
         }
 
         // Broadcast to other instances
-        if let Some(publisher) = &self.invalidation_publisher {
-            let mut pub_lock = publisher.lock().await;
-            let msg = InvalidationMessage::remove(key);
-            pub_lock.publish(&msg).await?;
-            self.invalidation_stats
-                .messages_sent
-                .fetch_add(1, Ordering::Relaxed);
+        #[cfg(feature = "redis")]
+        {
+            if let Some(publisher) = &self.invalidation_publisher {
+                let mut pub_lock: tokio::sync::MutexGuard<
+                    '_,
+                    crate::invalidation::InvalidationPublisher,
+                > = publisher.lock().await;
+                let msg = InvalidationMessage::remove(key);
+                pub_lock.publish(&msg).await?;
+                self.invalidation_stats
+                    .messages_sent
+                    .fetch_add(1, Ordering::Relaxed);
+            }
         }
 
         debug!("Invalidated '{}' across all instances", key);
@@ -1320,7 +1357,12 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if cache update fails.
-    pub async fn update_cache(&self, key: &str, value: Bytes, ttl: Option<Duration>) -> Result<()> {
+    pub async fn update_cache(
+        &self,
+        key: &str,
+        value: Bytes,
+        ttl: Option<Duration>,
+    ) -> CacheResult<()> {
         let ttl = ttl.unwrap_or_else(|| CacheStrategy::Default.to_duration());
 
         // Update ALL tiers
@@ -1331,6 +1373,7 @@ impl CacheManager {
         }
 
         // Broadcast update to other instances
+        #[cfg(feature = "redis")]
         if let Some(publisher) = &self.invalidation_publisher {
             let mut pub_lock = publisher.lock().await;
             let msg = InvalidationMessage::update(key, value, Some(ttl));
@@ -1372,7 +1415,7 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if invalidation fails.
-    pub async fn invalidate_pattern(&self, pattern: &str) -> Result<()> {
+    pub async fn invalidate_pattern(&self, pattern: &str) -> CacheResult<()> {
         debug!(pattern = %pattern, "Invalidating pattern across all tiers");
 
         // 1. Invalidate in all configured tiers
@@ -1382,10 +1425,13 @@ impl CacheManager {
         }
 
         // 2. Broadcast invalidation if publisher is configured
-        if let Some(publisher) = &self.invalidation_publisher {
-            let msg = InvalidationMessage::remove_pattern(pattern);
-            publisher.lock().await.publish(&msg).await?;
-            debug!(pattern = %pattern, "Broadcasted pattern invalidation");
+        #[cfg(feature = "redis")]
+        {
+            if let Some(publisher) = &self.invalidation_publisher {
+                let msg = InvalidationMessage::remove_pattern(pattern);
+                publisher.lock().await.publish(&msg).await?;
+                debug!(pattern = %pattern, "Broadcasted pattern invalidation");
+            }
         }
 
         Ok(())
@@ -1420,13 +1466,14 @@ impl CacheManager {
         key: &str,
         value: Bytes,
         strategy: CacheStrategy,
-    ) -> Result<()> {
-        let ttl = strategy.to_duration();
+    ) -> CacheResult<()> {
+        #[cfg(feature = "redis")] let ttl = strategy.to_duration();
 
         // Set in local caches
         self.set_with_strategy(key, value.clone(), strategy).await?;
 
         // Broadcast update if invalidation is enabled
+        #[cfg(feature = "redis")]
         if let Some(publisher) = &self.invalidation_publisher {
             let mut pub_lock = publisher.lock().await;
             let msg = InvalidationMessage::update(key, value, Some(ttl));
@@ -1442,10 +1489,14 @@ impl CacheManager {
     /// Get invalidation statistics
     ///
     /// Returns statistics about invalidation operations if invalidation is enabled.
-    pub fn get_invalidation_stats(&self) -> Option<InvalidationStats> {
-        if self.invalidation_subscriber.is_some() {
+    #[cfg(feature = "redis")]
+    pub fn invalidation_stats(&self) -> Option<crate::invalidation::InvalidationStats> {
+        #[cfg(feature = "redis")]
+        {
             Some(self.invalidation_stats.snapshot())
-        } else {
+        }
+        #[cfg(not(feature = "redis"))]
+        {
             None
         }
     }

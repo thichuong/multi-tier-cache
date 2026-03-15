@@ -95,6 +95,7 @@ impl MemcachedCache {
 
 // ===== Trait Implementations =====
 
+use crate::error::CacheResult;
 use crate::traits::CacheBackend;
 
 /// Implement `CacheBackend` trait for `MemcachedCache`
@@ -116,7 +117,7 @@ impl CacheBackend for MemcachedCache {
         key: &'a str,
         value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             self.client
                 .set(
@@ -124,7 +125,11 @@ impl CacheBackend for MemcachedCache {
                     value.as_ref(),
                     u32::try_from(ttl.as_secs()).unwrap_or(u32::MAX),
                 )
-                .map_err(|e| anyhow!("Memcached SET failed: {e}"))?;
+                .map_err(|e| {
+                    crate::error::CacheError::BackendError(format!(
+                        "Memcached operation failed: {e}"
+                    ))
+                })?;
 
             self.sets.fetch_add(1, Ordering::Relaxed);
             debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Memcached] Cached key with TTL");
@@ -132,11 +137,11 @@ impl CacheBackend for MemcachedCache {
         })
     }
 
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
-            self.client
-                .delete(key)
-                .map_err(|e| anyhow!("Memcached DELETE failed: {e}"))?;
+            self.client.delete(key).map_err(|e| {
+                crate::error::CacheError::BackendError(format!("Memcached operation failed: {e}"))
+            })?;
             Ok(())
         })
     }

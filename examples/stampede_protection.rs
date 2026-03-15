@@ -6,6 +6,7 @@
 //! Run with: cargo run --example `stampede_protection`
 
 use bytes::Bytes;
+use multi_tier_cache::error::CacheError;
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -43,9 +44,15 @@ async fn main() -> anyhow::Result<()> {
             // Try to get or compute
             let result = cache_clone
                 .cache_manager()
-                .get_or_compute_with("stampede_test_key", CacheStrategy::ShortTerm, || {
-                    expensive_computation(i)
-                })
+                .get_or_compute_with(
+                    "stampede_test_key",
+                    CacheStrategy::ShortTerm,
+                    || async move {
+                        expensive_computation(i)
+                            .await
+                            .map_err(|e| CacheError::InternalError(e.to_string()))
+                    },
+                )
                 .await;
 
             let elapsed = worker_start.elapsed();

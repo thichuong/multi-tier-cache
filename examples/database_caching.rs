@@ -5,6 +5,7 @@
 //!
 //! Run with: `cargo run --example database_caching`
 
+use multi_tier_cache::error::CacheError;
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -76,7 +77,11 @@ async fn main() -> anyhow::Result<()> {
         .get_or_compute_typed(
             "user:123",
             CacheStrategy::MediumTerm, // 1 hour TTL
-            || async { fetch_user_from_db(123).await },
+            || async {
+                fetch_user_from_db(123)
+                    .await
+                    .map_err(|e| multi_tier_cache::error::CacheError::InternalError(e.to_string()))
+            },
         )
         .await?;
     let elapsed = start.elapsed();
@@ -94,7 +99,9 @@ async fn main() -> anyhow::Result<()> {
     let user: User = cache
         .cache_manager()
         .get_or_compute_typed("user:123", CacheStrategy::MediumTerm, || async {
-            fetch_user_from_db(123).await
+            fetch_user_from_db(123)
+                .await
+                .map_err(|e| multi_tier_cache::error::CacheError::InternalError(e.to_string()))
         })
         .await?;
     let elapsed = start.elapsed();
@@ -113,7 +120,11 @@ async fn main() -> anyhow::Result<()> {
         .get_or_compute_typed(
             "product:456",
             CacheStrategy::LongTerm, // 3 hours TTL
-            || async { fetch_product_from_db(456).await },
+            || async {
+                fetch_product_from_db(456)
+                    .await
+                    .map_err(|e| multi_tier_cache::error::CacheError::InternalError(e.to_string()))
+            },
         )
         .await?;
 
@@ -134,8 +145,10 @@ async fn main() -> anyhow::Result<()> {
                 let start = std::time::Instant::now();
                 let user: User = cache
                     .cache_manager()
-                    .get_or_compute_typed("user:999", CacheStrategy::ShortTerm, || async {
-                        fetch_user_from_db(999).await
+                    .get_or_compute_typed("user:999", CacheStrategy::ShortTerm, || async move {
+                        fetch_user_from_db(999).await.map_err(|e| {
+                            multi_tier_cache::error::CacheError::InternalError(e.to_string())
+                        })
                     })
                     .await
                     .unwrap_or_else(|_| panic!("Failed to get user"));

@@ -5,6 +5,7 @@
 //! Run with: cargo run --example `advanced_usage`
 
 use bytes::Bytes;
+use multi_tier_cache::error::{CacheError, CacheResult};
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::time::Duration;
 
@@ -66,8 +67,10 @@ async fn main() -> anyhow::Result<()> {
     println!("First call - cache miss:");
     let product1 = cache
         .cache_manager()
-        .get_or_compute_with("product:42", CacheStrategy::MediumTerm, || {
+        .get_or_compute_with("product:42", CacheStrategy::MediumTerm, || async move {
             fetch_from_database(42)
+                .await
+                .map_err(|e| CacheError::InternalError(e.to_string()))
         })
         .await?;
     println!("   Result: {product1:?}\n");
@@ -76,8 +79,10 @@ async fn main() -> anyhow::Result<()> {
     println!("Second call - cache hit:");
     let product2 = cache
         .cache_manager()
-        .get_or_compute_with("product:42", CacheStrategy::MediumTerm, || {
+        .get_or_compute_with("product:42", CacheStrategy::MediumTerm, || async move {
             fetch_from_database(42)
+                .await
+                .map_err(|e| CacheError::InternalError(e.to_string()))
         })
         .await?;
     println!("   Result: {product2:?} (from cache, no DB call)\n");

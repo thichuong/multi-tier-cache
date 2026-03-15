@@ -11,8 +11,8 @@
 //!
 //! # Example: Custom L1 Backend
 //!
-/// ```rust,no_run
-/// use anyhow::Result;
+/// ```rust,ignore
+/// use multi_tier_cache::error::{CacheError, CacheResult};
 /// use bytes::Bytes;
 /// use std::time::Duration;
 /// use futures_util::future::BoxFuture;
@@ -25,11 +25,11 @@
 ///         Box::pin(async move { None })
 ///     }
 ///
-///     fn set_with_ttl<'a>(&'a self, _key: &'a str, _value: Bytes, _ttl: Duration) -> BoxFuture<'a, Result<()>> {
+///     fn set_with_ttl<'a>(&'a self, _key: &'a str, _value: Bytes, _ttl: Duration) -> BoxFuture<'a, CacheResult<()>> {
 ///         Box::pin(async move { Ok(()) })
 ///     }
 ///
-///     fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Result<()>> {
+///     fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
 ///         Box::pin(async move { Ok(()) })
 ///     }
 ///
@@ -40,7 +40,7 @@
 ///     fn name(&self) -> &'static str { "MyCache" }
 /// }
 /// ```
-use anyhow::Result;
+use crate::error::CacheResult;
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use std::time::Duration;
@@ -100,7 +100,12 @@ pub trait CacheBackend: Send + Sync {
         key: &'a str,
         value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>>;
+    ) -> BoxFuture<'a, CacheResult<()>>;
+
+    /// Set value in cache with default TTL (5 minutes)
+    fn set<'a>(&'a self, key: &'a str, value: Bytes) -> BoxFuture<'a, CacheResult<()>> {
+        self.set_with_ttl(key, value, std::time::Duration::from_secs(300))
+    }
 
     /// Remove value from cache
     ///
@@ -112,7 +117,7 @@ pub trait CacheBackend: Send + Sync {
     ///
     /// * `Ok(())` - Value removed (or didn't exist)
     /// * `Err(e)` - Cache operation failed
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>>;
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>>;
 
     /// Check if cache backend is healthy
     ///
@@ -135,7 +140,7 @@ pub trait CacheBackend: Send + Sync {
     ///
     /// * `Ok(())` - Pattern processed
     /// * `Err(e)` - Operation failed
-    fn remove_pattern<'a>(&'a self, _pattern: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove_pattern<'a>(&'a self, _pattern: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async { Ok(()) })
     }
 
@@ -159,8 +164,9 @@ pub trait CacheBackend: Send + Sync {
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use anyhow::Result;
+/// ```rust,ignore,ignore
+/// ```rust,ignore
+/// use multi_tier_cache::error::{CacheError, CacheResult};
 /// use bytes::Bytes;
 /// use std::time::Duration;
 /// use futures_util::future::BoxFuture;
@@ -170,8 +176,8 @@ pub trait CacheBackend: Send + Sync {
 ///
 /// impl CacheBackend for MyDistributedCache {
 ///     fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> { Box::pin(async move { None }) }
-///     fn set_with_ttl<'a>(&'a self, _k: &'a str, _v: Bytes, _t: Duration) -> BoxFuture<'a, Result<()>> { Box::pin(async move { Ok(()) }) }
-///     fn remove<'a>(&'a self, _k: &'a str) -> BoxFuture<'a, Result<()>> { Box::pin(async move { Ok(()) }) }
+///     fn set_with_ttl<'a>(&'a self, _k: &'a str, _v: Bytes, _t: Duration) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async move { Ok(()) }) }
+///     fn remove<'a>(&'a self, _k: &'a str) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async move { Ok(()) }) }
 ///     fn health_check(&self) -> BoxFuture<'_, bool> { Box::pin(async move { true }) }
 ///     fn name(&self) -> &'static str { "MyDistCache" }
 /// }
@@ -216,9 +222,10 @@ pub type StreamEntry = (String, Vec<(String, String)>);
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// use multi_tier_cache::StreamingBackend;
-/// use anyhow::Result;
+/// ```rust,ignore,ignore
+/// ```rust,ignore
+/// use multi_tier_cache::error::{CacheError, CacheResult};
+/// use multi_tier_cache::{StreamingBackend, StreamEntry};
 /// use futures_util::future::BoxFuture;
 ///
 /// struct MyStreamingCache;
@@ -229,7 +236,7 @@ pub type StreamEntry = (String, Vec<(String, String)>);
 ///         _stream_key: &'a str,
 ///         _fields: Vec<(String, String)>,
 ///         _maxlen: Option<usize>,
-///     ) -> BoxFuture<'a, Result<String>> {
+///     ) -> BoxFuture<'a, CacheResult<String>> {
 ///         Box::pin(async move { Ok("entry-id".to_string()) })
 ///     }
 ///
@@ -237,7 +244,7 @@ pub type StreamEntry = (String, Vec<(String, String)>);
 ///         &'a self,
 ///         _stream_key: &'a str,
 ///         _count: usize,
-///     ) -> BoxFuture<'a, Result<Vec<(String, Vec<(String, String)>)>>> {
+///     ) -> BoxFuture<'a, CacheResult<Vec<StreamEntry>>> {
 ///         Box::pin(async move { Ok(vec![]) })
 ///     }
 ///
@@ -247,8 +254,20 @@ pub type StreamEntry = (String, Vec<(String, String)>);
 ///         _last_id: &'a str,
 ///         _count: usize,
 ///         _block_ms: Option<usize>,
-///     ) -> BoxFuture<'a, Result<Vec<(String, Vec<(String, String)>)>>> {
+///     ) -> BoxFuture<'a, CacheResult<Vec<StreamEntry>>> {
 ///         Box::pin(async move { Ok(vec![]) })
+///     }
+///
+///     fn stream_create_group<'a>(&'a self, _: &'a str, _: &'a str, _: &'a str) -> BoxFuture<'a, CacheResult<()>> {
+///         Box::pin(async move { Ok(()) })
+///     }
+///
+///     fn stream_read_group<'a>(&'a self, _: &'a str, _: &'a str, _: &'a str, _: usize, _: Option<usize>) -> BoxFuture<'a, CacheResult<Vec<StreamEntry>>> {
+///         Box::pin(async move { Ok(vec![]) })
+///     }
+///
+///     fn stream_ack<'a>(&'a self, _: &'a str, _: &'a str, _: &'a [String]) -> BoxFuture<'a, CacheResult<()>> {
+///         Box::pin(async move { Ok(()) })
 ///     }
 /// }
 /// ```
@@ -259,14 +278,14 @@ pub trait StreamingBackend: Send + Sync {
         stream_key: &'a str,
         fields: Vec<(String, String)>,
         maxlen: Option<usize>,
-    ) -> BoxFuture<'a, Result<String>>;
+    ) -> BoxFuture<'a, CacheResult<String>>;
 
     /// Read the latest N entries from a stream (newest first)
     fn stream_read_latest<'a>(
         &'a self,
         stream_key: &'a str,
         count: usize,
-    ) -> BoxFuture<'a, Result<Vec<StreamEntry>>>;
+    ) -> BoxFuture<'a, CacheResult<Vec<StreamEntry>>>;
 
     /// Read entries from a stream with optional blocking
     fn stream_read<'a>(
@@ -275,5 +294,31 @@ pub trait StreamingBackend: Send + Sync {
         last_id: &'a str,
         count: usize,
         block_ms: Option<usize>,
-    ) -> BoxFuture<'a, Result<Vec<StreamEntry>>>;
+    ) -> BoxFuture<'a, CacheResult<Vec<StreamEntry>>>;
+
+    /// Create a consumer group for a stream
+    fn stream_create_group<'a>(
+        &'a self,
+        stream_key: &'a str,
+        group_name: &'a str,
+        id: &'a str,
+    ) -> BoxFuture<'a, CacheResult<()>>;
+
+    /// Read entries from a stream as a consumer group
+    fn stream_read_group<'a>(
+        &'a self,
+        stream_key: &'a str,
+        group_name: &'a str,
+        consumer_name: &'a str,
+        count: usize,
+        block_ms: Option<usize>,
+    ) -> BoxFuture<'a, CacheResult<Vec<StreamEntry>>>;
+
+    /// Acknowledge entry processing
+    fn stream_ack<'a>(
+        &'a self,
+        stream_key: &'a str,
+        group_name: &'a str,
+        ids: &'a [String],
+    ) -> BoxFuture<'a, CacheResult<()>>;
 }

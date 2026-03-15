@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use bytes::Bytes;
+use multi_tier_cache::error::CacheResult;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -373,7 +374,7 @@ async fn test_multi_tier_stampede_protection() {
     let compute_count = Arc::new(AtomicU32::new(0));
 
     // Spawn 50 concurrent requests for same key
-    let mut tasks: JoinSet<Result<Bytes>> = JoinSet::new();
+    let mut tasks: JoinSet<CacheResult<Bytes>> = JoinSet::new();
     for _ in 0..50 {
         let manager_clone: Arc<CacheManager> = Arc::clone(&manager);
         let key_clone = key.clone();
@@ -458,7 +459,7 @@ async fn test_stampede_retrieves_from_l3() {
     let compute_count = Arc::new(AtomicU32::new(0));
 
     // Spawn 30 concurrent requests
-    let mut tasks: JoinSet<Result<Bytes>> = JoinSet::new();
+    let mut tasks: JoinSet<CacheResult<Bytes>> = JoinSet::new();
     for _ in 0..30 {
         let manager_clone: Arc<CacheManager> = Arc::clone(&manager);
         let key_clone = key.clone();

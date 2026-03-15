@@ -8,6 +8,7 @@
 //! - Different data sizes
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use multi_tier_cache::error::{CacheError, CacheResult};
 use multi_tier_cache::{Bytes, CacheBackend, CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::time::Duration;
@@ -197,7 +198,7 @@ fn bench_compute_on_miss(c: &mut Criterion) {
                             let d = data.clone();
                             async move {
                                 tokio::time::sleep(delay).await;
-                                anyhow::Ok(d)
+                                Ok(d)
                             }
                         })
                         .await
@@ -240,7 +241,7 @@ fn bench_typed_cache(c: &mut Criterion) {
                     .cache_manager()
                     .get_or_compute_typed(&key, CacheStrategy::ShortTerm, || {
                         let u = user.clone();
-                        async move { Ok(u) }
+                        async move { Ok::<User, CacheError>(u) }
                     })
                     .await
                     .unwrap_or_else(|_| panic!("Failed to get/compute typed"));

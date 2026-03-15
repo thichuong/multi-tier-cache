@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use multi_tier_cache::error::CacheError;
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::time::Duration;
 use tokio::time::sleep;
@@ -73,7 +74,7 @@ async fn test_get_or_compute_error_propagation() -> anyhow::Result<()> {
     // Compute function that fails
     let result = manager
         .get_or_compute_with(&key, CacheStrategy::ShortTerm, || async {
-            Err(anyhow::anyhow!("Database failure"))
+            Err(CacheError::InternalError("Database failure".to_string()))
         })
         .await;
 
@@ -83,7 +84,7 @@ async fn test_get_or_compute_error_propagation() -> anyhow::Result<()> {
             .err()
             .unwrap_or_else(|| panic!("Should be error"))
             .to_string(),
-        "Database failure"
+        "Internal error: Database failure"
     );
 
     // Verify nothing cached

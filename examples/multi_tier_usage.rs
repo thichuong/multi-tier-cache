@@ -4,9 +4,9 @@
 //!
 //! Run with: cargo run --example `multi_tier_usage`
 
-use anyhow::Result;
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
+use multi_tier_cache::error::{CacheError, CacheResult};
 use multi_tier_cache::{CacheBackend, CacheSystemBuilder, L2CacheBackend};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -33,19 +33,21 @@ impl MockL3Cache {
 
 impl CacheBackend for MockL3Cache {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
-        let store = Arc::clone(&self.store);
+        let store: L3Store = Arc::clone(&self.store);
         Box::pin(async move {
             // Simulate latency for "disk" access
             tokio::time::sleep(Duration::from_millis(50)).await;
 
             let store = store.read().unwrap_or_else(|_| panic!("Lock poisoned"));
-            store.get(key).and_then(|(value, expiry, _)| {
-                if *expiry > Instant::now() {
-                    Some(value.clone())
-                } else {
-                    None
-                }
-            })
+            store.get(key).and_then(
+                |(value, expiry, _): &(Bytes, std::time::Instant, std::time::Duration)| {
+                    if *expiry > Instant::now() {
+                        Some(value.clone())
+                    } else {
+                        None
+                    }
+                },
+            )
         })
     }
 
@@ -54,8 +56,8 @@ impl CacheBackend for MockL3Cache {
         key: &'a str,
         value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
-        let store = Arc::clone(&self.store);
+    ) -> BoxFuture<'a, CacheResult<()>> {
+        let store: L3Store = Arc::clone(&self.store);
         let key = key.to_string();
         let name = self.name.clone();
         Box::pin(async move {
@@ -70,8 +72,8 @@ impl CacheBackend for MockL3Cache {
         })
     }
 
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
-        let store = Arc::clone(&self.store);
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
+        let store: L3Store = Arc::clone(&self.store);
         let key = key.to_string();
         Box::pin(async move {
             let mut store = store.write().unwrap_or_else(|_| panic!("Lock poisoned"));
@@ -94,21 +96,23 @@ impl L2CacheBackend for MockL3Cache {
         &'a self,
         key: &'a str,
     ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
-        let store = Arc::clone(&self.store);
+        let store: L3Store = Arc::clone(&self.store);
         Box::pin(async move {
             // Simulate latency
             tokio::time::sleep(Duration::from_millis(50)).await;
 
             let store = store.read().unwrap_or_else(|_| panic!("Lock poisoned"));
-            store.get(key).and_then(|(value, expiry, _)| {
-                let now = Instant::now();
-                if *expiry > now {
-                    let remaining = expiry.duration_since(now);
-                    Some((value.clone(), Some(remaining)))
-                } else {
-                    None
-                }
-            })
+            store.get(key).and_then(
+                |(value, expiry, _): &(Bytes, std::time::Instant, std::time::Duration)| {
+                    let now = Instant::now();
+                    if *expiry > now {
+                        let remaining = expiry.duration_since(now);
+                        Some((value.clone(), Some(remaining)))
+                    } else {
+                        None
+                    }
+                },
+            )
         })
     }
 }
@@ -116,7 +120,7 @@ impl L2CacheBackend for MockL3Cache {
 // ==================== Main Example ====================
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     println!("=== Multi-Tier Cache: 3-Tier Architecture Example ===\n");
 
     // 1. Initialize Backends

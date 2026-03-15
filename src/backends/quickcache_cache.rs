@@ -2,7 +2,7 @@
 //!
 //! Lightweight and extremely fast in-memory cache optimized for maximum performance.
 
-use anyhow::Result;
+use crate::error::CacheResult;
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use parking_lot::RwLock;
@@ -65,7 +65,7 @@ impl QuickCacheBackend {
     /// # Errors
     ///
     /// Returns an error if the capacity is invalid.
-    pub fn new(max_capacity: u64) -> Result<Self> {
+    pub fn new(max_capacity: u64) -> CacheResult<Self> {
         info!(capacity = max_capacity, "Initializing QuickCache");
 
         let cache = Cache::new(usize::try_from(max_capacity)?);
@@ -94,7 +94,7 @@ impl CacheBackend for QuickCacheBackend {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
         Box::pin(async move {
             if let Some(entry_lock) = self.cache.get(key) {
-                let entry = entry_lock.read();
+                let entry: parking_lot::RwLockReadGuard<'_, CacheEntry> = entry_lock.read();
                 if entry.is_expired() {
                     // Remove expired entry
                     drop(entry); // Release read lock before removing
@@ -117,7 +117,7 @@ impl CacheBackend for QuickCacheBackend {
         key: &'a str,
         value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             let entry = Arc::new(RwLock::new(CacheEntry::new(value, ttl)));
             self.cache.insert(key.to_string(), entry);
@@ -127,7 +127,7 @@ impl CacheBackend for QuickCacheBackend {
         })
     }
 
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             self.cache.remove(key);
             Ok(())

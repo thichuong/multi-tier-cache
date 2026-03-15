@@ -5,9 +5,9 @@
 //!
 //! Run with: `cargo run --example custom_backends`
 
-use anyhow::Result;
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
+use multi_tier_cache::error::CacheResult;
 use multi_tier_cache::{CacheBackend, CacheSystemBuilder, L2CacheBackend, TierConfig};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -61,7 +61,7 @@ impl CacheBackend for HashMapCache {
         key: &'a str,
         value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'a, CacheResult<()>> {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
 
@@ -74,7 +74,7 @@ impl CacheBackend for HashMapCache {
         })
     }
 
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
         Box::pin(async move {
@@ -138,7 +138,7 @@ impl CacheBackend for InMemoryL2Cache {
         key: &'a str,
         value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'a, CacheResult<()>> {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
         Box::pin(async move {
@@ -150,7 +150,7 @@ impl CacheBackend for InMemoryL2Cache {
         })
     }
 
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         let store = Arc::clone(&self.store);
         let key = key.to_string();
         Box::pin(async move {
@@ -221,7 +221,7 @@ impl CacheBackend for NoOpCache {
         key: &'a str,
         _value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'a, CacheResult<()>> {
         let key = key.to_string();
         Box::pin(async move {
             println!(
@@ -232,7 +232,7 @@ impl CacheBackend for NoOpCache {
         })
     }
 
-    fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move { Ok(()) })
     }
 
@@ -257,7 +257,7 @@ impl L2CacheBackend for NoOpCache {
 // ==================== Main Example ====================
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> anyhow::Result<()> {
     println!("=== Multi-Tier Cache: Custom Backends Example ===\n");
 
     // Example 1: HashMap L1 + InMemory L2

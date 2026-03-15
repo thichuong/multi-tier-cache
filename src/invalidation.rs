@@ -3,13 +3,16 @@
 //! This module provides cross-instance cache invalidation using Redis Pub/Sub.
 //! It supports both cache removal (invalidation) and cache updates (refresh).
 
-use anyhow::{Context, Result};
+use crate::error::CacheResult;
+use crate::traits::StreamingBackend;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::broadcast;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 /// Invalidation message types sent across cache instances via Redis Pub/Sub
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,8 +72,12 @@ impl InvalidationMessage {
     /// # Errors
     ///
     /// Returns an error if serialization fails.
-    pub fn to_json(&self) -> Result<String> {
-        serde_json::to_string(self).context("Failed to serialize invalidation message")
+    pub fn to_json(&self) -> CacheResult<String> {
+        serde_json::to_string(self).map_err(|e| {
+            crate::error::CacheError::SerializationError(format!(
+                "Failed to serialize invalidation message: {e}"
+            ))
+        })
     }
 
     /// Deserialize from JSON
@@ -78,8 +85,12 @@ impl InvalidationMessage {
     /// # Errors
     ///
     /// Returns an error if deserialization fails.
-    pub fn from_json(json: &str) -> Result<Self> {
-        serde_json::from_str(json).context("Failed to deserialize invalidation message")
+    pub fn from_json(json: &str) -> CacheResult<Self> {
+        serde_json::from_str(json).map_err(|e| {
+            crate::error::CacheError::SerializationError(format!(
+                "Failed to deserialize invalidation message: {e}"
+            ))
+        })
     }
 
     /// Get TTL as Duration if present
@@ -163,7 +174,7 @@ impl InvalidationPublisher {
     /// # Errors
     ///
     /// Returns an error if serialization or publishing fails.
-    pub async fn publish(&mut self, message: &InvalidationMessage) -> Result<()> {
+    pub async fn publish(&mut self, message: &InvalidationMessage) -> CacheResult<()> {
         let json = message.to_json()?;
 
         // Publish to Pub/Sub channel
@@ -171,7 +182,11 @@ impl InvalidationPublisher {
             .connection
             .publish(&self.config.channel, &json)
             .await
-            .context("Failed to publish invalidation message")?;
+            .map_err(|e| {
+                crate::error::CacheError::InvalidationError(format!(
+                    "Failed to publish invalidation message: {e}"
+                ))
+            })?;
 
         // Optionally publish to audit stream
         if self.config.enable_audit_stream
@@ -185,7 +200,7 @@ impl InvalidationPublisher {
     }
 
     /// Publish to audit stream for observability
-    async fn publish_to_audit_stream(&mut self, message: &InvalidationMessage) -> Result<()> {
+    async fn publish_to_audit_stream(&mut self, message: &InvalidationMessage) -> CacheResult<()> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
@@ -241,10 +256,9 @@ impl InvalidationPublisher {
             cmd.arg(key).arg(value);
         }
 
-        let _: String = cmd
-            .query_async(&mut self.connection)
-            .await
-            .context("Failed to add to audit stream")?;
+        let _: String = cmd.query_async(&mut self.connection).await.map_err(|e| {
+            crate::error::CacheError::BackendError(format!("Failed to add to audit stream: {e}"))
+        })?;
 
         Ok(())
     }
@@ -304,7 +318,6 @@ impl AtomicInvalidationStats {
 }
 
 use std::sync::Arc;
-use tokio::sync::broadcast;
 
 /// Handle for subscribing to invalidation messages
 ///
@@ -330,9 +343,12 @@ impl InvalidationSubscriber {
     /// # Errors
     ///
     /// Returns an error if Redis client creation fails.
-    pub fn new(redis_url: &str, config: InvalidationConfig) -> Result<Self> {
-        let client = redis::Client::open(redis_url)
-            .context("Failed to create Redis client for subscriber")?;
+    pub fn new(redis_url: &str, config: InvalidationConfig) -> CacheResult<Self> {
+        let client = redis::Client::open(redis_url).map_err(|e| {
+            crate::error::CacheError::ConfigError(format!(
+                "Failed to create Redis client for subscriber: {e}"
+            ))
+        })?;
 
         let (shutdown_tx, _) = broadcast::channel(1);
 
@@ -360,7 +376,7 @@ impl InvalidationSubscriber {
     pub fn start<F, Fut>(&self, handler: F) -> tokio::task::JoinHandle<()>
     where
         F: Fn(InvalidationMessage) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+        Fut: std::future::Future<Output = CacheResult<()>> + Send + 'static,
     {
         let client = self.client.clone();
         let channel = self.config.channel.clone();
@@ -419,22 +435,21 @@ impl InvalidationSubscriber {
         handler: Arc<F>,
         stats: Arc<AtomicInvalidationStats>,
         shutdown_rx: &mut broadcast::Receiver<()>,
-    ) -> Result<()>
+    ) -> CacheResult<()>
     where
-        F: Fn(InvalidationMessage) -> Fut + Send + 'static,
-        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+        F: Fn(InvalidationMessage) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = CacheResult<()>> + Send + 'static,
     {
-        // Get Pub/Sub connection
-        let mut pubsub = client
-            .get_async_pubsub()
-            .await
-            .context("Failed to get pubsub connection")?;
+        let mut pubsub = client.get_async_pubsub().await.map_err(|e| {
+            crate::error::CacheError::BackendError(format!("Failed to get pubsub connection: {e}"))
+        })?;
 
         // Subscribe to channel
-        pubsub
-            .subscribe(channel)
-            .await
-            .context("Failed to subscribe to channel")?;
+        pubsub.subscribe(channel).await.map_err(|e| {
+            crate::error::CacheError::InvalidationError(format!(
+                "Failed to subscribe to channel: {e}"
+            ))
+        })?;
 
         info!("Subscribed to invalidation channel: {}", channel);
 
@@ -492,7 +507,7 @@ impl InvalidationSubscriber {
                         }
                         None => {
                             // Stream ended
-                            return Err(anyhow::anyhow!("Pub/Sub message stream ended"));
+                            return Err(crate::error::CacheError::InvalidationError("Pub/Sub message stream ended".to_string()));
                         }
                     }
                 }
@@ -509,12 +524,159 @@ impl InvalidationSubscriber {
     }
 }
 
+/// Reliable subscriber using Redis Streams and Consumer Groups
+pub struct ReliableStreamSubscriber {
+    client: redis::Client,
+    config: InvalidationConfig,
+    stats: Arc<AtomicInvalidationStats>,
+    shutdown_tx: broadcast::Sender<()>,
+    group_name: String,
+    consumer_name: String,
+}
+
+impl ReliableStreamSubscriber {
+    pub fn new(redis_url: &str, config: InvalidationConfig, group_name: &str) -> CacheResult<Self> {
+        let client = redis::Client::open(redis_url).map_err(|e| {
+            crate::error::CacheError::ConfigError(format!(
+                "Failed to create Redis client for reliable subscriber: {e}"
+            ))
+        })?;
+
+        let (shutdown_tx, _) = broadcast::channel(1);
+        let consumer_name = format!("consumer-{}", Uuid::new_v4());
+
+        Ok(Self {
+            client,
+            config,
+            stats: Arc::new(AtomicInvalidationStats::default()),
+            shutdown_tx,
+            group_name: group_name.to_string(),
+            consumer_name,
+        })
+    }
+
+    pub fn start<F, Fut>(&self, handler: F) -> tokio::task::JoinHandle<()>
+    where
+        F: Fn(InvalidationMessage) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = CacheResult<()>> + Send + 'static,
+    {
+        let client = self.client.clone();
+        let stream_key = self.config.channel.clone();
+        let group_name = self.group_name.clone();
+        let consumer_name = self.consumer_name.clone();
+        let handler = Arc::new(handler);
+        let stats = self.stats.clone();
+        let mut shutdown_rx = self.shutdown_tx.subscribe();
+
+        tokio::spawn(async move {
+            info!(
+                stream = %stream_key,
+                group = %group_name,
+                consumer = %consumer_name,
+                "Starting reliable stream subscriber"
+            );
+
+            // 1. Ensure stream and group exist
+            let redis_backend = crate::redis_streams::RedisStreams::new(
+                client.get_connection_info().addr().to_string().as_str(),
+            )
+            .await;
+            if let Ok(backend) = redis_backend {
+                let _ = backend
+                    .stream_create_group(&stream_key, &group_name, "0")
+                    .await;
+
+                loop {
+                    // Check shutdown before starting loop
+                    if shutdown_rx.try_recv().is_ok() {
+                        break;
+                    }
+
+                    if let Err(e) = Self::run_reliable_loop(
+                        &backend,
+                        &stream_key,
+                        &group_name,
+                        &consumer_name,
+                        handler.clone(),
+                        stats.clone(),
+                        &mut shutdown_rx,
+                    )
+                    .await
+                    {
+                        error!("Reliable subscriber loop error: {}", e);
+
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_secs(5)) => {},
+                            _ = shutdown_rx.recv() => break,
+                        }
+                    } else {
+                        break; // Normal shutdown
+                    }
+                }
+            }
+        })
+    }
+
+    async fn run_reliable_loop<F, Fut>(
+        backend: &dyn crate::traits::StreamingBackend,
+        stream_key: &str,
+        group_name: &str,
+        consumer_name: &str,
+        handler: Arc<F>,
+        stats: Arc<AtomicInvalidationStats>,
+        shutdown_rx: &mut broadcast::Receiver<()>,
+    ) -> CacheResult<()>
+    where
+        F: Fn(InvalidationMessage) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = CacheResult<()>> + Send + 'static,
+    {
+        loop {
+            tokio::select! {
+                entries_result = backend.stream_read_group(stream_key, group_name, consumer_name, 10, Some(5000)) => {
+                    let entries = entries_result?;
+                    if entries.is_empty() { continue; }
+
+                    let mut processed_ids = Vec::new();
+                    for (id, fields) in entries {
+                        // Find "payload" field or use first field if it looks like JSON
+                        let payload = fields.iter().find(|(k, _)| k == "payload")
+                            .map(|(_, v)| v.as_str())
+                            .or_else(|| fields.get(0).map(|(_, v)| v.as_str()));
+
+                        if let Some(json) = payload {
+                            if let Ok(msg) = InvalidationMessage::from_json(json) {
+                                stats.messages_received.fetch_add(1, Ordering::Relaxed);
+                                if let Err(e) = handler(msg).await {
+                                    error!("Reliable handler error: {}", e);
+                                    stats.processing_errors.fetch_add(1, Ordering::Relaxed);
+                                } else {
+                                    processed_ids.push(id);
+                                }
+                            }
+                        }
+                    }
+
+                    if !processed_ids.is_empty() {
+                        backend.stream_ack(stream_key, group_name, &processed_ids).await?;
+                    }
+                }
+                _ = shutdown_rx.recv() => return Ok(()),
+            }
+        }
+    }
+
+    /// Signal the subscriber to shutdown
+    pub fn shutdown(&self) {
+        let _ = self.shutdown_tx.send(()).unwrap_or(0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_invalidation_message_serialization() -> Result<()> {
+    fn test_invalidation_message_serialization() -> CacheResult<()> {
         // Test Remove
         let msg = InvalidationMessage::remove("test_key");
         let json = msg.to_json()?;

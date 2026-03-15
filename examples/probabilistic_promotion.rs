@@ -1,7 +1,9 @@
-use multi_tier_cache::{CacheBackend, CacheSystemBuilder, TierConfig, L1Cache, L2Cache, MokaCacheConfig, L2CacheBackend};
+use multi_tier_cache::{
+    CacheBackend, CacheSystemBuilder, L1Cache, L2Cache, L2CacheBackend, MokaCacheConfig, TierConfig,
+};
 use std::sync::Arc;
 use tokio::time::Duration;
-use tracing::{info, Level};
+use tracing::{Level, info};
 use tracing_subscriber::FmtSubscriber;
 
 #[tokio::main]
@@ -21,8 +23,14 @@ async fn main() -> anyhow::Result<()> {
     let l2_concrete = Arc::new(L2Cache::new().await?);
 
     let cache = CacheSystemBuilder::new()
-        .with_tier(Arc::clone(&l1_concrete) as Arc<dyn L2CacheBackend>, TierConfig::as_l1())
-        .with_tier(Arc::clone(&l2_concrete) as Arc<dyn L2CacheBackend>, TierConfig::as_l2().with_promotion_frequency(10))
+        .with_tier(
+            Arc::clone(&l1_concrete) as Arc<dyn L2CacheBackend>,
+            TierConfig::as_l1(),
+        )
+        .with_tier(
+            Arc::clone(&l2_concrete) as Arc<dyn L2CacheBackend>,
+            TierConfig::as_l2().with_promotion_frequency(10),
+        )
         .build()
         .await?;
 
@@ -31,7 +39,9 @@ async fn main() -> anyhow::Result<()> {
     let value = bytes::Bytes::from("some_data");
 
     // 3. Populate L2 directly (bypass L1)
-    l2_concrete.set_with_ttl(key, value.clone(), Duration::from_secs(300)).await?;
+    l2_concrete
+        .set_with_ttl(key, value.clone(), Duration::from_secs(300))
+        .await?;
     info!("Key '{}' stored in L2. L1 is empty.", key);
 
     // 4. Access the key multiple times and observe promotions
@@ -41,18 +51,24 @@ async fn main() -> anyhow::Result<()> {
     let mut l1_first_hit_at = None;
     for i in 1..=iterations {
         let _ = manager.get(key).await?;
-        
+
         let stats = manager.get_stats();
         let current_promotions = stats.promotions;
-        
+
         // Check if it's now in L1
         if l1_concrete.get(key).await.is_some() && l1_first_hit_at.is_none() {
             l1_first_hit_at = Some(i);
-            info!("Iteration {}: FIRST Promotion occurred! Key is now in L1.", i);
+            info!(
+                "Iteration {}: FIRST Promotion occurred! Key is now in L1.",
+                i
+            );
         }
-        
+
         if i % 10 == 0 {
-            info!("Progress: {}/{} requests. Current Promotions: {}", i, iterations, current_promotions);
+            info!(
+                "Progress: {}/{} requests. Current Promotions: {}",
+                i, iterations, current_promotions
+            );
         }
     }
 
@@ -62,7 +78,10 @@ async fn main() -> anyhow::Result<()> {
     info!("Total Requests: {}", iterations);
     info!("Total Promotions: {}", final_stats.promotions);
     info!("First Promotion at: {:?}", l1_first_hit_at);
-    info!("Promotion Rate: {:.1}% (Expected ~10%)", (final_stats.promotions as f64 / iterations as f64) * 100.0);
+    info!(
+        "Promotion Rate: {:.1}% (Expected ~10%)",
+        (final_stats.promotions as f64 / iterations as f64) * 100.0
+    );
     info!("------------------------------------------");
 
     // Cleanup

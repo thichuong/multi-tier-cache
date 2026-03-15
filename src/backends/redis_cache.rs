@@ -1,5 +1,5 @@
+use crate::error::CacheResult;
 use crate::traits::{CacheBackend, L2CacheBackend};
-use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use redis::aio::ConnectionManager;
@@ -27,7 +27,7 @@ impl RedisCache {
     /// # Errors
     ///
     /// Returns an error if the Redis URL is invalid or connection fails.
-    pub async fn new() -> Result<Self> {
+    pub async fn new() -> CacheResult<Self> {
         let redis_url =
             std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         Self::with_url(&redis_url).await
@@ -38,21 +38,28 @@ impl RedisCache {
     /// # Errors
     ///
     /// Returns an error if the Redis URL is invalid or connection fails.
-    pub async fn with_url(redis_url: &str) -> Result<Self> {
+    pub async fn with_url(redis_url: &str) -> CacheResult<Self> {
         info!(redis_url = %redis_url, "Initializing Redis Cache with ConnectionManager");
 
-        let client = Client::open(redis_url)
-            .with_context(|| format!("Failed to create Redis client with URL: {redis_url}"))?;
+        let client = Client::open(redis_url).map_err(|e| {
+            crate::error::CacheError::ConfigError(format!("Failed to create Redis client: {e}"))
+        })?;
 
-        let conn_manager = ConnectionManager::new(client)
-            .await
-            .context("Failed to establish Redis connection manager")?;
+        let conn_manager = ConnectionManager::new(client).await.map_err(|e| {
+            crate::error::CacheError::BackendError(format!(
+                "Failed to establish Redis connection manager: {e}"
+            ))
+        })?;
 
         let mut conn = conn_manager.clone();
         let _: String = redis::cmd("PING")
             .query_async(&mut conn)
             .await
-            .context("Redis PING health check failed")?;
+            .map_err(|e| {
+                crate::error::CacheError::BackendError(format!(
+                    "Redis PING health check failed: {e}"
+                ))
+            })?;
 
         info!(redis_url = %redis_url, "Redis Cache connected successfully");
 
@@ -69,7 +76,7 @@ impl RedisCache {
     /// # Errors
     ///
     /// Returns an error if the SCAN command fails.
-    pub async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
+    pub async fn scan_keys(&self, pattern: &str) -> CacheResult<Vec<String>> {
         let mut conn = self.conn_manager.clone();
         let mut keys = Vec::new();
         let mut cursor: u64 = 0;
@@ -101,7 +108,7 @@ impl RedisCache {
     /// # Errors
     ///
     /// Returns an error if the DEL command fails.
-    pub async fn remove_bulk(&self, keys: &[String]) -> Result<usize> {
+    pub async fn remove_bulk(&self, keys: &[String]) -> CacheResult<usize> {
         if keys.is_empty() {
             return Ok(0);
         }
@@ -139,7 +146,7 @@ impl CacheBackend for RedisCache {
         key: &'a str,
         value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
             let ttl_ms = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX);
@@ -148,16 +155,17 @@ impl CacheBackend for RedisCache {
                 self.sets.fetch_add(1, Ordering::Relaxed);
                 debug!(key = %key, ttl_ms = %ttl.as_millis(), "[Redis] Cached key bytes with TTL");
             }
-            result.map_err(|e| anyhow::anyhow!("Redis set failed: {e}"))
+            result.map_err(|e| {
+                crate::error::CacheError::BackendError(format!("Redis set failed: {e}"))
+            })
         })
     }
 
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
-            conn.del(key)
-                .await
-                .map_err(|e| anyhow::anyhow!("Redis del failed: {e}"))
+            let _: usize = conn.del(key).await?;
+            Ok(())
         })
     }
 
@@ -170,7 +178,7 @@ impl CacheBackend for RedisCache {
         })
     }
 
-    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             let keys = self.scan_keys(pattern).await?;
             if !keys.is_empty() {

@@ -1,5 +1,5 @@
+use crate::error::CacheResult;
 use crate::traits::{CacheBackend, L2CacheBackend};
-use anyhow::Result;
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures_util::future::BoxFuture;
@@ -105,7 +105,7 @@ impl CacheBackend for DashMapCache {
                         Some(entry.value.clone())
                     }
                 }
-                _ => None,
+                None => None,
             }
         })
     }
@@ -115,7 +115,7 @@ impl CacheBackend for DashMapCache {
         key: &'a str,
         value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             let entry = CacheEntry::new(value, ttl);
             self.map.insert(key.to_string(), entry);
@@ -125,7 +125,7 @@ impl CacheBackend for DashMapCache {
         })
     }
 
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             self.map.remove(key);
             Ok(())

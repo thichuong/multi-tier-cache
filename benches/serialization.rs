@@ -53,7 +53,7 @@ fn bench_json_vs_typed(c: &mut Criterion) {
                     "email": "test@example.com"
                 });
 
-                let user_bytes = Bytes::from(serde_json::to_vec(&user)?);
+                let user_bytes = Bytes::from(serde_json::to_vec(&user).map_err(|e| anyhow::anyhow!(e))?);
                 cache
                     .cache_manager()
                     .set_with_strategy(&key, user_bytes, CacheStrategy::ShortTerm)
@@ -81,7 +81,7 @@ fn bench_json_vs_typed(c: &mut Criterion) {
 
                 cache
                     .cache_manager()
-                    .get_or_compute_typed(&key, CacheStrategy::ShortTerm, || {
+                    .get_or_compute_typed::<User, _, _>(&key, CacheStrategy::ShortTerm, || {
                         let u = user.clone();
                         async move { Ok(u) }
                     })
@@ -122,7 +122,7 @@ fn bench_data_sizes(c: &mut Criterion) {
                     let key = format!("bench:size:{}", rand::random::<u32>());
                     let data = json!({"data": "x".repeat(size)});
 
-                    let data_bytes = Bytes::from(serde_json::to_vec(&data)?);
+                    let data_bytes = Bytes::from(serde_json::to_vec(&data).map_err(|e| anyhow::anyhow!(e))?);
                     cache
                         .cache_manager()
                         .set_with_strategy(&key, data_bytes, CacheStrategy::ShortTerm)

@@ -176,7 +176,7 @@ async fn test_invalidation_stats() {
         .unwrap_or_else(|_| panic!("Failed to invalidate"));
 
     // Check stats
-    if let Some(stats) = cache.get_invalidation_stats() {
+    if let Some(stats) = cache.invalidation_stats() {
         assert!(
             stats.messages_sent >= 1,
             "Should have sent invalidation messages"

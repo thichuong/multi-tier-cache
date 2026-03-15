@@ -8,8 +8,11 @@
 //! - Test environment setup
 
 use anyhow::Result;
-use multi_tier_cache::{CacheManager, CacheSystem, InvalidationConfig, L1Cache, L2Cache, L2CacheBackend, TierConfig, CacheSystemBuilder};
 use multi_tier_cache::backends::MokaCacheConfig;
+use multi_tier_cache::{
+    CacheManager, CacheSystem, CacheSystemBuilder, InvalidationConfig, L1Cache, L2Cache,
+    L2CacheBackend, TierConfig,
+};
 use std::sync::Arc;
 use std::sync::Once;
 
@@ -48,25 +51,33 @@ pub fn test_key(name: &str) -> String {
 pub async fn setup_cache_system() -> Result<CacheSystem> {
     // TODO: Audit that the environment access only happens in single-threaded code.
     unsafe { std::env::set_var("REDIS_URL", redis_url()) };
-    CacheSystem::new().await
+    CacheSystem::new()
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
 }
 
 /// Initialize cache system with custom promotion frequency N for testing
 pub async fn setup_cache_with_n(n: usize) -> Result<CacheSystem> {
     let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
     let l2 = Arc::new(L2Cache::new().await?);
-    
+
     let cache = CacheSystemBuilder::new()
-        .with_tier(Arc::clone(&l1) as Arc<dyn L2CacheBackend>, TierConfig::as_l1())
-        .with_tier(Arc::clone(&l2) as Arc<dyn L2CacheBackend>, TierConfig::as_l2().with_promotion_frequency(n))
+        .with_tier(
+            Arc::clone(&l1) as Arc<dyn L2CacheBackend>,
+            TierConfig::as_l1(),
+        )
+        .with_tier(
+            Arc::clone(&l2) as Arc<dyn L2CacheBackend>,
+            TierConfig::as_l2().with_promotion_frequency(n),
+        )
         .build()
         .await?;
-    
+
     // Manually set the Option fields for backward compatibility in tests
     let mut cache = cache;
     cache.l1_cache = Some(l1);
     cache.l2_cache = Some(l2);
-    
+
     Ok(cache)
 }
 
@@ -76,7 +87,9 @@ pub async fn setup_cache_with_invalidation() -> Result<Arc<CacheManager>> {
     let l2 = Arc::new(L2Cache::new().await?);
     let config = InvalidationConfig::default();
 
-    let manager = CacheManager::new_with_invalidation(l1, l2, &redis_url(), config).await?;
+    let manager = CacheManager::new_with_invalidation(l1, l2, &redis_url(), config)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     Ok(Arc::new(manager))
 }

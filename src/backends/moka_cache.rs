@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::CacheResult;
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use moka::future::Cache;
@@ -93,7 +93,7 @@ impl MokaCache {
     /// # Errors
     ///
     /// Returns an error if cache configuration is invalid.
-    pub fn new(config: MokaCacheConfig) -> Result<Self> {
+    pub fn new(config: MokaCacheConfig) -> CacheResult<Self> {
         info!("Initializing Moka Cache");
 
         let cache = Cache::builder()
@@ -133,7 +133,7 @@ impl MokaCache {
         key: &str,
         value: Arc<dyn Any + Send + Sync>,
         ttl: Duration,
-    ) -> Result<()> {
+    ) -> CacheResult<()> {
         let entry = TypedCacheEntry::new(value, ttl);
         self.typed_cache.insert(key.to_string(), entry).await;
         self.sets.fetch_add(1, Ordering::Relaxed);
@@ -187,7 +187,7 @@ impl CacheBackend for MokaCache {
         key: &'a str,
         value: Bytes,
         ttl: Duration,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             let entry = CacheEntry::new(value, ttl);
             self.cache.insert(key.to_string(), entry).await;
@@ -197,7 +197,7 @@ impl CacheBackend for MokaCache {
         })
     }
 
-    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             self.cache.invalidate(key).await;
             self.typed_cache.invalidate(key).await;
@@ -226,7 +226,7 @@ impl CacheBackend for MokaCache {
         })
     }
 
-    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, Result<()>> {
+    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             // For Moka (L1), we'll do a full invalidation for pattern requests to ensure consistency.
             // Pattern invalidation is usually relatively rare compared to single-key lookups,

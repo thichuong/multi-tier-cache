@@ -53,32 +53,34 @@
 //!           Return            Promote to L1       Store in L1+L2
 //! ```
 
-use anyhow::Result;
-use std::sync::Arc;
-use tracing::{info, warn};
-
 pub mod backends;
 pub mod builder;
 pub mod cache_manager;
+pub mod error;
+#[cfg(feature = "redis")]
 pub mod invalidation;
+#[cfg(feature = "redis")]
 pub mod redis_streams;
+pub mod serialization;
 pub mod traits;
 
+pub use error::{CacheError, CacheResult};
+pub use serialization::{CacheSerializer, JsonSerializer};
+pub use std::sync::Arc;
+use tracing::{info, warn};
+
 // Re-export backend types (maintains backward compatibility)
-pub use backends::{
-    DashMapCache, // Additional backends
-    L1Cache,
-    L2Cache, // Type aliases
-    MokaCache,
-    MokaCacheConfig,
-    RedisCache, // Default backends
-};
+pub use backends::DashMapCache;
+#[cfg(feature = "moka")]
+pub use backends::{L1Cache, MokaCache, MokaCacheConfig};
+#[cfg(feature = "redis")]
+pub use backends::{L2Cache, RedisCache};
 
 // Optional backends (feature-gated)
 #[cfg(feature = "backend-memcached")]
 pub use backends::MemcachedCache;
 
-#[cfg(feature = "backend-quickcache")]
+#[cfg(feature = "quick_cache")]
 pub use backends::QuickCacheBackend;
 pub use builder::CacheSystemBuilder;
 pub use bytes::Bytes;
@@ -91,10 +93,12 @@ pub use cache_manager::{
     TierConfig,
     TierStats,
 };
+#[cfg(feature = "redis")]
 pub use invalidation::{
     InvalidationConfig, InvalidationMessage, InvalidationPublisher, InvalidationStats,
-    InvalidationSubscriber,
+    InvalidationSubscriber, ReliableStreamSubscriber,
 };
+#[cfg(feature = "redis")]
 pub use redis_streams::RedisStreams;
 pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 
@@ -129,9 +133,11 @@ pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 pub struct CacheSystem {
     /// Unified cache manager (primary interface)
     pub cache_manager: Arc<CacheManager>,
-    /// L1 Cache (in-memory, Moka) - `None` when using custom backends
+    /// Optional L1 cache instance (for health checks)
+    #[cfg(feature = "moka")]
     pub l1_cache: Option<Arc<L1Cache>>,
-    /// L2 Cache (distributed, Redis) - `None` when using custom backends
+    /// Optional L2 cache instance (for health checks)
+    #[cfg(feature = "redis")]
     pub l2_cache: Option<Arc<L2Cache>>,
 }
 
@@ -160,7 +166,8 @@ impl CacheSystem {
     /// # Errors
     ///
     /// Returns an error if cache initialization fails.
-    pub async fn new() -> Result<Self> {
+    #[cfg(all(feature = "moka", feature = "redis"))]
+    pub async fn new() -> CacheResult<Self> {
         info!("Initializing Multi-Tier Cache System");
 
         // Initialize L1 cache (Moka)
@@ -201,7 +208,8 @@ impl CacheSystem {
     /// # Errors
     ///
     /// Returns an error if cache initialization fails.
-    pub async fn with_redis_url(redis_url: &str) -> Result<Self> {
+    #[cfg(all(feature = "moka", feature = "redis"))]
+    pub async fn with_redis_url(redis_url: &str) -> CacheResult<Self> {
         info!(redis_url = %redis_url, "Initializing Multi-Tier Cache System with custom Redis URL");
 
         // Initialize L1 cache (Moka)
@@ -245,15 +253,27 @@ impl CacheSystem {
     /// }
     /// ```
     pub async fn health_check(&self) -> bool {
+        #[cfg(feature = "moka")]
         let l1_ok = match &self.l1_cache {
-            Some(cache) => cache.health_check().await,
-            None => true, // If no L1 cache instance, assume OK (using custom backends)
+            Some(cache) => {
+                let backend: &dyn crate::traits::CacheBackend = cache.as_ref();
+                backend.health_check().await
+            }
+            None => true,
         };
+        #[cfg(not(feature = "moka"))]
+        let l1_ok = true;
 
+        #[cfg(feature = "redis")]
         let l2_ok = match &self.l2_cache {
-            Some(cache) => cache.health_check().await,
-            None => true, // If no L2 cache instance, assume OK (using custom backends)
+            Some(cache) => {
+                let backend: &dyn crate::traits::CacheBackend = cache.as_ref();
+                backend.health_check().await
+            }
+            None => true,
         };
+        #[cfg(not(feature = "redis"))]
+        let l2_ok = true;
 
         if l1_ok && l2_ok {
             info!("Multi-Tier Cache health check passed");
