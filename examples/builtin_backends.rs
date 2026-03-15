@@ -152,7 +152,7 @@ async fn demo_memcached_backend() -> Result<()> {
 
             // Get the value
             if let Some(cached) = memcached.get("product:laptop").await {
-                println!("✅ Retrieved from MemcachedCache: {:?}", cached);
+                println!("✅ Retrieved from MemcachedCache: {cached:?}");
             }
 
             // Show server statistics
@@ -225,7 +225,7 @@ async fn demo_quickcache_backend() -> Result<()> {
         .await?;
 
     if let Some(cached) = manager.get("session:abc123").await? {
-        println!("✅ Retrieved from QuickCache: {:?}", cached);
+        println!("✅ Retrieved from QuickCache: {cached:?}");
     }
 
     // Show statistics

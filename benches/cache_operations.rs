@@ -8,7 +8,7 @@
 //! - Different data sizes
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
-use multi_tier_cache::error::{CacheError, CacheResult};
+use multi_tier_cache::error::CacheError;
 use multi_tier_cache::{Bytes, CacheBackend, CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::time::Duration;

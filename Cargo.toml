@@ -47,7 +47,7 @@ full = ["moka", "redis", "bincode", "msgpack", "memcached", "quick_cache"]
 redis = ["dep:redis"]
 moka = ["dep:moka"]
 memcached = ["dep:memcache", "backend-memcached"]
-quick_cache = ["dep:quick_cache"]
+quick_cache = ["dep:quick_cache", "backend-quickcache"]
 
 # Serialization
 bincode = ["dep:bincode"]
@@ -55,6 +55,7 @@ msgpack = ["dep:rmp-serde"]
 
 # Internal marker features
 backend-memcached = []
+backend-quickcache = []
 
 [[bench]]
 name = "cache_operations"

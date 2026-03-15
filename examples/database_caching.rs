@@ -5,7 +5,7 @@
 //!
 //! Run with: `cargo run --example database_caching`
 
-use multi_tier_cache::error::CacheError;
+// use multi_tier_cache::error::CacheError;
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -65,6 +65,14 @@ async fn main() -> anyhow::Result<()> {
     let cache = CacheSystem::new().await?;
     println!("✅ Cache system ready!\n");
 
+    run_basic_examples(&cache).await?;
+    run_concurrent_example(&cache).await?;
+    print_final_stats(&cache);
+
+    Ok(())
+}
+
+async fn run_basic_examples(cache: &CacheSystem) -> anyhow::Result<()> {
     // ========================================
     // Example 1: First Request (Cache Miss)
     // ========================================
@@ -74,20 +82,16 @@ async fn main() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let user: User = cache
         .cache_manager()
-        .get_or_compute_typed(
-            "user:123",
-            CacheStrategy::MediumTerm, // 1 hour TTL
-            || async {
-                fetch_user_from_db(123)
-                    .await
-                    .map_err(|e| multi_tier_cache::error::CacheError::InternalError(e.to_string()))
-            },
-        )
+        .get_or_compute_typed("user:123", CacheStrategy::MediumTerm, || async {
+            fetch_user_from_db(123)
+                .await
+                .map_err(|e| multi_tier_cache::error::CacheError::InternalError(e.to_string()))
+        })
         .await?;
     let elapsed = start.elapsed();
 
     println!("✅ Retrieved user: {user:?}");
-    println!("⏱️  Time taken: {elapsed:?} (includes DB query + caching)\n",);
+    println!("⏱️  Time taken: {elapsed:?} (includes DB query + caching)\n");
 
     // ========================================
     // Example 2: Second Request (Cache Hit)
@@ -117,19 +121,18 @@ async fn main() -> anyhow::Result<()> {
 
     let product: Product = cache
         .cache_manager()
-        .get_or_compute_typed(
-            "product:456",
-            CacheStrategy::LongTerm, // 3 hours TTL
-            || async {
-                fetch_product_from_db(456)
-                    .await
-                    .map_err(|e| multi_tier_cache::error::CacheError::InternalError(e.to_string()))
-            },
-        )
+        .get_or_compute_typed("product:456", CacheStrategy::LongTerm, || async {
+            fetch_product_from_db(456)
+                .await
+                .map_err(|e| multi_tier_cache::error::CacheError::InternalError(e.to_string()))
+        })
         .await?;
 
     println!("✅ Retrieved product: {product:?}\n");
+    Ok(())
+}
 
+async fn run_concurrent_example(cache: &CacheSystem) -> anyhow::Result<()> {
     // ========================================
     // Example 4: Multiple Concurrent Requests
     // ========================================
@@ -166,7 +169,10 @@ async fn main() -> anyhow::Result<()> {
 
     println!("\n💡 Notice: Only ONE database query was executed!");
     println!("   Cache stampede protection coalesced all 5 requests.\n");
+    Ok(())
+}
 
+fn print_final_stats(cache: &CacheSystem) {
     // ========================================
     // Statistics
     // ========================================
@@ -183,15 +189,13 @@ async fn main() -> anyhow::Result<()> {
     println!("\n✅ Example completed successfully!");
     println!(
         "
-💡 Key Takeaways:
-─────────────────
-1. Type-safe: Compiler enforces correct types
-2. Zero boilerplate: No manual serialize/deserialize
-3. Automatic caching: L1+L2 storage handled for you
-4. Stampede protection: Concurrent requests coalesced
-5. Generic: Works with any Serialize + Deserialize type
+186: 💡 Key Takeaways:
+187: ─────────────────
+188: 1. Type-safe: Compiler enforces correct types
+189: 2. Zero boilerplate: No manual serialize/deserialize
+190: 3. Automatic caching: L1+L2 storage handled for you
+191: 4. Stampede protection: Concurrent requests coalesced
+192: 5. Generic: Works with any Serialize + Deserialize type
 "
     );
-
-    Ok(())
 }

@@ -4,7 +4,7 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use multi_tier_cache::{
     Bytes, CacheStrategy, CacheSystem, CacheSystemBuilder, L2Cache, TierConfig,
 };
-use multi_tier_cache::error::CacheResult;
+// use multi_tier_cache::error::CacheResult;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;

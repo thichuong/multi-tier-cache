@@ -5,7 +5,7 @@
 //! Run with: cargo run --example `advanced_usage`
 
 use bytes::Bytes;
-use multi_tier_cache::error::{CacheError, CacheResult};
+use multi_tier_cache::error::CacheError;
 use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::time::Duration;
 

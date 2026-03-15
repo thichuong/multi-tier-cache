@@ -340,135 +340,141 @@ impl CacheSystemBuilder {
     pub async fn build(self) -> Result<CacheSystem> {
         info!("Building Multi-Tier Cache System");
 
-        // NEW: Multi-tier mode (v0.5.0+)
         if !self.tiers.is_empty() {
-            info!(
-                tier_count = self.tiers.len(),
-                "Initializing multi-tier architecture"
-            );
+            self.build_multi_tier()
+        } else if self.l1_backend.is_none() && self.l2_backend.is_none() {
+            self.build_default_2_tier().await
+        } else {
+            self.build_custom_2_tier().await
+        }
+    }
 
-            // Sort tiers by tier_level (ascending: L1 first, L4 last)
-            let mut tiers = self.tiers;
-            tiers.sort_by_key(|(_, config)| config.tier_level);
+    /// Internal helper for multi-tier mode (v0.5.0+)
+    fn build_multi_tier(self) -> Result<CacheSystem> {
+        info!(
+            tier_count = self.tiers.len(),
+            "Initializing multi-tier architecture"
+        );
 
-            // Convert to CacheTier instances
-            let cache_tiers: Vec<CacheTier> = tiers
-                .into_iter()
-                .map(|(backend, config)| {
-                    CacheTier::new(
-                        backend,
-                        config.tier_level,
-                        config.promotion_enabled,
-                        config.promotion_frequency,
-                        config.ttl_scale,
-                    )
-                })
-                .collect();
+        // Sort tiers by tier_level (ascending: L1 first, L4 last)
+        let mut tiers = self.tiers;
+        tiers.sort_by_key(|(_, config)| config.tier_level);
 
-            // Create cache manager with multi-tier support
-            let cache_manager = Arc::new(CacheManager::new_with_tiers(
-                cache_tiers,
-                self.streaming_backend,
-            )?);
+        // Convert to CacheTier instances
+        let cache_tiers: Vec<CacheTier> = tiers
+            .into_iter()
+            .map(|(backend, config)| {
+                CacheTier::new(
+                    backend,
+                    config.tier_level,
+                    config.promotion_enabled,
+                    config.promotion_frequency,
+                    config.ttl_scale,
+                )
+            })
+            .collect();
+
+        // Create cache manager with multi-tier support
+        let cache_manager = Arc::new(CacheManager::new_with_tiers(
+            cache_tiers,
+            self.streaming_backend,
+        )?);
+
+        info!("Multi-Tier Cache System built successfully");
+        info!("Note: Using multi-tier mode - use cache_manager() for all operations");
+
+        Ok(CacheSystem {
+            cache_manager,
+            #[cfg(feature = "moka")]
+            l1_cache: None,
+            #[cfg(feature = "redis")]
+            l2_cache: None,
+        })
+    }
+
+    /// Internal helper for legacy default 2-tier mode
+    async fn build_default_2_tier(self) -> Result<CacheSystem> {
+        info!("Initializing default backends (Moka + Redis)");
+
+        #[cfg(all(feature = "moka", feature = "redis"))]
+        {
+            let l1_cache = Arc::new(crate::L1Cache::new(self.moka_config.unwrap_or_default())?);
+            let l2_cache: Arc<crate::L2Cache> = Arc::new(crate::L2Cache::new().await?);
+
+            // Use legacy constructor that handles conversion to trait objects
+            let cache_manager = Arc::new(CacheManager::new(l1_cache.clone(), l2_cache.clone()).await?);
 
             info!("Multi-Tier Cache System built successfully");
-            info!("Note: Using multi-tier mode - use cache_manager() for all operations");
-
-            return Ok(CacheSystem {
-                cache_manager,
-                #[cfg(feature = "moka")]
-                l1_cache: None,
-                #[cfg(feature = "redis")]
-                l2_cache: None,
-            });
-        }
-
-        // LEGACY: 2-tier mode (v0.1.0 - v0.4.x)
-        // Handle default vs custom backends
-        if self.l1_backend.is_none() && self.l2_backend.is_none() {
-            // Default path: Create concrete types once and reuse them
-            info!("Initializing default backends (Moka + Redis)");
-
-            #[cfg(all(feature = "moka", feature = "redis"))]
-            {
-                let l1_cache = Arc::new(crate::L1Cache::new(self.moka_config.unwrap_or_default())?);
-                let l2_cache: Arc<crate::L2Cache> = Arc::new(crate::L2Cache::new().await?);
-
-                // Use legacy constructor that handles conversion to trait objects
-                let cache_manager =
-                    Arc::new(CacheManager::new(l1_cache.clone(), l2_cache.clone()).await?);
-
-                info!("Multi-Tier Cache System built successfully");
-
-                Ok(CacheSystem {
-                    cache_manager,
-                    #[cfg(feature = "moka")]
-                    l1_cache: Some(l1_cache),
-                    #[cfg(feature = "redis")]
-                    l2_cache: Some(l2_cache),
-                })
-            }
-            #[cfg(not(all(feature = "moka", feature = "redis")))]
-            {
-                Err(anyhow::anyhow!(
-                    "Default backends (Moka/Redis) are not enabled. Provide custom backends or enable 'moka' and 'redis' features."
-                ))
-            }
-        } else {
-            // Custom backend path
-            info!("Building with custom backends");
-
-            // NEW: Multi-tier implementation (v0.5.0+)
-            let l1_backend: Arc<dyn CacheBackend> = if let Some(backend) = self.l1_backend {
-                backend
-            } else {
-                #[cfg(feature = "moka")]
-                {
-                    Arc::new(L1Cache::new(self.moka_config.clone().unwrap_or_default())?)
-                }
-                #[cfg(not(feature = "moka"))]
-                {
-                    return Err(anyhow::anyhow!(
-                        "Moka feature not enabled. Provide a custom L1 backend."
-                    ));
-                }
-            };
-
-            let l2_backend: Arc<dyn L2CacheBackend> = if let Some(backend) = self.l2_backend {
-                backend
-            } else {
-                #[cfg(feature = "redis")]
-                {
-                    Arc::new(L2Cache::new().await?)
-                }
-                #[cfg(not(feature = "redis"))]
-                {
-                    return Err(anyhow::anyhow!(
-                        "Redis feature not enabled. Provide a custom L2 backend."
-                    ));
-                }
-            };
-
-            let streaming_backend = self.streaming_backend;
-
-            // Create cache manager with trait objects
-            let cache_manager = Arc::new(CacheManager::new_with_backends(
-                l1_backend,
-                l2_backend,
-                streaming_backend,
-            )?);
-
-            info!("Multi-Tier Cache System built with custom backends");
-            info!("Note: Using custom backends - use cache_manager() for all operations");
 
             Ok(CacheSystem {
                 cache_manager,
                 #[cfg(feature = "moka")]
-                l1_cache: None,
+                l1_cache: Some(l1_cache),
                 #[cfg(feature = "redis")]
-                l2_cache: None,
+                l2_cache: Some(l2_cache),
             })
         }
+        #[cfg(not(all(feature = "moka", feature = "redis")))]
+        {
+            Err(anyhow::anyhow!(
+                "Default backends (Moka/Redis) are not enabled. Provide custom backends or enable 'moka' and 'redis' features."
+            ))
+        }
+    }
+
+    /// Internal helper for legacy custom 2-tier mode
+    async fn build_custom_2_tier(self) -> Result<CacheSystem> {
+        info!("Building with custom backends");
+
+        let l1_backend: Arc<dyn CacheBackend> = if let Some(backend) = self.l1_backend {
+            backend
+        } else {
+            #[cfg(feature = "moka")]
+            {
+                Arc::new(L1Cache::new(self.moka_config.unwrap_or_default())?)
+            }
+            #[cfg(not(feature = "moka"))]
+            {
+                return Err(anyhow::anyhow!(
+                    "Moka feature not enabled. Provide a custom L1 backend."
+                ));
+            }
+        };
+
+        let l2_backend: Arc<dyn L2CacheBackend> = if let Some(backend) = self.l2_backend {
+            backend
+        } else {
+            #[cfg(feature = "redis")]
+            {
+                Arc::new(L2Cache::new().await?)
+            }
+            #[cfg(not(feature = "redis"))]
+            {
+                return Err(anyhow::anyhow!(
+                    "Redis feature not enabled. Provide a custom L2 backend."
+                ));
+            }
+        };
+
+        let streaming_backend = self.streaming_backend;
+
+        // Create cache manager with trait objects
+        let cache_manager = Arc::new(CacheManager::new_with_backends(
+            l1_backend,
+            l2_backend,
+            streaming_backend,
+        )?);
+
+        info!("Multi-Tier Cache System built with custom backends");
+        info!("Note: Using custom backends - use cache_manager() for all operations");
+
+        Ok(CacheSystem {
+            cache_manager,
+            #[cfg(feature = "moka")]
+            l1_cache: None,
+            #[cfg(feature = "redis")]
+            l2_cache: None,
+        })
     }
 }
 

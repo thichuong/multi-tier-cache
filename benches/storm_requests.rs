@@ -1,3 +1,4 @@
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::cast_precision_loss, clippy::cast_lossless)]
 use bytes::Bytes;
 use criterion::{Criterion, criterion_group, criterion_main};
 use futures_util::future::join_all;
@@ -5,8 +6,8 @@ use multi_tier_cache::{
     CacheBackend, CacheManager, CacheStrategy, CacheSystem, CacheSystemBuilder, L1Cache, L2Cache,
     L2CacheBackend, MokaCacheConfig, TierConfig,
 };
-use multi_tier_cache::error::{CacheError, CacheResult};
-use reqwest;
+// use multi_tier_cache::error::{CacheError, CacheResult};
+// use reqwest;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
@@ -16,7 +17,7 @@ async fn setup_bench() -> (CacheSystem, Vec<String>, usize) {
     let cache = CacheSystem::new().await.expect("Failed to init cache");
 
     let url = "https://thichuong.github.io/ambidex_survival/";
-    println!("Fetching content from {}...", url);
+    println!("Fetching content from {url}...");
     let content = reqwest::get(url)
         .await
         .expect("Failed to fetch URL")
@@ -26,8 +27,7 @@ async fn setup_bench() -> (CacheSystem, Vec<String>, usize) {
 
     let size_bytes = content.len();
     println!(
-        "Fetched content size: {} bytes ({:.2} KB)",
-        size_bytes,
+        "Fetched content size: {size_bytes} bytes ({:.2} KB)",
         size_bytes as f64 / 1024.0
     );
 
@@ -37,7 +37,7 @@ async fn setup_bench() -> (CacheSystem, Vec<String>, usize) {
     let mut keys = Vec::with_capacity(10000);
     for i in 0..10000 {
         // Create unique content by appending index to the original HTML
-        let unique_content = format!("{}_{}", content_str, i);
+        let unique_content = format!("{content_str}_{i}");
         let key = unique_content.clone();
         let val = Bytes::from(unique_content);
 
@@ -93,7 +93,7 @@ async fn setup_l2_only_bench() -> (Arc<CacheManager>, Vec<String>, usize) {
     println!("Pre-populating 10,000 unique keys to L2...");
     let mut keys = Vec::with_capacity(10000);
     for i in 0..10000 {
-        let unique_content = format!("{}_{}", content_str, i);
+        let unique_content = format!("{content_str}_{i}");
         let key = unique_content.clone();
         let val = Bytes::from(unique_content);
 
@@ -108,13 +108,16 @@ async fn setup_l2_only_bench() -> (Arc<CacheManager>, Vec<String>, usize) {
 }
 
 fn storm_requests_bench(c: &mut Criterion) {
+    #[allow(clippy::unwrap_used)]
     let rt = Runtime::new().unwrap();
     let (cache, keys, size) = rt.block_on(setup_bench());
 
+    #[allow(clippy::indexing_slicing)]
     let single_key = keys[0].clone();
+    #[allow(clippy::cast_precision_loss)]
     let size_kb = size as f64 / 1024.0;
 
-    let mut group = c.benchmark_group(format!("Storm Requests (Size: {:.1} KB)", size_kb));
+    let mut group = c.benchmark_group(format!("Storm Requests (Size: {size_kb:.1} KB)"));
     // Report throughput as RPS (1 iteration = 10,000 requests)
     group.throughput(criterion::Throughput::Elements(10000));
     // Reduce sample size because each iteration performs 10,000 cache operations
@@ -140,10 +143,10 @@ fn storm_requests_bench(c: &mut Criterion) {
 
     // Scenario 3: L2-only (No Promotion)
     let (cache_l2, keys_l2, size_l2) = rt.block_on(setup_l2_only_bench());
+    #[allow(clippy::cast_precision_loss)]
     let size_kb_l2 = size_l2 as f64 / 1024.0;
     let mut group_l2 = c.benchmark_group(format!(
-        "L2-Only Storm (No Promotion, Size: {:.1} KB)",
-        size_kb_l2
+        "L2-Only Storm (No Promotion, Size: {size_kb_l2:.1} KB)"
     ));
     group_l2.throughput(criterion::Throughput::Elements(10000));
     group_l2.sample_size(10);

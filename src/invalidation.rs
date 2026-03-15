@@ -535,6 +535,11 @@ pub struct ReliableStreamSubscriber {
 }
 
 impl ReliableStreamSubscriber {
+    /// Create a new `ReliableStreamSubscriber`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Redis client fails to open.
     pub fn new(redis_url: &str, config: InvalidationConfig, group_name: &str) -> CacheResult<Self> {
         let client = redis::Client::open(redis_url).map_err(|e| {
             crate::error::CacheError::ConfigError(format!(
@@ -606,7 +611,7 @@ impl ReliableStreamSubscriber {
                         error!("Reliable subscriber loop error: {}", e);
 
                         tokio::select! {
-                            _ = tokio::time::sleep(Duration::from_secs(5)) => {},
+                            () = tokio::time::sleep(Duration::from_secs(5)) => {},
                             _ = shutdown_rx.recv() => break,
                         }
                     } else {
@@ -641,17 +646,15 @@ impl ReliableStreamSubscriber {
                         // Find "payload" field or use first field if it looks like JSON
                         let payload = fields.iter().find(|(k, _)| k == "payload")
                             .map(|(_, v)| v.as_str())
-                            .or_else(|| fields.get(0).map(|(_, v)| v.as_str()));
+                            .or_else(|| fields.first().map(|(_, v)| v.as_str()));
 
-                        if let Some(json) = payload {
-                            if let Ok(msg) = InvalidationMessage::from_json(json) {
-                                stats.messages_received.fetch_add(1, Ordering::Relaxed);
-                                if let Err(e) = handler(msg).await {
-                                    error!("Reliable handler error: {}", e);
-                                    stats.processing_errors.fetch_add(1, Ordering::Relaxed);
-                                } else {
-                                    processed_ids.push(id);
-                                }
+                        if let Some(msg) = payload.and_then(|json| InvalidationMessage::from_json(json).ok()) {
+                            stats.messages_received.fetch_add(1, Ordering::Relaxed);
+                            if let Err(e) = handler(msg).await {
+                                error!("Reliable handler error: {}", e);
+                                stats.processing_errors.fetch_add(1, Ordering::Relaxed);
+                            } else {
+                                processed_ids.push(id);
                             }
                         }
                     }

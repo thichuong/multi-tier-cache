@@ -1,3 +1,4 @@
+#![allow(clippy::cast_precision_loss, clippy::cast_lossless)]
 use multi_tier_cache::{
     CacheBackend, CacheSystemBuilder, L1Cache, L2Cache, L2CacheBackend, MokaCacheConfig, TierConfig,
 };
@@ -80,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
     info!("First Promotion at: {:?}", l1_first_hit_at);
     info!(
         "Promotion Rate: {:.1}% (Expected ~10%)",
-        (final_stats.promotions as f64 / iterations as f64) * 100.0
+        (final_stats.promotions as f64 / f64::from(iterations)) * 100.0
     );
     info!("------------------------------------------");
 

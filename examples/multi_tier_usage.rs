@@ -6,7 +6,7 @@
 
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
-use multi_tier_cache::error::{CacheError, CacheResult};
+use multi_tier_cache::error::CacheResult;
 use multi_tier_cache::{CacheBackend, CacheSystemBuilder, L2CacheBackend};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};

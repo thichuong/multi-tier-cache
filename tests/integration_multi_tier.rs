@@ -1,6 +1,6 @@
 //! Integration tests for multi-tier cache architecture (v0.5.0+)
 
-use anyhow::Result;
+// use anyhow::Result;
 use bytes::Bytes;
 use multi_tier_cache::error::CacheResult;
 use std::sync::Arc;

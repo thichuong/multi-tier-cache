@@ -5,6 +5,12 @@ use redis::AsyncCommands;
 use redis::aio::ConnectionManager;
 use tracing::debug;
 
+/// Represents a raw entry from a Redis stream: (ID, [ (Field, Value) ])
+type RawStreamEntry = (String, Vec<(String, String)>);
+
+/// Represents a result from XREAD: [ (`StreamName`, [ (ID, [ (Field, Value) ]) ]) ]
+type XReadResult = Vec<(String, Vec<RawStreamEntry>)>;
+
 /// Redis Streams client for event-driven architectures
 #[derive(Clone)]
 pub struct RedisStreams {
@@ -70,7 +76,7 @@ impl StreamingBackend for RedisStreams {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
             // XREVRANGE returns Vec<(String, Vec<(String, String)>)> (id, fields)
-            let raw_entries: Vec<(String, Vec<(String, String)>)> = redis::cmd("XREVRANGE")
+            let raw_entries: Vec<RawStreamEntry> = redis::cmd("XREVRANGE")
                 .arg(stream_key)
                 .arg("+")
                 .arg("-")
@@ -108,7 +114,7 @@ impl StreamingBackend for RedisStreams {
             }
 
             // XREAD returns Vec<(String, Vec<(String, Vec<(String, String)>)>)> -> (stream_name, entries)
-            let result: Vec<(String, Vec<(String, Vec<(String, String)>)>)> = conn
+            let result: XReadResult = conn
                 .xread_options(&[stream_key], &[last_id], &options)
                 .await
                 .map_err(|e| {
@@ -177,7 +183,7 @@ impl StreamingBackend for RedisStreams {
             }
 
             // XREAD GROUP returns same structure as XREAD
-            let result: Vec<(String, Vec<(String, Vec<(String, String)>)>)> = conn
+            let result: XReadResult = conn
                 .xread_options(&[stream_key], &[">"], &options)
                 .await
                 .map_err(|e| {

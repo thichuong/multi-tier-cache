@@ -1,7 +1,7 @@
 //! Benchmarks for cache stampede protection
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use multi_tier_cache::error::{CacheError, CacheResult};
+use multi_tier_cache::error::CacheError;
 use multi_tier_cache::{Bytes, CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::sync::Arc;

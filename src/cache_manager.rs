@@ -626,7 +626,10 @@ impl CacheManager {
                     let should_promote = if tier.promotion_frequency <= 1 {
                         true
                     } else {
-                        rand::thread_rng().gen_ratio(1, tier.promotion_frequency as u32)
+                        rand::thread_rng().gen_ratio(
+                            1,
+                            u32::try_from(tier.promotion_frequency).unwrap_or(u32::MAX),
+                        )
                     };
 
                     if should_promote {
@@ -762,6 +765,10 @@ impl CacheManager {
     }
 
     /// Get a value from cache and deserialize it (Type-Safe Version)
+    ///
+    /// # Errors
+    ///
+    /// Returns a `SerializationError` if deserialization fails, or a `BackendError` if the cache retrieval fails.
     pub async fn get_typed<T>(&self, key: &str) -> CacheResult<Option<T>>
     where
         T: serde::de::DeserializeOwned,
@@ -875,16 +882,17 @@ impl CacheManager {
                     let should_promote = if tier.promotion_frequency <= 1 {
                         true
                     } else {
-                        rand::thread_rng().gen_ratio(1, tier.promotion_frequency as u32)
+                        rand::thread_rng().gen_ratio(
+                            1,
+                            u32::try_from(tier.promotion_frequency).unwrap_or(u32::MAX),
+                        )
                     };
 
-                    if should_promote {
-                        if let Some(l1_tier) = self.tiers.first() {
-                            let _ = l1_tier
-                                .set_with_ttl(key, value.clone(), strategy.to_duration())
-                                .await;
-                            self.promotions.fetch_add(1, Ordering::Relaxed);
-                        }
+                    if should_promote && let Some(l1_tier) = self.tiers.first() {
+                        let _ = l1_tier
+                            .set_with_ttl(key, value.clone(), strategy.to_duration())
+                            .await;
+                        self.promotions.fetch_add(1, Ordering::Relaxed);
                     }
                 }
                 return Ok(value);
@@ -1235,8 +1243,7 @@ impl CacheManager {
         match &self.streaming_backend {
             Some(backend) => backend
                 .stream_read_latest(stream_key, count)
-                .await
-                .map_err(Into::into),
+                .await,
             None => Err(crate::error::CacheError::ConfigError(
                 "Streaming backend not configured".to_string(),
             )),
