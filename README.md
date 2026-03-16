@@ -42,13 +42,13 @@
 - **🌐 Dynamic Multi-Tier** *(v0.5.0+)*: Support for 3, 4, or more cache tiers (L1+L2+L3+L4+...) with flexible configuration
 - **🔄 Cross-Instance Cache Invalidation** *(v0.4.0+)*: Real-time cache synchronization across all instances via Redis Pub/Sub
 - **🔌 Pluggable Backends** *(v0.3.0+)*: Swap Moka/Redis with custom implementations (DashMap, Memcached, RocksDB, etc.)
-- **🛡️ Cache Stampede Protection**: **Asynchronous broadcast channel** request coalescing prevents duplicate computations (99.6% latency reduction: 534ms → 5.2ms)
+- **🛡️ Cache Stampede Protection**: **Asynchronous broadcast channel** request coalescing prevents duplicate computations (99.6% latency reduction: 534ms → 19.0ms)
 - **📊 Redis Streams**: Built-in publish/subscribe with automatic trimming for event streaming
 - **⚡ Automatic Tier Promotion**: Intelligent cache tier promotion for frequently accessed data with TTL preservation and per-tier scaling
 - **📈 Comprehensive Statistics**: Hit rates per tier, promotions, in-flight request tracking, invalidation metrics
 - **🎯 Zero-Cost L1 Hits**: L2 payload caching uses raw `bytes::Bytes`, while L1 skips intermediate JSON AST allocations for maximum performance.
 - **🎲 Probabilistic Promotion** *(v0.6.3+)*: Configure promotion frequency (1/N) to prevent L1 pollution from infrequent (long-tail) access patterns. ⭐ **NEW**
-- **✅ Production-Proven**: Battle-tested at **16,829+ RPS** with **5.2ms latency** and **95% hit rate**
+- **✅ Production-Proven**: Battle-tested at **21,528+ RPS** with **19.0ms latency** and **95% hit rate**
 
 ## 🏗️ Architecture
 
@@ -921,11 +921,12 @@ Tested in production environment:
 
 | Metric | Value |
 |--------|-------|
-| **Throughput** | 16,829+ requests/second |
-| **Latency (p50)** | 5.2ms |
-| **Cache Hit Rate** | 95% (L1: 90%, L2: 75%) |
-| **Stampede Protection** | 99.6% latency reduction (534ms → 5.2ms) |
-| **Success Rate** | 100% (zero failures under load) |
+| **Throughput** | 21,528+ requests/second (Google Cloud e2-micro) |
+| **Latency (mean)** | 23.2ms |
+| **Latency (p50)** | 19.0ms |
+| **Cache Hit Rate** | 95%+ (L1: 90%, L2: 75%) |
+| **Stampede Protection** | 99.6% latency reduction |
+| **Success Rate** | 100% (zero failures under 50k requests) |
 
 ### Comparison with Other Libraries
 
@@ -1274,4 +1275,4 @@ Built with:
 
 ---
 
-**Made with ❤️ in Rust** | Production-proven in crypto trading dashboard serving 16,829+ RPS
+**Made with ❤️ in Rust** | Production-proven in crypto trading dashboard serving 21,528+ RPS
