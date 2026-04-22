@@ -10,15 +10,19 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 use tokio::sync::Mutex;
 use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "moka")]
+#[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
 use crate::L1Cache;
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 use crate::L2Cache;
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 use crate::invalidation::{
     AtomicInvalidationStats, InvalidationConfig, InvalidationMessage, InvalidationPublisher,
     InvalidationSubscriber,
@@ -274,12 +278,15 @@ pub struct CacheManager {
     serializer: Arc<CacheSerializer>,
     /// Invalidation publisher
     #[cfg(feature = "redis")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
     invalidation_publisher: Option<Arc<Mutex<InvalidationPublisher>>>,
     /// Invalidation subscriber
     #[cfg(feature = "redis")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
     invalidation_subscriber: Option<Arc<InvalidationSubscriber>>,
     /// Invalidation statistics
     #[cfg(feature = "redis")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
     invalidation_stats: Arc<AtomicInvalidationStats>,
     /// Number of promotions performed
     promotions: AtomicUsize,
@@ -355,6 +362,7 @@ impl CacheManager {
     ///
     /// Returns an error if Redis connection fails.
     #[cfg(all(feature = "moka", feature = "redis"))]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "moka", feature = "redis"))))]
     pub async fn new(l1_cache: Arc<L1Cache>, l2_cache: Arc<L2Cache>) -> CacheResult<Self> {
         debug!("Initializing Cache Manager...");
 
@@ -402,6 +410,7 @@ impl CacheManager {
     ///
     /// Returns an error if Redis connection fails or invalidation setup fails.
     #[cfg(all(feature = "moka", feature = "redis"))]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "moka", feature = "redis"))))]
     pub async fn new_with_invalidation(
         l1_cache: Arc<L1Cache>,
         l2_cache: Arc<L2Cache>,
@@ -550,6 +559,7 @@ impl CacheManager {
 
     /// Start the invalidation subscriber background task
     #[cfg(feature = "redis")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
     fn start_invalidation_subscriber(&self) {
         #[cfg(feature = "redis")]
         if let Some(subscriber) = &self.invalidation_subscriber {

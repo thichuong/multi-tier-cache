@@ -31,13 +31,16 @@
 //! ```
 
 #[cfg(feature = "moka")]
+#[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
 use crate::backends::MokaCacheConfig;
 use crate::traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 use crate::{CacheManager, CacheSystem, CacheTier, TierConfig};
 
 #[cfg(feature = "moka")]
+#[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
 use crate::L1Cache;
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 use crate::L2Cache;
 use anyhow::Result;
 use std::sync::Arc;
@@ -107,6 +110,7 @@ pub struct CacheSystemBuilder {
 
     streaming_backend: Option<Arc<dyn StreamingBackend>>,
     #[cfg(feature = "moka")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
     moka_config: Option<MokaCacheConfig>,
 
     // Multi-tier configuration (v0.5.0+)
@@ -126,6 +130,7 @@ impl CacheSystemBuilder {
 
             streaming_backend: None,
             #[cfg(feature = "moka")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
             moka_config: None,
             tiers: Vec::new(),
         }
@@ -159,6 +164,7 @@ impl CacheSystemBuilder {
     /// Configure custom configuration for default L1 (Moka) backend
     #[must_use]
     #[cfg(feature = "moka")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
     pub fn with_moka_config(mut self, config: MokaCacheConfig) -> Self {
         self.moka_config = Some(config);
         self
@@ -386,8 +392,10 @@ impl CacheSystemBuilder {
         Ok(CacheSystem {
             cache_manager,
             #[cfg(feature = "moka")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
             l1_cache: None,
             #[cfg(feature = "redis")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
             l2_cache: None,
         })
     }
@@ -397,6 +405,7 @@ impl CacheSystemBuilder {
         info!("Initializing default backends (Moka + Redis)");
 
         #[cfg(all(feature = "moka", feature = "redis"))]
+        #[cfg_attr(docsrs, doc(cfg(all(feature = "moka", feature = "redis"))))]
         {
             let l1_cache = Arc::new(crate::L1Cache::new(self.moka_config.unwrap_or_default())?);
             let l2_cache: Arc<crate::L2Cache> = Arc::new(crate::L2Cache::new().await?);
@@ -409,8 +418,10 @@ impl CacheSystemBuilder {
             Ok(CacheSystem {
                 cache_manager,
                 #[cfg(feature = "moka")]
+                #[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
                 l1_cache: Some(l1_cache),
                 #[cfg(feature = "redis")]
+                #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
                 l2_cache: Some(l2_cache),
             })
         }
@@ -430,6 +441,7 @@ impl CacheSystemBuilder {
             backend
         } else {
             #[cfg(feature = "moka")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
             {
                 Arc::new(L1Cache::new(self.moka_config.unwrap_or_default())?)
             }
@@ -445,6 +457,7 @@ impl CacheSystemBuilder {
             backend
         } else {
             #[cfg(feature = "redis")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
             {
                 Arc::new(L2Cache::new().await?)
             }
@@ -471,8 +484,10 @@ impl CacheSystemBuilder {
         Ok(CacheSystem {
             cache_manager,
             #[cfg(feature = "moka")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
             l1_cache: None,
             #[cfg(feature = "redis")]
+            #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
             l2_cache: None,
         })
     }

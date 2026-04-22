@@ -39,41 +39,51 @@
 pub mod dashmap_cache;
 
 #[cfg(feature = "moka")]
+#[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
 pub mod moka_cache;
 
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub mod redis_cache;
 
 // Optional backends (feature-gated)
 #[cfg(feature = "memcached")]
+#[cfg_attr(docsrs, doc(cfg(feature = "memcached")))]
 pub mod memcached_cache;
 
 #[cfg(feature = "quick_cache")]
+#[cfg_attr(docsrs, doc(cfg(feature = "quick_cache")))]
 pub mod quickcache_cache;
 
 // Re-export backend types
 pub use dashmap_cache::DashMapCache;
 
 #[cfg(feature = "moka")]
+#[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
 pub use moka_cache::{MokaCache, MokaCacheConfig};
 
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub use redis_cache::RedisCache;
 
 #[cfg(feature = "memcached")]
+#[cfg_attr(docsrs, doc(cfg(feature = "memcached")))]
 pub use memcached_cache::MemcachedCache;
 
 #[cfg(feature = "quick_cache")]
+#[cfg_attr(docsrs, doc(cfg(feature = "quick_cache")))]
 pub use quickcache_cache::QuickCacheBackend;
 
 // Type aliases for backward compatibility
 // These allow existing code to continue working without changes
 /// Type alias for `MokaCache` (default L1 backend)
 #[cfg(feature = "moka")]
+#[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
 pub type L1Cache = MokaCache;
 
 /// Type alias for `RedisCache` (default L2 backend)
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub type L2Cache = RedisCache;
 
 // Future backends will be added here with conditional compilation

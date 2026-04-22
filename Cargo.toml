@@ -86,4 +86,9 @@ pedantic = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
 indexing_slicing = "warn"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["x86_64-unknown-linux-gnu"]
  

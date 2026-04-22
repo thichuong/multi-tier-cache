@@ -1,3 +1,4 @@
+#![cfg_attr(docsrs, feature(doc_cfg))]
 //! Multi-Tier Cache
 //!
 //! A high-performance, production-ready multi-tier caching library for Rust featuring:
@@ -58,8 +59,10 @@ pub mod builder;
 pub mod cache_manager;
 pub mod error;
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub mod invalidation;
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub mod redis_streams;
 pub mod serialization;
 pub mod traits;
@@ -72,15 +75,19 @@ use tracing::{info, warn};
 // Re-export backend types (maintains backward compatibility)
 pub use backends::DashMapCache;
 #[cfg(feature = "moka")]
+#[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
 pub use backends::{L1Cache, MokaCache, MokaCacheConfig};
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub use backends::{L2Cache, RedisCache};
 
 // Optional backends (feature-gated)
 #[cfg(feature = "backend-memcached")]
+#[cfg_attr(docsrs, doc(cfg(feature = "backend-memcached")))]
 pub use backends::MemcachedCache;
 
 #[cfg(feature = "quick_cache")]
+#[cfg_attr(docsrs, doc(cfg(feature = "quick_cache")))]
 pub use backends::QuickCacheBackend;
 pub use builder::CacheSystemBuilder;
 pub use bytes::Bytes;
@@ -94,11 +101,13 @@ pub use cache_manager::{
     TierStats,
 };
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub use invalidation::{
     InvalidationConfig, InvalidationMessage, InvalidationPublisher, InvalidationStats,
     InvalidationSubscriber, ReliableStreamSubscriber,
 };
 #[cfg(feature = "redis")]
+#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 pub use redis_streams::RedisStreams;
 pub use traits::{CacheBackend, L2CacheBackend, StreamingBackend};
 
@@ -135,9 +144,11 @@ pub struct CacheSystem {
     pub cache_manager: Arc<CacheManager>,
     /// Optional L1 cache instance (for health checks)
     #[cfg(feature = "moka")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "moka")))]
     pub l1_cache: Option<Arc<L1Cache>>,
     /// Optional L2 cache instance (for health checks)
     #[cfg(feature = "redis")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
     pub l2_cache: Option<Arc<L2Cache>>,
 }
 
@@ -167,6 +178,7 @@ impl CacheSystem {
     ///
     /// Returns an error if cache initialization fails.
     #[cfg(all(feature = "moka", feature = "redis"))]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "moka", feature = "redis"))))]
     pub async fn new() -> CacheResult<Self> {
         info!("Initializing Multi-Tier Cache System");
 
@@ -209,6 +221,7 @@ impl CacheSystem {
     ///
     /// Returns an error if cache initialization fails.
     #[cfg(all(feature = "moka", feature = "redis"))]
+    #[cfg_attr(docsrs, doc(cfg(all(feature = "moka", feature = "redis"))))]
     pub async fn with_redis_url(redis_url: &str) -> CacheResult<Self> {
         info!(redis_url = %redis_url, "Initializing Multi-Tier Cache System with custom Redis URL");
 
