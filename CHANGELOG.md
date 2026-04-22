@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Planned
 
 - Metrics export (Prometheus format)
+
+## [0.6.5] - 2026-04-22
+
+### Changed
+
+- **README Rewrite**: Complete overhaul — reduced from ~1,280 lines to ~500 lines. Cleaner structure, version-agnostic headings, consolidated examples, and a new Feature Compatibility table.
+- **Benchmark Figures Updated**: Throughput 16,829 → 21,528+ RPS, added mean latency (23.2ms), corrected stampede figures.
+- **docs.rs `doc_cfg`**: Added `#[doc(cfg(…))]` annotations to all feature-gated items for better visibility on docs.rs. Configured `all-features = true` and single-target build in `[package.metadata.docs.rs]`.
+
+### Internal
+
+- Documentation and metadata only — no functional code changes. Fully backward compatible with 0.6.4.
+
 ## [0.6.4] - 2026-03-15
 
 ### Added

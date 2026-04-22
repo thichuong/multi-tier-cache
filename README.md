@@ -1,205 +1,155 @@
-# 🚀 multi-tier-cache
+# multi-tier-cache
 
 [![Crates.io](https://img.shields.io/crates/v/multi-tier-cache.svg)](https://crates.io/crates/multi-tier-cache)
-[![Documentation](https://docs.rs/multi-tier-cache/badge.svg)](https://docs.rs/multi-tier-cache)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![docs.rs](https://docs.rs/multi-tier-cache/badge.svg)](https://docs.rs/multi-tier-cache)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
-**A high-performance, production-ready multi-tier caching library for Rust** featuring L1 (in-memory) + L2 (Redis) caches, automatic stampede protection, and built-in Redis Streams support.
+A high-performance, production-ready multi-tier caching library for Rust.
 
-## 📑 Table of Contents
-
-- [Features](#-features)
-- [Architecture](#-architecture)
-- [Installation](#-installation)
-- [Quick Start](#-quick-start)
-- [Usage Patterns](#-usage-patterns)
-  - [1. Cache Strategies](#1-cache-strategies)
-  - [2. Compute-on-Miss Pattern](#2-compute-on-miss-pattern)
-  - [3. Redis Streams Integration](#3-redis-streams-integration)
-  - [4. Type-Safe Database Caching](#4-type-safe-database-caching-new-in-020-)
-  - [5. Cross-Instance Cache Invalidation](#5-cross-instance-cache-invalidation-new-in-040-)
-  - [6. Available Backends](#6-available-backends-new-in-052-) ⭐ **NEW**
-  - [7. Custom Cache Backends](#7-custom-cache-backends-new-in-030-)
-  - [8. Multi-Tier Architecture](#8-multi-tier-architecture-new-in-050-)
-- [9. Error Handling](#9-error-handling-new-in-064-) ⭐ **NEW**
-- [10. Feature Flags](#10-feature-flags-new-in-064-) ⭐ **NEW**
-- [Feature Compatibility](#%EF%B8%8F-feature-compatibility)
-- [Performance Benchmarks](#-performance-benchmarks)
-- [Configuration](#-configuration)
-  - [Moka Cache (L1)](#moka-cache-l1-configuration)
-- [Testing](#-testing)
-- [Examples](#-examples)
-- [Architecture Details](#%EF%B8%8F-architecture-details)
-- [Development](#%EF%B8%8F-development)
-- [Contributing](#-contributing)
-- [License](#-license)
-
-## ✨ Features
-
-- **🦀 Rust Edition 2024** *(v0.6.1+)*: Leverages native **Async Functions in Traits (AFIT)**, eliminating the `async-trait` dependency for a lighter, faster build.
-- **🛡️ Custom Error Handling** *(v0.6.4+)*: Introduced `CacheError` enum for structured, strongly-typed error handling across all backends. ⭐ **NEW**
-- **🔥 Multi-Tier Architecture**: Combines fast in-memory (Moka) with persistent distributed (Redis) caching
-- **🌐 Dynamic Multi-Tier** *(v0.5.0+)*: Support for 3, 4, or more cache tiers (L1+L2+L3+L4+...) with flexible configuration
-- **🔄 Cross-Instance Cache Invalidation** *(v0.4.0+)*: Real-time cache synchronization across all instances via Redis Pub/Sub
-- **🔌 Pluggable Backends** *(v0.3.0+)*: Swap Moka/Redis with custom implementations (DashMap, Memcached, RocksDB, etc.)
-- **🛡️ Cache Stampede Protection**: **Asynchronous broadcast channel** request coalescing prevents duplicate computations (99.6% latency reduction: 534ms → 19.0ms)
-- **📊 Redis Streams**: Built-in publish/subscribe with automatic trimming for event streaming
-- **⚡ Automatic Tier Promotion**: Intelligent cache tier promotion for frequently accessed data with TTL preservation and per-tier scaling
-- **📈 Comprehensive Statistics**: Hit rates per tier, promotions, in-flight request tracking, invalidation metrics
-- **🎯 Zero-Cost L1 Hits**: L2 payload caching uses raw `bytes::Bytes`, while L1 skips intermediate JSON AST allocations for maximum performance.
-- **🎲 Probabilistic Promotion** *(v0.6.3+)*: Configure promotion frequency (1/N) to prevent L1 pollution from infrequent (long-tail) access patterns. ⭐ **NEW**
-- **✅ Production-Proven**: Battle-tested at **21,528+ RPS** with **19.0ms latency** and **95% hit rate**
-
-## 🏗️ Architecture
+Combine blazing-fast in-memory caching (Moka / QuickCache) with persistent distributed storage (Redis / Memcached) in a single, unified API — with stampede protection, cross-instance invalidation, and dynamic N-tier architectures out of the box.
 
 ```
-Request → L1 Cache (Moka) → L2 Cache (Redis) → Compute/Fetch
-          ↓ Hit (90%)       ↓ Hit (75%)        ↓ Miss (5%)
-          Return            Promote to L1       Store in L1+L2
+Request ─→ L1 (RAM) ─→ L2 (Redis) ─→ L3 (Cold) ─→ … ─→ Compute
+            <1ms          2-5ms         10-50ms            your latency
 ```
 
-### Cache Flow
+## Highlights
 
-1. **Fast Path**: Check L1 cache (sub-millisecond, 90% hit rate) - **Zero-cost** raw bytes access.
-2. **Fallback**: Check L2 cache (2-5ms, 75% hit rate) + auto-promote to L1.
-3. **Compute**: Fetch/compute fresh data with **broadcast-based stampede protection**, store in both tiers.
+- **Multi-tier by default** — L1 + L2 out of the box, extensible to L3, L4, … LN with per-tier TTL scaling
+- **Stampede protection** — broadcast-channel request coalescing prevents thundering herds (99.6% latency reduction)
+- **Cross-instance invalidation** — real-time cache sync across servers via Redis Pub/Sub
+- **Pluggable backends** — swap Moka, Redis, DashMap, QuickCache, Memcached, or bring your own
+- **Type-safe compute-on-miss** — `get_or_compute_typed::<T>()` handles serialization automatically
+- **Redis Streams** — built-in pub/sub with automatic trimming for event-driven architectures
+- **Zero-cost L1 hits** — raw `bytes::Bytes` storage, no intermediate JSON AST allocations
+- **Probabilistic promotion** — configurable 1/N promotion frequency to avoid L1 pollution
+- **Production-proven** — battle-tested at 21,528+ RPS with 19.0ms p50 latency and 95% hit rate
 
-## 📦 Installation
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Feature Flags](#feature-flags)
+- [Cache Strategies](#cache-strategies)
+- [Compute-on-Miss](#compute-on-miss)
+- [Type-Safe Caching](#type-safe-caching)
+- [Cross-Instance Invalidation](#cross-instance-invalidation)
+- [Multi-Tier Architecture](#multi-tier-architecture)
+- [Available Backends](#available-backends)
+- [Custom Backends](#custom-backends)
+- [Redis Streams](#redis-streams)
+- [Error Handling](#error-handling)
+- [Configuration](#configuration)
+- [Performance](#performance)
+- [Testing](#testing)
+- [Examples](#examples)
+- [Migration Guide](#migration-guide)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Quick Start
 
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-multi-tier-cache = "0.6.4"
-tokio = { version = "1.43", features = ["full"] }
-serde_json = "1.0"
+multi-tier-cache = "0.6"
+tokio = { version = "1", features = ["full"] }
 ```
-
-**Version Guide:**
-- **v0.6.4+**: Custom Error Types (`CacheError`) and Feature-Gated backends ⭐ **NEW**
-- **v0.6.3+**: Probabilistic Promotion (1/N) and optimized concurrent benchmarks
-- **v0.5.0+**: Dynamic multi-tier architecture (L1+L2+L3+L4+...), per-tier statistics
-- **v0.4.0+**: Cross-instance cache invalidation via Redis Pub/Sub
-- **v0.3.0+**: Pluggable backends, trait-based architecture
-- **v0.2.0+**: Type-safe database caching with `get_or_compute_typed()`
-- **v0.1.0+**: Core multi-tier caching with stampede protection
-
-## 🚀 Quick Start
 
 ```rust
 use multi_tier_cache::{CacheSystem, CacheStrategy};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize cache system (uses REDIS_URL env var)
     let cache = CacheSystem::new().await?;
 
-    // Store data with cache strategy
-    let data = serde_json::json!({"user": "alice", "score": 100});
+    // Store with a predefined TTL strategy
+    let data = bytes::Bytes::from(r#"{"user":"alice","score":100}"#);
     cache.cache_manager()
         .set_with_strategy("user:1", data, CacheStrategy::ShortTerm)
         .await?;
 
-    // Retrieve data (L1 first, then L2 fallback)
-    if let Some(cached) = cache.cache_manager().get("user:1").await? {
-        let user: serde_json::Value = serde_json::from_slice(cached.as_ref())?;
-        println!("Cached data: {}", user);
+    // Retrieve — checks L1 first, falls back to L2
+    if let Some(value) = cache.cache_manager().get("user:1").await? {
+        println!("cached: {:?}", value);
     }
 
-    // Get statistics
+    // Inspect hit rates
     let stats = cache.cache_manager().get_stats();
-    println!("Hit rate: {:.2}%", stats.hit_rate);
+    println!("hit rate: {:.1}%", stats.hit_rate);
 
     Ok(())
 }
 ```
 
-## 💡 Usage Patterns
+> **Note:** By default the library connects to Redis at `redis://127.0.0.1:6379`. Set the `REDIS_URL` environment variable or use `CacheSystem::with_redis_url()` to override. See [Configuration](#configuration) for details.
 
-### 1. Cache Strategies
+## Feature Flags
 
-Choose the right TTL for your use case:
+All backends are optional and feature-gated to keep the dependency tree lean.
+
+| Feature | Description | Default |
+|---------|-------------|:-------:|
+| `moka` | Moka in-memory cache (L1) | ✅ |
+| `redis` | Redis distributed cache (L2) | ✅ |
+| `backend-quickcache` | QuickCache ultra-fast L1 backend | — |
+| `backend-memcached` | Memcached distributed L2 backend | — |
+| `bincode` | Bincode binary serialization | — |
+| `msgpack` | MessagePack serialization | — |
+| `full` | Enable everything above | — |
+
+```toml
+# Default — Moka L1 + Redis L2
+multi-tier-cache = "0.6"
+
+# In-memory only (no Redis dependency)
+multi-tier-cache = { version = "0.6", default-features = false, features = ["moka"] }
+
+# All backends + all serializers
+multi-tier-cache = { version = "0.6", features = ["full"] }
+```
+
+## Cache Strategies
+
+Built-in TTL presets for common use cases:
 
 ```rust
+use multi_tier_cache::CacheStrategy;
 use std::time::Duration;
 
-// RealTime (10s) - Fast-changing data
-cache.cache_manager()
-    .set_with_strategy("live_price", data, CacheStrategy::RealTime)
-    .await?;
+// Predefined strategies
+CacheStrategy::RealTime    // 10 seconds — live prices, counters
+CacheStrategy::ShortTerm   //  5 minutes — sessions, hot data
+CacheStrategy::MediumTerm  //  1 hour    — catalogs, API responses
+CacheStrategy::LongTerm    //  3 hours   — config, stable data
 
-// ShortTerm (5min) - Frequently accessed data
-cache.cache_manager()
-    .set_with_strategy("session:123", data, CacheStrategy::ShortTerm)
-    .await?;
+// Or specify your own
+CacheStrategy::Custom(Duration::from_secs(30))
+```
 
-// MediumTerm (1hr) - Moderately stable data
+```rust
 cache.cache_manager()
-    .set_with_strategy("catalog", data, CacheStrategy::MediumTerm)
-    .await?;
-
-// LongTerm (3hr) - Stable data
-cache.cache_manager()
-    .set_with_strategy("config", data, CacheStrategy::LongTerm)
-    .await?;
-
-// Custom - Specific requirements
-cache.cache_manager()
-    .set_with_strategy("metrics", data, CacheStrategy::Custom(Duration::from_secs(30)))
+    .set_with_strategy("live:price", data, CacheStrategy::RealTime)
     .await?;
 ```
 
-### 2. Compute-on-Miss Pattern
+## Compute-on-Miss
 
-Fetch data only when cache misses, with stampede protection:
+Fetch data only on cache miss. Concurrent requests for the same key are coalesced — only **one** computation runs, the rest wait and share the result.
 
 ```rust
-async fn fetch_from_database(id: u32) -> anyhow::Result<bytes::Bytes> {
-    // Expensive operation...
-    let data = serde_json::json!({"id": id, "data": "..."});
-    Ok(bytes::Bytes::from(serde_json::to_vec(&data)?))
-}
-
-// Only ONE request will compute, others wait and read from cache
-let product_bytes = cache.cache_manager()
+let value = cache.cache_manager()
     .get_or_compute_with(
         "product:42",
         CacheStrategy::MediumTerm,
-        || fetch_from_database(42)
+        || async { fetch_from_database(42).await },
     )
     .await?;
-let product: serde_json::Value = serde_json::from_slice(product_bytes.as_ref())?;
 ```
 
-### 3. Redis Streams Integration
+## Type-Safe Caching
 
-Publish and consume events:
-
-```rust
-// Publish to stream
-let fields = vec![
-    ("event_id".to_string(), "123".to_string()),
-    ("event_type".to_string(), "user_action".to_string()),
-    ("timestamp".to_string(), "2025-01-01T00:00:00Z".to_string()),
-];
-let entry_id = cache.cache_manager()
-    .publish_to_stream("events_stream", fields, Some(1000)) // Auto-trim to 1000 entries
-    .await?;
-
-// Read latest entries
-let entries = cache.cache_manager()
-    .read_stream_latest("events_stream", 10)
-    .await?;
-
-// Blocking read for new entries
-let new_entries = cache.cache_manager()
-    .read_stream("events_stream", "$", 10, Some(5000)) // Block for 5s
-    .await?;
-```
-
-### 4. Type-Safe Database Caching (New in 0.2.0! 🎉)
-
-Eliminate boilerplate with automatic serialization/deserialization for database queries:
+Skip manual serialization entirely. `get_or_compute_typed` handles `Serialize`/`DeserializeOwned` for you:
 
 ```rust
 use serde::{Serialize, Deserialize};
@@ -211,22 +161,6 @@ struct User {
     email: String,
 }
 
-// ❌ OLD WAY: Manual cache + serialize + deserialize (40+ lines)
-let cached = cache.cache_manager().get("user:123").await?;
-let user: User = match cached {
-    Some(bytes) => serde_json::from_slice(bytes.as_ref())?,
-    None => {
-        let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
-            .bind(123)
-            .fetch_one(&pool)
-            .await?;
-        let bytes = bytes::Bytes::from(serde_json::to_vec(&user)?);
-        cache.cache_manager().set_with_strategy("user:123", bytes, CacheStrategy::MediumTerm).await?;
-        user
-    }
-};
-
-// ✅ NEW WAY: Type-safe automatic caching (5 lines)
 let user: User = cache.cache_manager()
     .get_or_compute_typed(
         "user:123",
@@ -236,285 +170,225 @@ let user: User = cache.cache_manager()
                 .bind(123)
                 .fetch_one(&pool)
                 .await
-        }
+        },
     )
     .await?;
 ```
 
-**Benefits:**
-- ✅ **Type-Safe**: Compiler checks types, no runtime surprises
-- ✅ **Zero Boilerplate**: Automatic serialize/deserialize
-- ✅ **Full Cache Features**: L1→L2 fallback, stampede protection, auto-promotion
-- ✅ **Generic**: Works with any type implementing `Serialize + DeserializeOwned`
+Works with any `T: Serialize + DeserializeOwned` — database rows, API responses, computed analytics, etc.
 
-**More Examples:**
+## Cross-Instance Invalidation
 
-```rust
-// PostgreSQL Reports
-#[derive(Serialize, Deserialize)]
-struct Report {
-    id: i64,
-    title: String,
-    data: serde_json::Value,
-}
+In distributed deployments, L1 caches on different servers can become stale. The invalidation system uses Redis Pub/Sub to synchronize all instances in real time.
 
-let report: Report = cache.cache_manager()
-    .get_or_compute_typed(
-        &format!("report:{}", id),
-        CacheStrategy::LongTerm,
-        || async {
-            sqlx::query_as("SELECT * FROM reports WHERE id = $1")
-                .bind(id)
-                .fetch_one(&pool)
-                .await
-        }
-    )
-    .await?;
+### Setup
 
-// API Responses
-#[derive(Serialize, Deserialize)]
-struct ApiData {
-    status: String,
-    items: Vec<String>,
-}
-
-let data: ApiData = cache.cache_manager()
-    .get_or_compute_typed(
-        "api:external",
-        CacheStrategy::RealTime,
-        || async {
-            reqwest::get("https://api.example.com/data")
-                .await?
-                .json::<ApiData>()
-                .await
-        }
-    )
-    .await?;
-
-// Complex Computations
-#[derive(Serialize, Deserialize)]
-struct AnalyticsResult {
-    total: i64,
-    average: f64,
-    breakdown: HashMap<String, i64>,
-}
-
-let analytics: AnalyticsResult = cache.cache_manager()
-    .get_or_compute_typed(
-        "analytics:monthly",
-        CacheStrategy::Custom(Duration::from_secs(6 * 3600)),
-        || async {
-            // Expensive computation...
-            compute_monthly_analytics(&pool).await
-        }
-    )
-    .await?;
-```
-
-**Performance:**
-- **L1 Hit**: <1ms + deserialization (~10-50μs)
-- **L2 Hit**: 2-5ms + deserialization + L1 promotion
-- **Cache Miss**: Your query time + serialization + L1+L2 storage
-
-### 5. Cross-Instance Cache Invalidation (New in 0.4.0! 🎉)
-
-Keep caches synchronized across multiple servers/instances using Redis Pub/Sub:
-
-#### Why Invalidation?
-
-In distributed systems with multiple cache instances, **stale data** is a common problem:
-- User updates profile on Server A → Cache on Server B still has old data
-- Admin changes product price → Other servers show outdated prices
-- TTL-only expiration → Users see stale data until timeout
-
-**Solution:** Real-time cache invalidation across ALL instances!
-
-#### Two Invalidation Strategies
-
-**1. Remove Strategy** (Lazy Reload)
 ```rust
 use multi_tier_cache::{CacheManager, L1Cache, L2Cache, InvalidationConfig};
+use std::sync::Arc;
 
-// Initialize with invalidation support
-let config = InvalidationConfig::default();
 let cache_manager = CacheManager::new_with_invalidation(
-    Arc::new(L1Cache::new().await?),
+    Arc::new(L1Cache::new(Default::default())?),
     Arc::new(L2Cache::new().await?),
     "redis://localhost",
-    config
+    InvalidationConfig::default(),
 ).await?;
+```
 
-// Update database
-database.update_user(123, new_data).await?;
+### Strategies
 
-// Invalidate cache across ALL instances
-// → Cache removed, next access triggers reload
+**Remove** — evict and reload lazily on next access:
+
+```rust
+database.update_user(123, &new_data).await?;
 cache_manager.invalidate("user:123").await?;
 ```
 
-**2. Update Strategy** (Zero Cache Miss)
-```rust
-// Update database
-database.update_user(123, new_data).await?;
+**Update** — push new data to all instances (zero cache miss):
 
-// Push new data directly to ALL instances' L1 caches
-// → No cache miss, instant update!
-let bytes = bytes::Bytes::from(serde_json::to_vec(&new_data)?);
-cache_manager.update_cache(
-    "user:123",
-    bytes,
-    Some(Duration::from_secs(3600))
-).await?;
+```rust
+let bytes = Bytes::from(serde_json::to_vec(&new_data)?);
+cache_manager.update_cache("user:123", bytes, Some(Duration::from_secs(3600))).await?;
 ```
 
-#### Pattern-Based Invalidation
-
-Invalidate multiple related keys at once:
+**Pattern** — invalidate multiple related keys at once:
 
 ```rust
-// Update product category in database
-database.update_category(42, new_price).await?;
-
-// Invalidate ALL products in category across ALL instances
 cache_manager.invalidate_pattern("product:category:42:*").await?;
 ```
 
-#### Write-Through Caching
-
-Cache and broadcast in one operation:
+**Write-through** — cache locally and broadcast in one call:
 
 ```rust
-let report = generate_monthly_report().await?;
-
-// Cache locally AND broadcast to all other instances
-let bytes = bytes::Bytes::from(serde_json::to_vec(&report)?);
-cache_manager.set_with_broadcast(
-    "report:monthly",
-    bytes,
-    CacheStrategy::LongTerm
-).await?;
+cache_manager.set_with_broadcast("report:monthly", bytes, CacheStrategy::LongTerm).await?;
 ```
 
-#### How It Works
+### Propagation flow
 
 ```
 Instance A              Redis Pub/Sub           Instance B
-    │                        │                       │
-    │  1. Update data        │                       │
-    │  2. Broadcast msg  ───>│                       │
-    │                        │  3. Receive msg  ───>│
-    │                        │  4. Update L1    ────┘
-    │                        │                       ✓
+    │  update data          │                       │
+    │  broadcast  ─────────>│                       │
+    │                       │  deliver  ──────────>│
+    │                       │                  update L1
 ```
 
-**Performance:**
-- **Latency**: ~1-5ms invalidation propagation
-- **Overhead**: Negligible (<0.1% CPU for subscriber)
-- **Production-Safe**: Auto-reconnection, error recovery
+| Strategy | Bandwidth | Cache Miss on Next Read | Best For |
+|----------|:---------:|:-----------------------:|----------|
+| Remove | Low | Yes | Large values, infrequent reads |
+| Update | Higher | No | Small values, frequent reads |
+| Pattern | Medium | Yes | Bulk invalidation |
 
-#### Configuration
+### Configuration
 
 ```rust
-use multi_tier_cache::InvalidationConfig;
-
 let config = InvalidationConfig {
     channel: "my_app:cache:invalidate".to_string(),
-    auto_broadcast_on_write: false,  // Manual control
-    enable_audit_stream: true,       // Enable audit trail
+    auto_broadcast_on_write: false,
+    enable_audit_stream: true,
     audit_stream: "cache:invalidations".to_string(),
-    audit_stream_maxlen: Some(10000),
+    audit_stream_maxlen: Some(10_000),
 };
 ```
 
-**When to Use:**
-- ✅ Multi-server deployments (load balancers, horizontal scaling)
-- ✅ Data that changes frequently (user profiles, prices, inventory)
-- ✅ Real-time requirements (instant consistency)
-- ❌ Single-server deployments (unnecessary overhead)
-- ❌ Rarely-changing data (TTL is sufficient)
+## Multi-Tier Architecture
 
-**Comparison:**
+Go beyond L1 + L2. Add L3 (cold storage), L4 (archive), or any number of tiers — each with its own TTL multiplier and promotion policy.
 
-| Strategy | Bandwidth | Cache Miss | Use Case |
-|----------|-----------|------------|----------|
-| **Remove** | Low | Yes (on next access) | Large values, infrequent access |
-| **Update** | Higher | No (instant) | Small values, frequent access |
-| **Pattern** | Medium | Yes | Bulk invalidation (categories) |
+```
+L1 (RAM)  →  L2 (Redis)  →  L3 (RocksDB)  →  L4 (S3)
+ <1ms          2-5ms          10-50ms          100-500ms
+ 95% hits       4%             0.9%             0.1%
+```
 
-### 6. Available Backends (New in 0.5.2! 🎉)
-
-Starting from **v0.5.2**, the library includes multiple built-in cache backend implementations beyond the defaults!
-
-#### In-Memory Backends (L1 Tier)
-
-| Backend | Feature | Performance | Eviction | Use Case |
-|---------|---------|-------------|----------|----------|
-| **MokaCache** *(default)* | Always available | High | Automatic (LRU + TTL) | Production workloads |
-| **DashMapCache** | Always available | Medium | Manual cleanup | Simple caching, education |
-| **QuickCacheBackend** | `backend-quickcache` | Very High | Automatic (LRU) | Maximum throughput |
-
-#### Distributed Backends (L2 Tier)
-
-| Backend | Feature | Persistence | TTL Introspection | Use Case |
-|---------|---------|-------------|-------------------|----------|
-| **RedisCache** *(default)* | Always available | Yes (disk) | ✅ Yes | Production, multi-instance |
-| **MemcachedCache** | `backend-memcached` | No (memory only) | ❌ No | High-performance distributed |
-
-#### Example: Using DashMapCache as L1
+### Building a 3-tier cache
 
 ```rust
-use multi_tier_cache::{DashMapCache, CacheSystemBuilder, CacheBackend};
-use std::sync::Arc;
-
-let dashmap_l1 = Arc::new(DashMapCache::new());
+use multi_tier_cache::{CacheSystemBuilder, TierConfig};
 
 let cache = CacheSystemBuilder::new()
-    .with_l1(dashmap_l1 as Arc<dyn CacheBackend>)
+    .with_tier(moka_l1, TierConfig::as_l1())
+    .with_tier(redis_l2, TierConfig::as_l2())
+    .with_l3(rocksdb_l3)   // convenience: 2× TTL
     .build()
     .await?;
 ```
 
-#### Example: Using QuickCache (requires feature flag)
+### Tier presets
+
+| Preset | Promotion | TTL Scale | Purpose |
+|--------|:---------:|:---------:|---------|
+| `TierConfig::as_l1()` | — | 1× | Hot data in RAM |
+| `TierConfig::as_l2()` | → L1 | 1× | Warm distributed |
+| `TierConfig::as_l3()` | → L2 → L1 | 2× | Cold storage |
+| `TierConfig::as_l4()` | → all | 8× | Archive |
+
+Custom tiers:
+
+```rust
+TierConfig::new(3)
+    .with_promotion(true)
+    .with_ttl_scale(5.0)
+    .with_promotion_frequency(20) // promote 1 in 20 hits
+```
+
+### TTL scaling example
+
+Setting `CacheStrategy::MediumTerm` (1 hour):
+
+| Tier | Scale | Effective TTL |
+|------|:-----:|:-------------:|
+| L1 | 1× | 1 h |
+| L2 | 1× | 1 h |
+| L3 | 2× | 2 h |
+| L4 | 8× | 8 h |
+
+### Automatic promotion
+
+When data is found in a lower tier, it is promoted upward automatically:
+
+```
+GET "key"
+ ├─ L1 → miss
+ ├─ L2 → miss
+ └─ L3 → HIT → promote to L2 → promote to L1 → return
+```
+
+### Per-tier statistics
+
+```rust
+if let Some(tier_stats) = cache.cache_manager().get_tier_stats() {
+    for s in tier_stats {
+        println!("L{}: {} hits ({})", s.tier_level, s.hit_count(), s.backend_name);
+    }
+}
+```
+
+### Backward compatibility
+
+Existing 2-tier code works without changes. Multi-tier mode is opt-in via `.with_tier()`.
+
+```rust
+// Still works exactly as before
+let cache = CacheSystemBuilder::new().build().await?;
+```
+
+## Available Backends
+
+### In-Memory (L1)
+
+| Backend | Feature | Eviction | Notes |
+|---------|---------|----------|-------|
+| **MokaCache** | `moka` *(default)* | Automatic (LRU + TTL) | Production recommended |
+| **DashMapCache** | *always available* | Manual cleanup | Simple, no eviction policy |
+| **QuickCacheBackend** | `backend-quickcache` | Automatic (LRU) | Maximum throughput |
+
+### Distributed (L2)
+
+| Backend | Feature | Persistence | TTL Introspection |
+|---------|---------|:-----------:|:-----------------:|
+| **RedisCache** | `redis` *(default)* | Yes | ✅ |
+| **MemcachedCache** | `backend-memcached` | No | ❌ |
+
+### Usage
+
+```rust
+use multi_tier_cache::{CacheSystemBuilder, CacheBackend, DashMapCache};
+use std::sync::Arc;
+
+let cache = CacheSystemBuilder::new()
+    .with_l1(Arc::new(DashMapCache::new()) as Arc<dyn CacheBackend>)
+    .build()
+    .await?;
+```
+
+QuickCache (requires feature flag):
 
 ```toml
-[dependencies]
-multi-tier-cache = { version = "0.5", features = ["backend-quickcache"] }
+multi-tier-cache = { version = "0.6", features = ["backend-quickcache"] }
 ```
 
 ```rust
 use multi_tier_cache::{QuickCacheBackend, CacheSystemBuilder, CacheBackend};
-use std::sync::Arc;
-
-let quickcache_l1 = Arc::new(QuickCacheBackend::new(5000).await?);
 
 let cache = CacheSystemBuilder::new()
-    .with_l1(quickcache_l1 as Arc<dyn CacheBackend>)
+    .with_l1(Arc::new(QuickCacheBackend::new(5000).await?) as Arc<dyn CacheBackend>)
     .build()
     .await?;
 ```
 
-**See Example:** `examples/builtin_backends.rs` for complete demonstrations of all backends.
+## Custom Backends
 
-### 7. Custom Cache Backends (New in 0.3.0! 🎉)
+Implement `CacheBackend` for L1, or `L2CacheBackend` (extends `CacheBackend` with `get_with_ttl`) for L2.
 
-Starting from **v0.3.0**, you can replace the default Moka (L1) and Redis (L2) backends with your own custom implementations!
-
-**Use Cases:**
-- Replace Redis with Memcached, DragonflyDB, or KeyDB
-- Use DashMap instead of Moka for L1
-- Implement no-op caches for testing
-- Add custom cache eviction policies
-- Integrate with proprietary caching systems
-
-#### Basic Example: Custom HashMap L1 Cache
+### L1 example
 
 ```rust
-use multi_tier_cache::{CacheBackend, CacheSystemBuilder};
+use multi_tier_cache::{CacheBackend, CacheError, CacheResult};
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use anyhow::Result;
 
 struct HashMapCache {
     store: Arc<RwLock<HashMap<String, (Bytes, Instant)>>>,
@@ -523,495 +397,154 @@ struct HashMapCache {
 impl CacheBackend for HashMapCache {
     async fn get(&self, key: &str) -> Option<Bytes> {
         let store = self.store.read().unwrap();
-        store.get(key).and_then(|(value, expiry)| {
-            if *expiry > Instant::now() {
-                Some(value.clone())
-            } else {
-                None
-            }
+        store.get(key).and_then(|(v, exp)| {
+            (*exp > Instant::now()).then(|| v.clone())
         })
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: Bytes,
-        ttl: Duration,
-    ) -> Result<()> {
-        let mut store = self.store.write().unwrap();
-        store.insert(key.to_string(), (value, Instant::now() + ttl));
+    async fn set_with_ttl(&self, key: &str, value: Bytes, ttl: Duration) -> CacheResult<()> {
+        self.store.write().unwrap()
+            .insert(key.to_string(), (value, Instant::now() + ttl));
         Ok(())
     }
 
-    async fn remove(&self, key: &str) -> Result<()> {
+    async fn remove(&self, key: &str) -> CacheResult<()> {
         self.store.write().unwrap().remove(key);
         Ok(())
     }
 
-    async fn health_check(&self) -> bool {
-        true
-    }
-
-    fn name(&self) -> &'static str {
-        "HashMap"
-    }
+    async fn health_check(&self) -> bool { true }
+    fn name(&self) -> &'static str { "HashMap" }
 }
-
-// Use custom backend
-let custom_l1 = Arc::new(HashMapCache::new());
-
-let cache = CacheSystemBuilder::new()
-    .with_l1(custom_l1 as Arc<dyn CacheBackend>)
-    .build()
-    .await?;
 ```
 
-#### Advanced: Custom L2 Backend with TTL
-
-For L2 caches, implement `L2CacheBackend` which extends `CacheBackend` with `get_with_ttl()`:
+### L2 example
 
 ```rust
 use multi_tier_cache::L2CacheBackend;
-use bytes::Bytes;
 
-impl CacheBackend for MyCustomL2 {
-    // ... implement CacheBackend methods
-}
-
-impl L2CacheBackend for MyCustomL2 {
-    async fn get_with_ttl(
-        &self,
-        key: &str,
-    ) -> Option<(Bytes, Option<Duration>)> {
-        // Return value with remaining TTL
+impl L2CacheBackend for MyDistributedCache {
+    async fn get_with_ttl(&self, key: &str) -> Option<(Bytes, Option<Duration>)> {
+        // Return value with remaining TTL for accurate promotion
         Some((value, Some(remaining_ttl)))
     }
 }
 ```
 
-#### Builder API
+### Builder API
 
 ```rust
-use multi_tier_cache::CacheSystemBuilder;
-
 let cache = CacheSystemBuilder::new()
-    .with_l1(custom_l1)        // Custom L1 backend
-    .with_l2(custom_l2)        // Custom L2 backend
-    .with_streams(kafka)       // Optional: Custom streaming backend
+    .with_l1(custom_l1)         // any Arc<dyn CacheBackend>
+    .with_l2(custom_l2)         // any Arc<dyn L2CacheBackend>
+    .with_streams(custom_stream) // optional Arc<dyn StreamingBackend>
     .build()
     .await?;
 ```
 
-**Mix and Match:**
-- Use custom L1 with default Redis L2
-- Use default Moka L1 with custom L2
-- Replace both L1 and L2 backends
+See [`examples/custom_backends.rs`](examples/custom_backends.rs) for complete working examples.
 
-**See:** [`examples/custom_backends.rs`](examples/custom_backends.rs) for complete working examples including:
-- HashMap L1 cache
-- In-memory L2 cache with TTL
-- No-op cache (for testing)
-- Mixed backend configurations
+## Redis Streams
 
-### 8. Multi-Tier Architecture (New in 0.5.0! 🎉)
-
-Starting from **v0.5.0**, you can configure **3, 4, or more cache tiers** beyond the default L1+L2 setup!
-
-**Use Cases:**
-- **L3 (Cold Storage)**: RocksDB or LevelDB for large datasets with longer TTL
-- **L4 (Archive)**: S3 or filesystem for rarely-accessed but important data
-- **Custom Tiers**: Any combination of backends to fit your workload
-
-#### Why Multi-Tier?
-
-```
-Request → L1 (Hot - RAM) → L2 (Warm - Redis) → L3 (Cold - RocksDB) → L4 (Archive - S3)
-          <1ms (95%)        2-5ms (4%)           10-50ms (0.9%)        100-500ms (0.1%)
-```
-
-- **Cost Optimization**: Keep hot data in expensive fast storage, cold data in cheap slow storage
-- **Capacity**: Extend cache capacity beyond RAM limits
-- **Performance**: 95%+ requests served from L1/L2, only rare misses hit slower tiers
-
-#### Basic Example: 3-Tier Cache
+Built-in publish/subscribe with automatic trimming:
 
 ```rust
-use multi_tier_cache::{CacheSystemBuilder, TierConfig, L2Cache};
-use std::sync::Arc;
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // Setup backends
-    let l1 = Arc::new(L2Cache::new().await?);  // Fast: Redis
-    let l2 = Arc::new(L2Cache::new().await?);  // Warm: Redis
-    let l3 = Arc::new(RocksDBCache::new("/tmp/cache").await?);  // Cold: RocksDB
-
-    // Build 3-tier cache
-    let cache = CacheSystemBuilder::new()
-        .with_tier(l1, TierConfig::as_l1())
-        .with_tier(l2, TierConfig::as_l2())
-        .with_l3(l3)  // Convenience method: 2x TTL
-        .build()
-        .await?;
-
-    // Use as normal - transparent multi-tier
-    cache.cache_manager()
-        .set_with_strategy("key", data, CacheStrategy::LongTerm)
-        .await?;
-
-    Ok(())
-}
-```
-
-#### Tier Configuration
-
-**Pre-configured Tiers:**
-
-```rust
-// L1 - Hot tier (no promotion, standard TTL)
-TierConfig::as_l1()
-
-// L2 - Warm tier (promote to L1, standard TTL)
-TierConfig::as_l2()
-
-// L3 - Cold tier (promote to L2+L1, 2x TTL)
-TierConfig::as_l3()
-
-// L4 - Archive tier (promote to all, 8x TTL)
-TierConfig::as_l4()
-```
-
-**Custom Tier:**
-
-```rust
-TierConfig::new(3)
-    .with_promotion(true)   // Auto-promote on hit
-    .with_ttl_scale(5.0)    // 5x TTL multiplier
-    .with_level(3)          // Tier number
-```
-
-#### TTL Scaling Example
-
-```rust
-// Set data with 1-hour TTL
+// Publish an event
+let fields = vec![
+    ("event_type".into(), "user_signup".into()),
+    ("user_id".into(), "42".into()),
+];
 cache.cache_manager()
-    .set_with_strategy("product:123", data, CacheStrategy::MediumTerm)  // 1hr
+    .publish_to_stream("events", fields, Some(1000))
     .await?;
 
-// Actual TTL per tier:
-// L1: 1 hour   (scale = 1.0x)
-// L2: 1 hour   (scale = 1.0x)
-// L3: 2 hours  (scale = 2.0x) ← Keeps data longer!
-// L4: 8 hours  (scale = 8.0x) ← Much longer retention!
-```
+// Read latest entries
+let entries = cache.cache_manager()
+    .read_stream_latest("events", 10)
+    .await?;
 
-#### Per-Tier Statistics
-
-Track hit rates for each tier:
-
-```rust
-if let Some(tier_stats) = cache.cache_manager().get_tier_stats() {
-    for stats in tier_stats {
-        println!("L{}: {} hits ({})",
-                 stats.tier_level,
-                 stats.hit_count(),
-                 stats.backend_name);
-    }
-}
-
-// Output:
-// L1: 9500 hits (Redis)
-// L2: 450 hits (Redis)
-// L3: 45 hits (RocksDB)
-// L4: 5 hits (S3)
-```
-
-#### 4-Tier Example
-
-```rust
-let cache = CacheSystemBuilder::new()
-    .with_tier(moka_l1, TierConfig::as_l1())
-    .with_tier(redis_l2, TierConfig::as_l2())
-    .with_tier(rocksdb_l3, TierConfig::as_l3())
-    .with_tier(s3_l4, TierConfig::as_l4())
-    .build()
+// Blocking read for new entries (5s timeout)
+let new = cache.cache_manager()
+    .read_stream("events", "$", 10, Some(5000))
     .await?;
 ```
 
-#### Automatic Tier Promotion
+## Error Handling
 
-When data is found in a lower tier (e.g., L3), it's automatically promoted to all upper tiers:
-
-```
-Request for "key"
-  ├─ Check L1 → Miss
-  ├─ Check L2 → Miss
-  └─ Check L3 → HIT!
-       ├─ Promote to L2 (with original TTL)
-       ├─ Promote to L1 (with original TTL)
-       └─ Return data
-
-Next request for "key" → L1 Hit! <1ms
-```
-
-#### Backward Compatibility
-
-**Existing 2-tier users**: No changes required! Your code continues to work:
-
-```rust
-// This still works exactly as before (v0.1.0 - v0.4.x)
-let cache = CacheSystemBuilder::new().build().await?;
-```
-
-**Multi-tier mode** is opt-in via `.with_tier()` or `.with_l3()`/`.with_l4()` methods.
-
-#### When to Use Multi-Tier
-
-✅ **Good fit:**
-- Large datasets that don't fit in RAM
-- Cost-sensitive workloads (mix expensive + cheap storage)
-- Long-tail data access patterns (90% hot, 10% cold)
-- Hierarchical data with different access frequencies
-
-❌ **Not needed:**
-- Small datasets (< 10GB) that fit in Redis
-- Uniform access patterns (all data equally hot)
-- Latency-critical paths (stick to L1+L2)
-
-## 🔧 Configuration
-### Moka Cache (L1) Configuration
-
-You can customize the Moka in-memory cache settings (capacity, TTL) using `MokaCacheConfig` via the builder:
-
-```rust
-use multi_tier_cache::{CacheSystemBuilder, MokaCacheConfig};
-use std::time::Duration;
-
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let config = MokaCacheConfig {
-        max_capacity: 10_000,
-        time_to_live: Duration::from_secs(30 * 60), // 30 mins
-        time_to_idle: Duration::from_secs(5 * 60),  // 5 mins
-    };
-
-    let cache = CacheSystemBuilder::new()
-        .with_moka_config(config)
-        .build()
-        .await?;
-
-    Ok(())
-}
-```
-
-### 9. Error Handling (New in 0.6.4! 🎉)
-
-Starting from **v0.6.4**, the library uses a structured `CacheError` enum for all operations.
+All operations return `CacheResult<T>`, powered by a structured `CacheError` enum:
 
 ```rust
 use multi_tier_cache::CacheError;
 
 match cache.cache_manager().get("key").await {
-    Ok(Some(value)) => println!("Got value"),
-    Ok(None) => println!("Cache miss"),
-    Err(CacheError::BackendError(msg)) => eprintln!("Redis error: {}", msg),
-    Err(CacheError::SerializationError(msg)) => eprintln!("JSON error: {}", msg),
-    Err(e) => eprintln!("Other error: {}", e),
+    Ok(Some(value)) => { /* cache hit */ }
+    Ok(None)        => { /* cache miss */ }
+    Err(CacheError::BackendError(msg))       => eprintln!("backend: {msg}"),
+    Err(CacheError::SerializationError(msg)) => eprintln!("serde: {msg}"),
+    Err(CacheError::InvalidationError(msg))  => eprintln!("invalidation: {msg}"),
+    Err(CacheError::ConfigError(msg))        => eprintln!("config: {msg}"),
+    Err(CacheError::NotFound)                => eprintln!("not found"),
+    Err(CacheError::InternalError(msg))      => eprintln!("internal: {msg}"),
 }
 ```
 
-### 10. Feature Flags (New in 0.6.4! 🎉)
+`CacheError` implements `From` for `RedisError`, `serde_json::Error`, `MemcacheError`, and more — so `?` works seamlessly.
 
-To keep the dependency tree lean, all backends are now optional.
+## Configuration
 
-| Feature | Description | Default |
-|---------|-------------|---------|
-| `moka` | Enable Moka (L1) in-memory cache | ✅ Yes |
-| `redis` | Enable Redis (L2) distributed cache | ✅ Yes |
-| `full` | Enable all backends and serializers | ❌ No |
-| `backend-memcached` | Enable Memcached L2 backend | ❌ No |
-| `backend-quickcache` | Enable QuickCache L1 backend | ❌ No |
-| `bincode` | Enable Bincode serialization | ❌ No |
-| `msgpack` | Enable MessagePack serialization | ❌ No |
+### Redis Connection
 
-```toml
-# Pure in-memory usage (no Redis)
-multi-tier-cache = { version = "0.6.4", default-features = false, features = ["moka"] }
-```
-
-
-## ⚖️ Feature Compatibility
-
-### Invalidation + Custom Backends
-
-**✅ Compatible:**
-- Cache invalidation works with **default Redis L2** backend
-- Single-key operations (`invalidate`, `update_cache`) work with any backend
-- Type-safe caching works with all backends
-- Stampede protection works with all backends
-
-**⚠️ Limited Support:**
-- **Pattern-based invalidation** (`invalidate_pattern`) requires **concrete Redis L2Cache**
-- Custom L2 backends: Single-key invalidation works, but pattern invalidation not available
-- Workaround: Implement pattern matching in your custom backend
-
-**Example:**
-```rust
-// ✅ Works: Default Redis + Invalidation
-let cache = CacheManager::new_with_invalidation(
-    Arc::new(L1Cache::new().await?),
-    Arc::new(L2Cache::new().await?),  // Concrete Redis L2
-    "redis://localhost",
-    InvalidationConfig::default()
-).await?;
-
-cache.invalidate("key").await?;           // ✅ Works
-cache.invalidate_pattern("user:*").await?; // ✅ Works (has scan_keys)
-
-// ⚠️ Limited: Custom L2 + Invalidation
-let cache = CacheManager::new_with_backends(
-    custom_l1,
-    custom_l2,  // Custom trait-based L2
-    None
-).await?;
-
-// Pattern invalidation not available without concrete L2Cache
-// Use single-key invalidation instead
-```
-
-### Combining All Features
-
-All features work together seamlessly:
-
-```rust
-use multi_tier_cache::*;
-
-// v0.4.0: Invalidation
-let config = InvalidationConfig::default();
-
-// v0.3.0: Custom backends (or use defaults)
-let l1 = Arc::new(L1Cache::new().await?);
-let l2 = Arc::new(L2Cache::new().await?);
-
-// Initialize with invalidation
-let cache_manager = CacheManager::new_with_invalidation(
-    l1, l2, "redis://localhost", config
-).await?;
-
-// v0.2.0: Type-safe caching
-let user: User = cache_manager.get_or_compute_typed(
-    "user:123",
-    CacheStrategy::MediumTerm,
-    || fetch_user(123)
-).await?;
-
-// v0.4.0: Invalidate across instances
-cache_manager.invalidate("user:123").await?;
-
-// v0.1.0: All core features work
-let stats = cache_manager.get_stats();
-println!("Hit rate: {:.2}%", stats.hit_rate);
-```
-
-**No Conflicts:** All features are designed to work together without interference.
-
-## 📊 Performance Benchmarks
-
-Tested in production environment:
-
-| Metric | Value |
-|--------|-------|
-| **Throughput** | 21,528+ requests/second (Google Cloud e2-micro) |
-| **Latency (mean)** | 23.2ms |
-| **Latency (p50)** | 19.0ms |
-| **Cache Hit Rate** | 95%+ (L1: 90%, L2: 75%) |
-| **Stampede Protection** | 99.6% latency reduction |
-| **Success Rate** | 100% (zero failures under 50k requests) |
-
-### Comparison with Other Libraries
-
-| Library | Multi-Tier | Stampede Protection | Redis Support | Streams | Invalidation |
-|---------|------------|---------------------|---------------|---------|--------------|
-| **multi-tier-cache** | ✅ L1+L2 | ✅ Full | ✅ Full | ✅ Built-in | ✅ Pub/Sub |
-| cached | ❌ Single | ❌ No | ❌ No | ❌ No | ❌ No |
-| moka | ❌ L1 only | ✅ L1 only | ❌ No | ❌ No | ❌ No |
-| redis-rs | ❌ No cache | ❌ Manual | ✅ Low-level | ✅ Manual | ❌ Manual |
-
-### Running Benchmarks
-
-The library includes comprehensive benchmarks built with Criterion:
+| Priority | Method |
+|----------|--------|
+| 1 | `CacheSystem::with_redis_url("redis://…")` |
+| 2 | `REDIS_URL` environment variable |
+| 3 | `.env` file |
+| 4 | Default: `redis://127.0.0.1:6379` |
 
 ```bash
-# Run all benchmarks
-cargo bench
+# Shell
+export REDIS_URL="redis://:password@redis-host:6379"
 
-# Run specific benchmark suite
-cargo bench --bench cache_operations
-cargo bench --bench stampede_protection
-cargo bench --bench invalidation
-cargo bench --bench serialization
-
-# Generate detailed HTML reports
-cargo bench -- --save-baseline my_baseline
-```
-
-**Benchmark Suites:**
-- **cache_operations**: L1/L2 read/write performance, cache strategies, compute-on-miss patterns
-- **stampede_protection**: Concurrent access, request coalescing under load
-- **invalidation**: Cross-instance invalidation overhead, pattern matching performance
-- **serialization**: JSON vs typed caching, data size impact
-
-Results are saved to `target/criterion/` with interactive HTML reports.
-
-## 🔧 Configuration
-
-### Redis Connection (REDIS_URL)
-
-The library connects to Redis using the `REDIS_URL` environment variable. Configuration priority (highest to lowest):
-
-#### 1. Programmatic Configuration (Highest Priority)
-
-```rust
-// Set custom Redis URL before initialization
-let cache = CacheSystem::with_redis_url("redis://production:6379").await?;
-```
-
-#### 2. Environment Variable
-
-```bash
-# Set in shell
-export REDIS_URL="redis://your-redis-host:6379"
-cargo run
-```
-
-#### 3. .env File (Recommended for Development)
-
-```bash
-# Create .env file in project root
+# .env file
 REDIS_URL="redis://localhost:6379"
 ```
 
-#### 4. Default Fallback
+Redis URL format:
 
-If not configured, defaults to: `redis://127.0.0.1:6379`
-
----
-
-### Use Cases
-
-**Development (Local Redis)**
-```bash
-# .env
-REDIS_URL="redis://127.0.0.1:6379"
+```
+redis://[username]:[password]@[host]:[port]/[database]
+rediss://…   # TLS connection
 ```
 
-**Production (Cloud Redis with Authentication)**
-```bash
-# Railway, Render, AWS ElastiCache, etc.
-REDIS_URL="redis://:your-password@redis-host.cloud:6379"
+### Moka L1 Configuration
+
+```rust
+use multi_tier_cache::{CacheSystemBuilder, MokaCacheConfig};
+use std::time::Duration;
+
+let config = MokaCacheConfig {
+    max_capacity: 10_000,
+    time_to_live: Duration::from_secs(30 * 60),
+    time_to_idle: Duration::from_secs(5 * 60),
+};
+
+let cache = CacheSystemBuilder::new()
+    .with_moka_config(config)
+    .build()
+    .await?;
 ```
 
-**Docker Compose**
+### Default Tuning
+
+| Parameter | Default |
+|-----------|---------|
+| L1 capacity | 2 000 entries |
+| L1 TTL | 5 min (per key) |
+| L2 TTL | 1 h (per key) |
+| Stream max length | 1 000 entries |
+
+### Docker Compose
+
 ```yaml
 services:
   app:
@@ -1023,256 +556,137 @@ services:
       - "6379:6379"
 ```
 
-**Testing (Separate Instance)**
-```rust
-#[tokio::test]
-async fn test_cache() {
-    let cache = CacheSystem::with_redis_url("redis://localhost:6380").await?;
-    // Test logic...
-}
-```
+## Performance
 
----
+Benchmarked in production (Google Cloud e2-micro):
 
-### Redis URL Format
+| Metric | Value |
+|--------|------:|
+| Throughput | 21,528+ req/s |
+| Latency (p50) | 19.0 ms |
+| Latency (mean) | 23.2 ms |
+| Cache hit rate | 95%+ |
+| Stampede reduction | 99.6% |
+| Error rate | 0% (50k requests) |
 
-```
-redis://[username]:[password]@[host]:[port]/[database]
-```
+### Comparison
 
-**Examples:**
-- `redis://localhost:6379` - Local Redis, no authentication
-- `redis://:mypassword@localhost:6379` - Local with password only
-- `redis://user:pass@redis.example.com:6379/0` - Remote with username, password, and database 0
-- `rediss://redis.cloud:6380` - SSL/TLS connection (note the `rediss://`)
+| Library | Multi-Tier | Stampede Protection | Redis | Streams | Invalidation |
+|---------|:----------:|:-------------------:|:-----:|:-------:|:------------:|
+| **multi-tier-cache** | ✅ N-tier | ✅ broadcast | ✅ | ✅ | ✅ Pub/Sub |
+| cached | — | — | — | — | — |
+| moka | L1 only | L1 only | — | — | — |
+| redis-rs | — | manual | ✅ | manual | manual |
 
----
-
-### Troubleshooting Redis Connection
-
-**Connection Refused**
-```bash
-# Check if Redis is running
-redis-cli ping  # Should return "PONG"
-
-# Check the port
-netstat -an | grep 6379
-
-# Verify REDIS_URL
-echo $REDIS_URL
-```
-
-**Authentication Failed**
-```bash
-# Ensure password is in the URL
-REDIS_URL="redis://:YOUR_PASSWORD@host:6379"
-
-# Test connection with redis-cli
-redis-cli -h host -p 6379 -a YOUR_PASSWORD ping
-```
-
-**Timeout Errors**
-- Check network connectivity: `ping your-redis-host`
-- Verify firewall rules allow port 6379
-- Check Redis `maxclients` setting (may be full)
-- Review Redis logs: `redis-cli INFO clients`
-
-**DNS Resolution Issues**
-```bash
-# Test DNS resolution
-nslookup your-redis-host.com
-
-# Use IP address as fallback
-REDIS_URL="redis://192.168.1.100:6379"
-```
-
----
-
-### Cache Tuning
-
-Default settings (configurable in library source):
-
-- **L1 Capacity**: 2000 entries
-- **L1 TTL**: 5 minutes (per key)
-- **L2 TTL**: 1 hour (per key)
-- **Stream Max Length**: 1000 entries
-
-## 🧪 Testing
-
-### Integration Tests
-
-The library includes comprehensive integration tests (30 tests) that verify functionality with real Redis:
+### Running Benchmarks
 
 ```bash
-# Run all integration tests
-cargo test --tests
+cargo bench                            # all suites
+cargo bench --bench cache_operations   # L1/L2 read/write
+cargo bench --bench stampede_protection
+cargo bench --bench invalidation
+cargo bench --bench serialization
+cargo bench --bench multi_tier
+cargo bench --bench storm_requests     # concurrent stress
+```
 
-# Run specific test suite
-cargo test --test integration_basic
+HTML reports are saved to `target/criterion/`.
+
+## Testing
+
+Integration tests run against a real Redis instance:
+
+```bash
+cargo test --tests                        # all tests
+cargo test --test integration_basic       # core operations
 cargo test --test integration_invalidation
 cargo test --test integration_stampede
 cargo test --test integration_streams
 ```
 
-**Test Coverage:**
-- ✅ L1 cache operations (get, set, remove, TTL)
-- ✅ L2 cache operations (get_with_ttl, scan_keys, bulk operations)
-- ✅ L2-to-L1 promotion
-- ✅ Cross-instance invalidation (Remove, Update, Pattern)
-- ✅ Stampede protection with concurrent requests
-- ✅ Type-safe caching with serialization
-- ✅ Redis Streams (publish, read, trimming)
-- ✅ Statistics tracking
+**Requirements:** Redis on `localhost:6379` (or set `REDIS_URL`). Tests clean up after themselves.
 
-**Requirements:**
-- Redis server running on `localhost:6379` (or set `REDIS_URL`)
-- Tests automatically clean up after themselves
+**Coverage:** L1/L2 get/set/remove, TTL, promotion, stampede protection, cross-instance invalidation (remove, update, pattern), type-safe caching, Redis Streams, statistics.
 
-**Test Structure:**
-```
-tests/
-├── common/mod.rs           # Shared utilities
-├── integration_basic.rs    # Core cache operations
-├── integration_invalidation.rs  # Cross-instance sync
-├── integration_stampede.rs # Concurrent access
-└── integration_streams.rs  # Redis Streams
-```
-
-## 📚 Examples
-
-Run examples with:
+## Examples
 
 ```bash
-# Basic usage
 cargo run --example basic_usage
-
-# Stampede protection demonstration
-cargo run --example stampede_protection
-
-# Redis Streams
-cargo run --example redis_streams
-
-# Cache strategies
 cargo run --example cache_strategies
-
-# Advanced patterns
+cargo run --example stampede_protection
+cargo run --example database_caching
+cargo run --example redis_streams
 cargo run --example advanced_usage
-
-# Health monitoring
 cargo run --example health_monitoring
+cargo run --example custom_backends
+cargo run --example builtin_backends
+cargo run --example multi_tier_usage
+cargo run --example probabilistic_promotion
+cargo run --example tracing_demo
 ```
 
-## 🏛️ Architecture Details
+## Migration Guide
 
-### Cache Stampede Protection
-
-When multiple requests hit an expired cache key simultaneously:
-
-1. **First request** acquires DashMap mutex lock and computes value
-2. **Subsequent requests** wait on the same mutex
-3. **After computation**, all requests read from cache
-4. **Result**: Only ONE computation instead of N
-
-**Performance Impact**:
-- Without protection: 10 requests × 500ms = 5000ms total
-- With protection: 1 request × 500ms = 500ms total (90% faster)
-
-### L2-to-L1 Promotion
-
-When data is found in L2 but not L1:
-
-1. Retrieve from Redis (L2)
-2. Automatically store in Moka (L1) with fresh TTL
-3. Future requests hit fast L1 cache
-4. **Result**: Self-optimizing cache that adapts to access patterns
-
-## 🛠️ Development
-
-### Build
-
-```bash
-# Development
-cargo build
-
-# Release (optimized)
-cargo build --release
-
-# Run tests
-cargo test
-```
-
-### Documentation
-
-```bash
-# Generate and open docs
-cargo doc --open
-```
-
-## 📖 Migration Guide
-
-### From `cached` crate
+### From `cached`
 
 ```rust
 // Before (cached)
-use cached::proc_macro::cached;
-
 #[cached(time = 60)]
-fn expensive_function(arg: String) -> String {
-    // ...
-}
+fn expensive(arg: String) -> String { /* … */ }
 
 // After (multi-tier-cache)
-async fn expensive_function(cache: &CacheManager, arg: String) -> Result<String> {
-    cache.get_or_compute_with(
-        &format!("func:{}", arg),
+let result = cache.cache_manager()
+    .get_or_compute_with(
+        &format!("fn:{arg}"),
         CacheStrategy::ShortTerm,
-        || async { /* computation */ }
-    ).await
-}
-```
-
-### From direct Redis usage
-
-```rust
-// Before (redis-rs)
-let mut conn = client.get_connection()?;
-let value: String = conn.get("key")?;
-conn.set_ex("key", value, 3600)?;
-
-// After (multi-tier-cache)
-if let Some(value) = cache.cache_manager().get("key").await? {
-    // Use cached value
-}
-cache.cache_manager()
-    .set_with_strategy("key", value, CacheStrategy::MediumTerm)
+        || async { compute(arg).await },
+    )
     .await?;
 ```
 
-## 🤝 Contributing
+### From `redis-rs`
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+```rust
+// Before
+let value: String = conn.get("key")?;
+conn.set_ex("key", value, 3600)?;
 
-## 📄 License
+// After
+let value = cache.cache_manager().get("key").await?;
+cache.cache_manager()
+    .set_with_strategy("key", data, CacheStrategy::MediumTerm)
+    .await?;
+```
+
+## Feature Compatibility
+
+| Feature | Default Redis L2 | Custom L2 Backend |
+|---------|:-----------------:|:-----------------:|
+| Single-key invalidation | ✅ | ✅ |
+| Pattern invalidation | ✅ | ⚠️ not available |
+| Type-safe caching | ✅ | ✅ |
+| Stampede protection | ✅ | ✅ |
+| Streaming | ✅ | requires `StreamingBackend` |
+
+> **Note:** Pattern-based invalidation (`invalidate_pattern`) requires the concrete `RedisCache` L2 backend for `SCAN` support.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## License
 
 Licensed under either of:
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- [MIT License](LICENSE-MIT)
+- [Apache License 2.0](LICENSE-APACHE)
 
 at your option.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
-Built with:
-- [Moka](https://github.com/moka-rs/moka) - High-performance concurrent cache library
-- [Redis-rs](https://github.com/redis-rs/redis-rs) - Redis client for Rust
-- [DashMap](https://github.com/xacrimon/dashmap) - Blazingly fast concurrent map
-- [Tokio](https://tokio.rs) - Asynchronous runtime
-
-## 📞 Contact
-
-- GitHub Issues: [Report bugs or request features](https://github.com/thichuong/multi-tier-cache/issues)
+Built on top of [Moka](https://github.com/moka-rs/moka), [redis-rs](https://github.com/redis-rs/redis-rs), [DashMap](https://github.com/xacrimon/dashmap), and [Tokio](https://tokio.rs).
 
 ---
 
-**Made with ❤️ in Rust** | Production-proven in crypto trading dashboard serving 21,528+ RPS
+<sub>Made with ❤️ in Rust · Production-proven in crypto trading at 21,528+ RPS</sub>
