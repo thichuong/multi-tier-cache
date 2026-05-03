@@ -11,6 +11,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Metrics export (Prometheus format)
 
+## [0.6.5] - 2026-04-22
+
+### Changed
+
+- **README Rewrite**: Complete overhaul — reduced from ~1,280 lines to ~500 lines. Cleaner structure, version-agnostic headings, consolidated examples, and a new Feature Compatibility table.
+- **Benchmark Figures Updated**: Throughput 16,829 → 21,528+ RPS, added mean latency (23.2ms), corrected stampede figures.
+- **docs.rs `doc_cfg`**: Added `#[doc(cfg(…))]` annotations to all feature-gated items for better visibility on docs.rs. Configured `all-features = true` and single-target build in `[package.metadata.docs.rs]`.
+
+### Internal
+
+- Documentation and metadata only — no functional code changes. Fully backward compatible with 0.6.4.
+
+## [0.6.4] - 2026-03-15
+
+### Added
+- **Custom Error Types**: Introduced a comprehensive `CacheError` enum and `CacheResult` type for structured, strongly-typed error handling across the entire library.
+- **Feature-Gated Backends**: Enhanced modularity by feature-gating all cache backends. Users can now selectively enable `moka`, `redis`, `memcached`, and `quick_cache` to minimize dependency footprints.
+
+### Changed
+- **Builder Refactoring**: Optimized `CacheSystemBuilder` internal logic with dedicated initialization paths for default 2-tier, custom 2-tier, and multi-tier configurations, improving maintainability and code clarity.
+- Updated crate documentation to reflect the new error handling patterns and feature flag availability.
+
+## [0.6.3] - 2026-03-14
+
+### Added
+- **Probabilistic Promotion**: Introduced `promotion_frequency` (N) to control how often items are promoted from lower to higher tiers. Promotion occurs with a probability of 1/N. Default N=10 for all tiers except L1.
+- Added `with_promotion_frequency(n)` to `TierConfig` builder API for fine-grained control over tier promotion rates.
+
+### Changed
+- **Benchmark Optimization**: Refactored `benches/storm_requests.rs` to use `join_all`, correctly simulating concurrent "storm" request patterns instead of sequential access.
+- Added a dedicated L2-only benchmark scenario to measure pure backend performance without L1 promotion interference.
+
+## [0.6.2] - 2026-03-12
+
+**[Docs / Fixed]**
+- Completely overhauled `README.md` to accurately reflect the massive v0.6.1 API and architectural changes.
+- Updated all documentation code examples to demonstrate native AFIT (no `async-trait`), the usage of `bytes::Bytes` over `serde_json::Value`, and the new broadcast-based stampede protection.
+
+## [0.6.1] - 2026-03-12
+
+### Changed
+- Upgraded the crate to **Rust Edition 2024**, leveraging new lifetime capture rules and optimizations.
+- Migrated all asynchronous traits (`CacheBackend`, `L2CacheBackend`, `StreamingBackend`) to use Rust's native Async Functions in Traits (AFIT), completely removing the `async-trait` macro dependency.
+- Replaced `serde_json::Value` with `bytes::Bytes` in the core cache trait signatures to eliminate unnecessary intermediate AST allocations.
+- Unified the internal architecture in `CacheManager`: deprecated fragmented legacy fields (`l1_cache`, `l2_cache`) in favor of a single, scalable `tiers: Vec<CacheTier>` system for both 2-tier and multi-tier configurations.
+
+### Performance
+- **Cache Stampede Protection Re-engineered**: Replaced the sequential `Mutex`-based locking mechanism in `DashMap` with an asynchronous broadcast channel approach. This eliminates massive latency spikes for concurrent cache misses by waking up all waiting requests simultaneously once the data is computed.
+- **Zero-Cost L1 Hits**: Implemented direct byte-to-type deserialization (`serde_json::from_slice`) to drastically reduce memory overhead and CPU cycles during high-concurrency L2 fetch and compute phases.
+
+## [0.5.7] - 2026-01-24
+
+### Fixed
+
+- **L1 Pattern Invalidation**: Fixed a critical bug where `invalidate_pattern` (e.g., `user:*`) would only remove keys from L2 (Redis) but leave stale data in L1 (Moka). Now, matching keys are atomically removed from L1 memory as well.
+- **Documentation**: Fixed broken doc tests in `src/backends/mod.rs` and `src/cache_manager.rs` that were using outdated API calls.
+
+### Changed
+
+- **Dependencies Upgrade**:
+  - Upgraded `redis` from `0.32` to **`1.0.2`** for improved performance and async stability.
+  - Upgraded `tokio` from `1.28` to **`1.43`** (latest stable).
+
+## [0.5.6] - 2025-12-15
+
+### Added
+
+- **Configurable Moka Cache**: Introduced `MokaCacheConfig` to allow customizing L1 cache settings (capacity, TTL, idle time).
+- **Builder API**: Added `with_moka_config()` to `CacheSystemBuilder` for applying custom Moka configurations.
+
+### Changed
+
+- **Code Quality**: Resolved all `clippy` warnings including `doc_markdown`, `needless_pass_by_value`, and `clone_on_copy`.
+- **Documentation**: Added "Moka Cache (L1) Configuration" section to README.md with usage examples.
+
+
+## [0.5.5] - 2025-01-06
+
+### Changed
+
+- **Code Quality**: Enforced strict `cargo clippy` lints
+  - Enabled `pedantic`, `unwrap_used`, `expect_used`, and `indexing_slicing` as warnings
+  - Resolved all resulting warnings for a cleaner, safer codebase
+
 ## [0.5.4] - 2025-01-06
 
 ### Changed

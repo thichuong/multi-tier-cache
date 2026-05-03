@@ -1,17 +1,21 @@
 //! Benchmarks for cache stampede protection
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use multi_tier_cache::error::CacheError;
+use multi_tier_cache::{Bytes, CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
 fn setup_cache() -> (CacheSystem, Runtime) {
-    let rt = Runtime::new().unwrap();
+    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
     let cache = rt.block_on(async {
-        std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
-        CacheSystem::new().await.expect("Failed to create cache system")
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379") };
+        CacheSystem::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create cache system"))
     });
     (cache, rt)
 }
@@ -31,21 +35,24 @@ fn bench_stampede_protection(c: &mut Criterion) {
                     let cache = cache.clone();
                     let key = key.clone();
                     let handle = tokio::spawn(async move {
-                        cache.cache_manager()
+                        cache
+                            .cache_manager()
                             .get_or_compute_with(&key, CacheStrategy::ShortTerm, || async {
                                 tokio::time::sleep(Duration::from_millis(10)).await;
-                                Ok(json!({"computed": true}))
+                                serde_json::to_vec(&json!({"computed": true}))
+                                    .map(Bytes::from)
+                                    .map_err(|e| CacheError::InternalError(e.to_string()))
                             })
                             .await
-                            .unwrap()
+                            .unwrap_or_else(|_| panic!("Failed to compute"))
                     });
                     handles.push(handle);
                 }
 
                 for handle in handles {
-                    black_box(handle.await.unwrap());
+                    black_box(handle.await.unwrap_or_else(|_| panic!("Task failed")));
                 }
-            })
+            });
         });
     });
 }

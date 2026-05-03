@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use multi_tier_cache::CacheSystem;
 use tracing_subscriber::EnvFilter;
 
@@ -15,8 +16,14 @@ async fn main() -> anyhow::Result<()> {
 
     // Perform a simple operation
     let manager = cache.cache_manager();
-    manager.set_with_strategy("test_key", serde_json::json!("value"), multi_tier_cache::CacheStrategy::ShortTerm).await?;
-    
+    manager
+        .set_with_strategy(
+            "test_key",
+            Bytes::from("\"value\""),
+            multi_tier_cache::CacheStrategy::ShortTerm,
+        )
+        .await?;
+
     tracing::info!("Operation complete");
     Ok(())
 }

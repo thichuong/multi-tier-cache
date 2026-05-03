@@ -7,30 +7,37 @@
 //! - Cache hit vs miss latency
 //! - Different data sizes
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use multi_tier_cache::error::CacheError;
+use multi_tier_cache::{Bytes, CacheBackend, CacheStrategy, CacheSystem};
 use serde_json::json;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
 /// Setup cache system for benchmarks
 fn setup_cache() -> (CacheSystem, Runtime) {
-    let rt = Runtime::new().unwrap();
+    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
     let cache = rt.block_on(async {
-        std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379");
-        CacheSystem::new().await.expect("Failed to create cache system")
+        // TODO: Audit that the environment access only happens in single-threaded code.
+        unsafe { std::env::set_var("REDIS_URL", "redis://127.0.0.1:6379") };
+        CacheSystem::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create cache system"))
     });
     (cache, rt)
 }
 
 /// Generate test data of specified size
-fn test_data(size_bytes: usize) -> serde_json::Value {
+fn test_data(size_bytes: usize) -> Bytes {
     let data_string = "x".repeat(size_bytes);
-    json!({
+    let json = json!({
         "data": data_string,
         "size": size_bytes,
         "timestamp": "2025-01-01T00:00:00Z"
-    })
+    });
+    Bytes::from(
+        serde_json::to_vec(&json).unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")),
+    )
 }
 
 /// Benchmark L1 + L2 cache write operations
@@ -40,18 +47,19 @@ fn bench_cache_set(c: &mut Criterion) {
     let mut group = c.benchmark_group("cache_set");
     group.measurement_time(Duration::from_secs(10));
 
-    for size in [100, 1024, 10240, 102400].iter() {
+    for size in &[100, 1024, 10240, 102_400] {
         let data = test_data(*size);
 
         group.bench_with_input(BenchmarkId::new("short_term", size), size, |b, _| {
             b.iter(|| {
                 rt.block_on(async {
                     let key = format!("bench:set:{}", rand::random::<u32>());
-                    cache.cache_manager()
+                    cache
+                        .cache_manager()
                         .set_with_strategy(&key, black_box(data.clone()), CacheStrategy::ShortTerm)
                         .await
-                        .unwrap();
-                })
+                        .unwrap_or_else(|_| panic!("Failed to set cache"));
+                });
             });
         });
 
@@ -59,11 +67,12 @@ fn bench_cache_set(c: &mut Criterion) {
             b.iter(|| {
                 rt.block_on(async {
                     let key = format!("bench:set:{}", rand::random::<u32>());
-                    cache.cache_manager()
+                    cache
+                        .cache_manager()
                         .set_with_strategy(&key, black_box(data.clone()), CacheStrategy::LongTerm)
                         .await
-                        .unwrap();
-                })
+                        .unwrap_or_else(|_| panic!("Failed to set cache"));
+                });
             });
         });
     }
@@ -78,13 +87,18 @@ fn bench_l1_hit(c: &mut Criterion) {
     // Pre-populate cache
     rt.block_on(async {
         for i in 0..100 {
-            let key = format!("bench:l1:{}", i);
-            cache.cache_manager()
+            let key = format!("bench:l1:{i}");
+            cache
+                .cache_manager()
                 .set_with_strategy(&key, test_data(1024), CacheStrategy::ShortTerm)
                 .await
-                .unwrap();
+                .unwrap_or_else(|_| panic!("Failed to set cache"));
             // Warm up L1
-            let _ = cache.cache_manager().get(&key).await.unwrap();
+            let _ = cache
+                .cache_manager()
+                .get(&key)
+                .await
+                .unwrap_or_else(|_| panic!("Failed to get cache"));
         }
     });
 
@@ -92,8 +106,14 @@ fn bench_l1_hit(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let key = format!("bench:l1:{}", rand::random::<u8>() % 100);
-                black_box(cache.cache_manager().get(&key).await.unwrap());
-            })
+                black_box(
+                    cache
+                        .cache_manager()
+                        .get(&key)
+                        .await
+                        .unwrap_or_else(|_| panic!("Failed to get cache")),
+                );
+            });
         });
     });
 }
@@ -105,11 +125,12 @@ fn bench_l2_hit(c: &mut Criterion) {
     // Pre-populate L2 only
     rt.block_on(async {
         for i in 0..100 {
-            let key = format!("bench:l2:{}", i);
-            cache.l2_cache
-                .set_with_ttl(&key, test_data(1024), Duration::from_secs(300))
-                .await
-                .unwrap();
+            let key = format!("bench:l2:{i}");
+            if let Some(l2) = &cache.l2_cache {
+                l2.set_with_ttl(&key, test_data(1024), Duration::from_secs(300))
+                    .await
+                    .unwrap_or_else(|_| panic!("Failed to set cache"));
+            }
         }
     });
 
@@ -118,9 +139,19 @@ fn bench_l2_hit(c: &mut Criterion) {
             rt.block_on(async {
                 let key = format!("bench:l2:{}", rand::random::<u8>() % 100);
                 // Clear L1 to force L2 access
-                cache.l1_cache.remove(&key).await;
-                black_box(cache.cache_manager().get(&key).await.unwrap());
-            })
+                if let Some(l1) = &cache.l1_cache {
+                    l1.remove(&key)
+                        .await
+                        .unwrap_or_else(|_| panic!("Failed to remove from L1"));
+                }
+                black_box(
+                    cache
+                        .cache_manager()
+                        .get(&key)
+                        .await
+                        .unwrap_or_else(|_| panic!("Failed to get cache")),
+                );
+            });
         });
     });
 }
@@ -133,8 +164,14 @@ fn bench_cache_miss(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let key = format!("bench:miss:{}", rand::random::<u32>());
-                black_box(cache.cache_manager().get(&key).await.unwrap());
-            })
+                black_box(
+                    cache
+                        .cache_manager()
+                        .get(&key)
+                        .await
+                        .unwrap_or_else(|_| panic!("Failed to get cache")),
+                );
+            });
         });
     });
 }
@@ -146,7 +183,7 @@ fn bench_compute_on_miss(c: &mut Criterion) {
     let mut group = c.benchmark_group("compute_on_miss");
 
     // Simulate different computation latencies
-    for delay_ms in [1, 10, 50].iter() {
+    for delay_ms in &[1, 10, 50] {
         let delay = Duration::from_millis(*delay_ms);
 
         group.bench_with_input(BenchmarkId::from_parameter(delay_ms), delay_ms, |b, _| {
@@ -155,7 +192,8 @@ fn bench_compute_on_miss(c: &mut Criterion) {
                     let key = format!("bench:compute:{}", rand::random::<u32>());
                     let data = test_data(1024);
 
-                    cache.cache_manager()
+                    cache
+                        .cache_manager()
                         .get_or_compute_with(&key, CacheStrategy::ShortTerm, || {
                             let d = data.clone();
                             async move {
@@ -164,8 +202,8 @@ fn bench_compute_on_miss(c: &mut Criterion) {
                             }
                         })
                         .await
-                        .unwrap();
-                })
+                        .unwrap_or_else(|_| panic!("Failed to get/compute"));
+                });
             });
         });
     }
@@ -199,24 +237,30 @@ fn bench_typed_cache(c: &mut Criterion) {
                 };
 
                 // Set
-                cache.cache_manager()
+                cache
+                    .cache_manager()
                     .get_or_compute_typed(&key, CacheStrategy::ShortTerm, || {
                         let u = user.clone();
-                        async move { Ok(u) }
+                        async move { Ok::<User, CacheError>(u) }
                     })
                     .await
-                    .unwrap();
+                    .unwrap_or_else(|_| panic!("Failed to get/compute typed"));
 
                 // Get
                 black_box(
-                    cache.cache_manager()
-                        .get_or_compute_typed::<User, _, _>(&key, CacheStrategy::ShortTerm, || async {
-                            panic!("Should not compute");
-                        })
+                    cache
+                        .cache_manager()
+                        .get_or_compute_typed::<User, _, _>(
+                            &key,
+                            CacheStrategy::ShortTerm,
+                            || async {
+                                panic!("Should not compute");
+                            },
+                        )
                         .await
-                        .unwrap()
+                        .unwrap_or_else(|_| panic!("Failed to get/compute typed")),
                 );
-            })
+            });
         });
     });
 }
@@ -241,11 +285,12 @@ fn bench_cache_strategies(c: &mut Criterion) {
             b.iter(|| {
                 rt.block_on(async {
                     let key = format!("bench:strategy:{}", rand::random::<u32>());
-                    cache.cache_manager()
+                    cache
+                        .cache_manager()
                         .set_with_strategy(&key, black_box(data.clone()), strategy.clone())
                         .await
-                        .unwrap();
-                })
+                        .unwrap_or_else(|_| panic!("Failed to set cache"));
+                });
             });
         });
     }

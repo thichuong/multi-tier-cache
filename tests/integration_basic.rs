@@ -5,55 +5,72 @@
 mod common;
 
 use common::*;
-use multi_tier_cache::{CacheStrategy, CacheManagerStats, CacheBackend};
+use multi_tier_cache::{CacheBackend, CacheStrategy};
 use std::time::Duration;
 
 /// Test basic cache set and get operations
 #[tokio::test]
 async fn test_basic_set_and_get() {
-    let cache = setup_cache_system().await.expect("Failed to setup cache");
+    let cache = setup_cache_system()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("basic");
-    let value = test_data::json_user(1);
+    let value = test_data::bytes_user(1);
 
     // Set value
     cache
         .cache_manager()
         .set_with_strategy(&key, value.clone(), CacheStrategy::ShortTerm)
         .await
-        .expect("Failed to set value");
+        .unwrap_or_else(|_| panic!("Failed to set value"));
 
     // Get value
     let cached = cache
         .cache_manager()
         .get(&key)
         .await
-        .expect("Failed to get value");
+        .unwrap_or_else(|_| panic!("Failed to get value"));
 
     assert_eq!(cached, Some(value));
 
     // Cleanup
-    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    let _ = cache
+        .l2_cache
+        .as_ref()
+        .unwrap_or_else(|| panic!("L2 cache missing"))
+        .remove(&key)
+        .await;
 }
 
 /// Test L1 hit path
 #[tokio::test]
 async fn test_l1_cache_hit() {
-    let cache = setup_cache_system().await.unwrap();
+    let cache = setup_cache_system()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("l1_hit");
-    let value = test_data::json_user(2);
+    let value = test_data::bytes_user(2);
 
     // Set value (populates L1)
     cache
         .cache_manager()
         .set_with_strategy(&key, value.clone(), CacheStrategy::MediumTerm)
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // First get - should hit L1
-    let _ = cache.cache_manager().get(&key).await.unwrap();
+    let _ = cache
+        .cache_manager()
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
 
     // Second get - should also hit L1
-    let cached = cache.cache_manager().get(&key).await.unwrap();
+    let cached = cache
+        .cache_manager()
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(value));
 
     // Verify L1 hits
@@ -61,27 +78,38 @@ async fn test_l1_cache_hit() {
     assert!(stats.l1_hits >= 1, "Expected at least 1 L1 hit");
 
     // Cleanup
-    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    let _ = cache
+        .l2_cache
+        .as_ref()
+        .unwrap_or_else(|| panic!("L2 cache missing"))
+        .remove(&key)
+        .await;
 }
 
 /// Test L2-to-L1 promotion
 #[tokio::test]
 async fn test_l2_to_l1_promotion() {
-    let cache = setup_cache_system().await.unwrap();
+    let cache = setup_cache_with_n(1)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("l2_promote");
-    let value = test_data::json_user(3);
+    let value = test_data::bytes_user(3);
 
     // Set directly in L2 (bypass L1)
     cache
         .l2_cache
         .as_ref()
-        .unwrap()
+        .unwrap_or_else(|| panic!("L2 cache missing"))
         .set_with_ttl(&key, value.clone(), Duration::from_secs(300))
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to set L2"));
 
     // Get from cache manager - should promote to L1
-    let cached = cache.cache_manager().get(&key).await.unwrap();
+    let cached = cache
+        .cache_manager()
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(value.clone()));
 
     // Verify promotion occurred
@@ -89,21 +117,36 @@ async fn test_l2_to_l1_promotion() {
     assert!(stats.promotions >= 1, "Expected at least 1 promotion");
 
     // Next get should hit L1
-    let cached2 = cache.cache_manager().get(&key).await.unwrap();
+    let cached2 = cache
+        .cache_manager()
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached2, Some(value));
 
     // Cleanup
-    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    let _ = cache
+        .l2_cache
+        .as_ref()
+        .unwrap_or_else(|| panic!("L2 cache missing"))
+        .remove(&key)
+        .await;
 }
 
 /// Test cache miss behavior
 #[tokio::test]
 async fn test_cache_miss() {
-    let cache = setup_cache_system().await.unwrap();
+    let cache = setup_cache_system()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("miss");
 
     // Get non-existent key
-    let cached = cache.cache_manager().get(&key).await.unwrap();
+    let cached = cache
+        .cache_manager()
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, None);
 
     // Verify miss was counted
@@ -114,9 +157,11 @@ async fn test_cache_miss() {
 /// Test compute-on-miss pattern
 #[tokio::test]
 async fn test_compute_on_miss() {
-    let cache = setup_cache_system().await.unwrap();
+    let cache = setup_cache_system()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("compute");
-    let expected_value = test_data::json_user(4);
+    let expected_value = test_data::bytes_user(4);
 
     // Compute on miss
     let value = cache
@@ -126,22 +171,33 @@ async fn test_compute_on_miss() {
             async move { Ok(v) }
         })
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to get/compute"));
 
     assert_eq!(value, expected_value);
 
     // Verify it's now cached
-    let cached = cache.cache_manager().get(&key).await.unwrap();
+    let cached = cache
+        .cache_manager()
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(expected_value));
 
     // Cleanup
-    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    let _ = cache
+        .l2_cache
+        .as_ref()
+        .unwrap_or_else(|| panic!("L2 cache missing"))
+        .remove(&key)
+        .await;
 }
 
 /// Test type-safe caching
 #[tokio::test]
 async fn test_type_safe_caching() {
-    let cache = setup_cache_system().await.unwrap();
+    let cache = setup_cache_system()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("typed");
     let expected_user = test_data::User::new(5);
 
@@ -153,7 +209,7 @@ async fn test_type_safe_caching() {
             async move { Ok(u) }
         })
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to get/compute typed"));
 
     assert_eq!(user, expected_user);
 
@@ -164,49 +220,75 @@ async fn test_type_safe_caching() {
             panic!("Should not compute again");
         })
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to get/compute typed"));
 
     assert_eq!(user2, expected_user);
 
     // Cleanup
-    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    let _ = cache
+        .l2_cache
+        .as_ref()
+        .unwrap_or_else(|| panic!("L2 cache missing"))
+        .remove(&key)
+        .await;
 }
 
 /// Test TTL expiration
 #[tokio::test]
 async fn test_ttl_expiration() {
-    let cache = setup_cache_system().await.unwrap();
+    let cache = setup_cache_system()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("ttl");
-    let value = test_data::json_user(6);
+    let value = test_data::bytes_user(6);
 
     // Set with very short TTL
     cache
         .cache_manager()
-        .set_with_strategy(&key, value.clone(), CacheStrategy::Custom(Duration::from_millis(100)))
+        .set_with_strategy(
+            &key,
+            value.clone(),
+            CacheStrategy::Custom(Duration::from_millis(100)),
+        )
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to set cache"));
 
     // Immediate get should work
-    let cached = cache.cache_manager().get(&key).await.unwrap();
+    let cached = cache
+        .cache_manager()
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached, Some(value.clone()));
 
     // Wait for expiration
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Should be expired now
-    let cached2 = cache.cache_manager().get(&key).await.unwrap();
+    let cached2 = cache
+        .cache_manager()
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
     assert_eq!(cached2, None);
 
     // Cleanup
-    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    let _ = cache
+        .l2_cache
+        .as_ref()
+        .unwrap_or_else(|| panic!("L2 cache missing"))
+        .remove(&key)
+        .await;
 }
 
 /// Test cache statistics tracking
 #[tokio::test]
 async fn test_statistics_tracking() {
-    let cache = setup_cache_system().await.unwrap();
+    let cache = setup_cache_system()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
     let key = test_key("stats");
-    let value = test_data::json_user(7);
+    let value = test_data::bytes_user(7);
 
     // Initial stats
     let stats_before = cache.cache_manager().get_stats();
@@ -216,25 +298,42 @@ async fn test_statistics_tracking() {
         .cache_manager()
         .set_with_strategy(&key, value, CacheStrategy::ShortTerm)
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("Failed to set cache"));
 
-    let _ = cache.cache_manager().get(&key).await.unwrap(); // L1 hit
-    let _ = cache.cache_manager().get(&test_key("nonexistent")).await.unwrap(); // Miss
+    let _ = cache
+        .cache_manager()
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache")); // L1 hit
+    let _ = cache
+        .cache_manager()
+        .get(&test_key("nonexistent"))
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache")); // Miss
 
     // Check stats increased
     let stats_after = cache.cache_manager().get_stats();
     assert!(stats_after.total_requests > stats_before.total_requests);
-    assert!(stats_after.l1_hits > stats_before.l1_hits || stats_after.l2_hits > stats_before.l2_hits);
+    assert!(
+        stats_after.l1_hits > stats_before.l1_hits || stats_after.l2_hits > stats_before.l2_hits
+    );
     assert!(stats_after.misses > stats_before.misses);
 
     // Cleanup
-    let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+    let _ = cache
+        .l2_cache
+        .as_ref()
+        .unwrap_or_else(|| panic!("L2 cache missing"))
+        .remove(&key)
+        .await;
 }
 
 /// Test health check functionality
 #[tokio::test]
 async fn test_health_check() {
-    let cache = setup_cache_system().await.unwrap();
+    let cache = setup_cache_system()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
 
     let healthy = cache.health_check().await;
     assert!(healthy, "Cache system should be healthy");
@@ -243,7 +342,9 @@ async fn test_health_check() {
 /// Test different cache strategies
 #[tokio::test]
 async fn test_cache_strategies() {
-    let cache = setup_cache_system().await.unwrap();
+    let cache = setup_cache_system()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
 
     let strategies = vec![
         ("realtime", CacheStrategy::RealTime),
@@ -255,23 +356,28 @@ async fn test_cache_strategies() {
 
     for (name, strategy) in strategies {
         let key = test_key(name);
-        let value = test_data::json_user(8);
+        let value = test_data::bytes_user(8);
 
         cache
             .cache_manager()
             .set_with_strategy(&key, value.clone(), strategy)
             .await
-            .expect(&format!("Failed to set with {} strategy", name));
+            .unwrap_or_else(|_| panic!("Failed to set with {name} strategy"));
 
         let cached = cache
             .cache_manager()
             .get(&key)
             .await
-            .expect(&format!("Failed to get with {} strategy", name));
+            .unwrap_or_else(|_| panic!("Failed to get with {name} strategy"));
 
         assert_eq!(cached, Some(value));
 
         // Cleanup
-        let _ = cache.l2_cache.as_ref().unwrap().remove(&key).await;
+        let _ = cache
+            .l2_cache
+            .as_ref()
+            .unwrap_or_else(|| panic!("L2 cache missing"))
+            .remove(&key)
+            .await;
     }
 }

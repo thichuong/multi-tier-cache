@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Common utilities for integration tests
 //!
 //! This module provides shared test infrastructure including:
@@ -6,9 +7,25 @@
 //! - Cleanup utilities
 //! - Test environment setup
 
-use multi_tier_cache::{CacheSystem, CacheManager, L1Cache, L2Cache, InvalidationConfig};
-use std::sync::Arc;
 use anyhow::Result;
+use multi_tier_cache::backends::MokaCacheConfig;
+use multi_tier_cache::{
+    CacheManager, CacheSystem, CacheSystemBuilder, InvalidationConfig, L1Cache, L2Cache,
+    L2CacheBackend, TierConfig,
+};
+use std::sync::Arc;
+use std::sync::Once;
+
+static INIT: Once = Once::new();
+
+/// Initialize tracing for tests
+pub fn init_test_tracing() {
+    INIT.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .init();
+    });
+}
 
 /// Get Redis URL from environment or use default
 pub fn redis_url() -> String {
@@ -17,12 +34,12 @@ pub fn redis_url() -> String {
 
 /// Generate a unique test key prefix to avoid conflicts between tests
 pub fn test_key_prefix() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or(Duration::from_secs(0))
         .as_millis();
-    format!("test:{}:", timestamp)
+    format!("test:{timestamp}:")
 }
 
 /// Create a test key with unique prefix
@@ -32,33 +49,58 @@ pub fn test_key(name: &str) -> String {
 
 /// Initialize a basic cache system for testing
 pub async fn setup_cache_system() -> Result<CacheSystem> {
-    std::env::set_var("REDIS_URL", redis_url());
-    CacheSystem::new().await
+    // TODO: Audit that the environment access only happens in single-threaded code.
+    unsafe { std::env::set_var("REDIS_URL", redis_url()) };
+    CacheSystem::new()
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
+/// Initialize cache system with custom promotion frequency N for testing
+pub async fn setup_cache_with_n(n: usize) -> Result<CacheSystem> {
+    let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
+    let l2 = Arc::new(L2Cache::new().await?);
+
+    let cache = CacheSystemBuilder::new()
+        .with_tier(
+            Arc::clone(&l1) as Arc<dyn L2CacheBackend>,
+            TierConfig::as_l1(),
+        )
+        .with_tier(
+            Arc::clone(&l2) as Arc<dyn L2CacheBackend>,
+            TierConfig::as_l2().with_promotion_frequency(n),
+        )
+        .build()
+        .await?;
+
+    // Manually set the Option fields for backward compatibility in tests
+    let mut cache = cache;
+    cache.l1_cache = Some(l1);
+    cache.l2_cache = Some(l2);
+
+    Ok(cache)
 }
 
 /// Initialize cache manager with invalidation for testing
 pub async fn setup_cache_with_invalidation() -> Result<Arc<CacheManager>> {
-    let l1 = Arc::new(L1Cache::new().await?);
+    let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
     let l2 = Arc::new(L2Cache::new().await?);
     let config = InvalidationConfig::default();
 
-    let manager = CacheManager::new_with_invalidation(
-        l1,
-        l2,
-        &redis_url(),
-        config
-    ).await?;
+    let manager = CacheManager::new_with_invalidation(l1, l2, &redis_url(), config)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     Ok(Arc::new(manager))
 }
 
 /// Cleanup test keys from Redis
 pub async fn cleanup_test_keys(prefix: &str) -> Result<()> {
-    let cache = setup_cache_system().await?;
+    let _cache = setup_cache_system().await?;
     let l2 = Arc::new(L2Cache::new().await?);
 
     // Find all test keys
-    let pattern = format!("{}*", prefix);
+    let pattern = format!("{prefix}*");
     let keys = l2.scan_keys(&pattern).await?;
 
     // Remove them
@@ -69,9 +111,8 @@ pub async fn cleanup_test_keys(prefix: &str) -> Result<()> {
     Ok(())
 }
 
-/// Generate test data of various types
 pub mod test_data {
-    use serde::{Serialize, Deserialize};
+    use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     pub struct User {
@@ -84,8 +125,8 @@ pub mod test_data {
         pub fn new(id: u64) -> Self {
             Self {
                 id,
-                name: format!("User {}", id),
-                email: format!("user{}@example.com", id),
+                name: format!("User {id}"),
+                email: format!("user{id}@example.com"),
             }
         }
     }
@@ -102,7 +143,8 @@ pub mod test_data {
         pub fn new(id: u64) -> Self {
             Self {
                 id,
-                name: format!("Product {}", id),
+                name: format!("Product {id}"),
+                #[allow(clippy::cast_precision_loss)]
                 price: 99.99 + (id as f64),
                 category: format!("Category {}", id % 5),
             }
@@ -119,6 +161,11 @@ pub mod test_data {
         })
     }
 
+    /// Generate Bytes test data (JSON)
+    pub fn bytes_user(id: u64) -> bytes::Bytes {
+        bytes::Bytes::from(json_user(id).to_string())
+    }
+
     /// Generate JSON test data with specified size
     pub fn json_data_sized(size_kb: usize) -> serde_json::Value {
         let data_string = "x".repeat(size_kb * 1024);
@@ -127,6 +174,11 @@ pub mod test_data {
             "size_kb": size_kb
         })
     }
+
+    /// Generate Bytes test data with specified size
+    pub fn bytes_data_sized(size_kb: usize) -> bytes::Bytes {
+        bytes::Bytes::from(json_data_sized(size_kb).to_string())
+    }
 }
 
 /// Wait for a condition with timeout
@@ -134,7 +186,7 @@ pub async fn wait_for<F>(mut condition: F, timeout_ms: u64) -> bool
 where
     F: FnMut() -> bool,
 {
-    use tokio::time::{sleep, Duration};
+    use tokio::time::{Duration, sleep};
 
     let start = std::time::Instant::now();
     let timeout = Duration::from_millis(timeout_ms);
@@ -152,7 +204,7 @@ where
 /// Assert that cache stats meet expectations
 #[macro_export]
 macro_rules! assert_cache_stats {
-    ($cache:expr, $field:ident > $value:expr) => {
+    ($cache:expr_2021, $field:ident > $value:expr_2021) => {
         let stats = $cache.cache_manager().get_stats();
         assert!(
             stats.$field > $value,
@@ -162,7 +214,7 @@ macro_rules! assert_cache_stats {
             stats.$field
         );
     };
-    ($cache:expr, $field:ident == $value:expr) => {
+    ($cache:expr_2021, $field:ident == $value:expr_2021) => {
         let stats = $cache.cache_manager().get_stats();
         assert_eq!(
             stats.$field,
