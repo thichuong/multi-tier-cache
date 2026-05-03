@@ -1,4 +1,9 @@
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::cast_precision_loss, clippy::cast_lossless)]
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::cast_precision_loss,
+    clippy::cast_lossless
+)]
 use bytes::Bytes;
 use criterion::{Criterion, criterion_group, criterion_main};
 use futures_util::future::join_all;

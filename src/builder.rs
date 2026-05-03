@@ -411,7 +411,8 @@ impl CacheSystemBuilder {
             let l2_cache: Arc<crate::L2Cache> = Arc::new(crate::L2Cache::new().await?);
 
             // Use legacy constructor that handles conversion to trait objects
-            let cache_manager = Arc::new(CacheManager::new(l1_cache.clone(), l2_cache.clone()).await?);
+            let cache_manager =
+                Arc::new(CacheManager::new(l1_cache.clone(), l2_cache.clone()).await?);
 
             info!("Multi-Tier Cache System built successfully");
 

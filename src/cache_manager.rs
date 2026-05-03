@@ -1251,9 +1251,7 @@ impl CacheManager {
         count: usize,
     ) -> CacheResult<Vec<(String, Vec<(String, String)>)>> {
         match &self.streaming_backend {
-            Some(backend) => backend
-                .stream_read_latest(stream_key, count)
-                .await,
+            Some(backend) => backend.stream_read_latest(stream_key, count).await,
             None => Err(crate::error::CacheError::ConfigError(
                 "Streaming backend not configured".to_string(),
             )),
@@ -1484,7 +1482,8 @@ impl CacheManager {
         value: Bytes,
         strategy: CacheStrategy,
     ) -> CacheResult<()> {
-        #[cfg(feature = "redis")] let ttl = strategy.to_duration();
+        #[cfg(feature = "redis")]
+        let ttl = strategy.to_duration();
 
         // Set in local caches
         self.set_with_strategy(key, value.clone(), strategy).await?;
