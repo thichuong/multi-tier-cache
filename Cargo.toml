@@ -12,6 +12,18 @@ categories = ["caching", "asynchronous", "database"]
 readme = "README.md"
 
 [dependencies]
+# Caching
+moka = { version = "0.12", features = ["future"] }
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager"] }
+memcache = { version = "0.19", optional = true }
+quick_cache = { version = "0.6", optional = true }
+parking_lot = { version = "0.12", optional = true }
+
+# Async runtime
+tokio = { version = "1.28", features = ["sync", "macros", "time"] }
+futures-util = "0.3"
+
+# Serialization
 tokio = { version = "1.36", features = ["full"] }
 redis = { version = "1.0", features = ["tokio-comp", "streams", "connection-manager"], optional = true }
 moka = { version = "0.12", features = ["future"], optional = true }
