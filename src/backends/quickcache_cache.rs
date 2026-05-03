@@ -1,25 +1,26 @@
-//! QuickCache - Fast In-Memory Cache Backend
+//! `QuickCache` - Fast In-Memory Cache Backend
 //!
 //! Lightweight and extremely fast in-memory cache optimized for maximum performance.
 
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use anyhow::Result;
-use serde_json;
-use quick_cache::sync::Cache;
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::error::CacheResult;
+use bytes::Bytes;
+use futures_util::future::BoxFuture;
 use parking_lot::RwLock;
-use tracing::{info, debug};
+use quick_cache::sync::Cache;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use tracing::{debug, info};
 
 /// Cache entry with TTL information
 #[derive(Debug, Clone)]
 struct CacheEntry {
-    value: serde_json::Value,
+    value: Bytes,
     expires_at: Instant,
 }
 
 impl CacheEntry {
-    fn new(value: serde_json::Value, ttl: Duration) -> Self {
+    fn new(value: Bytes, ttl: Duration) -> Self {
         Self {
             value,
             expires_at: Instant::now() + ttl,
@@ -31,7 +32,7 @@ impl CacheEntry {
     }
 }
 
-/// QuickCache in-memory cache with per-key TTL support
+/// `QuickCache` in-memory cache with per-key TTL support
 ///
 /// This is an alternative L1 (hot tier) cache backend optimized for maximum performance:
 /// - Extremely fast in-memory access (sub-microsecond latency)
@@ -40,11 +41,11 @@ impl CacheEntry {
 /// - Minimal memory overhead
 /// - Lock-free design for concurrent access
 ///
-/// **When to use QuickCache vs Moka**:
-/// - Use QuickCache when you need maximum throughput and minimal latency
+/// **When to use `QuickCache` vs Moka**:
+/// - Use `QuickCache` when you need maximum throughput and minimal latency
 /// - Use Moka when you need advanced features like time-to-idle or weight-based eviction
 pub struct QuickCacheBackend {
-    /// QuickCache instance
+    /// `QuickCache` instance
     cache: Cache<String, Arc<RwLock<CacheEntry>>>,
     /// Hit counter
     hits: Arc<AtomicU64>,
@@ -55,29 +56,19 @@ pub struct QuickCacheBackend {
 }
 
 impl QuickCacheBackend {
-    /// Create new QuickCache
+    /// Create new `QuickCache`
     ///
     /// # Arguments
     ///
     /// * `max_capacity` - Maximum number of entries (default: 2000)
     ///
-    /// # Example
+    /// # Errors
     ///
-    /// ```no_run
-    /// # use multi_tier_cache::backends::QuickCacheBackend;
-    /// # async fn example() -> anyhow::Result<()> {
-    /// // Default capacity (2000 entries)
-    /// let cache = QuickCacheBackend::new(2000).await?;
-    ///
-    /// // Custom capacity
-    /// let cache = QuickCacheBackend::new(10000).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn new(max_capacity: u64) -> Result<Self> {
+    /// Returns an error if the capacity is invalid.
+    pub fn new(max_capacity: u64) -> CacheResult<Self> {
         info!(capacity = max_capacity, "Initializing QuickCache");
 
-        let cache = Cache::new(max_capacity as usize);
+        let cache = Cache::new(usize::try_from(max_capacity)?);
 
         Ok(Self {
             cache,
@@ -88,9 +79,8 @@ impl QuickCacheBackend {
     }
 
     /// Get current cache size
-    pub fn size(&self) -> usize {
-        // QuickCache doesn't expose size directly, so we estimate with stats
-        // In practice, this would need to be tracked separately
+    #[must_use]
+    pub const fn size(&self) -> usize {
         0 // Placeholder - quick_cache doesn't expose size
     }
 }
@@ -98,17 +88,13 @@ impl QuickCacheBackend {
 // ===== Trait Implementations =====
 
 use crate::traits::CacheBackend;
-use async_trait::async_trait;
 
-/// Implement CacheBackend trait for QuickCacheBackend
-///
-/// This allows QuickCacheBackend to be used as a pluggable backend in the multi-tier cache system.
-#[async_trait]
+/// Implement `CacheBackend` trait for `QuickCacheBackend`
 impl CacheBackend for QuickCacheBackend {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        match self.cache.get(key) {
-            Some(entry_lock) => {
-                let entry = entry_lock.read();
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        Box::pin(async move {
+            if let Some(entry_lock) = self.cache.get(key) {
+                let entry: parking_lot::RwLockReadGuard<'_, CacheEntry> = entry_lock.read();
                 if entry.is_expired() {
                     // Remove expired entry
                     drop(entry); // Release read lock before removing
@@ -119,51 +105,57 @@ impl CacheBackend for QuickCacheBackend {
                     self.hits.fetch_add(1, Ordering::Relaxed);
                     Some(entry.value.clone())
                 }
-            }
-            None => {
+            } else {
                 self.misses.fetch_add(1, Ordering::Relaxed);
                 None
             }
-        }
+        })
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
         ttl: Duration,
-    ) -> Result<()> {
-        let entry = Arc::new(RwLock::new(CacheEntry::new(value, ttl)));
-        self.cache.insert(key.to_string(), entry);
-        self.sets.fetch_add(1, Ordering::Relaxed);
-        debug!(key = %key, ttl_secs = %ttl.as_secs(), "[QuickCache] Cached key with TTL");
-        Ok(())
+    ) -> BoxFuture<'a, CacheResult<()>> {
+        Box::pin(async move {
+            let entry = Arc::new(RwLock::new(CacheEntry::new(value, ttl)));
+            self.cache.insert(key.to_string(), entry);
+            self.sets.fetch_add(1, Ordering::Relaxed);
+            debug!(key = %key, ttl_secs = %ttl.as_secs(), "[QuickCache] Cached key with TTL");
+            Ok(())
+        })
     }
 
-    async fn remove(&self, key: &str) -> Result<()> {
-        self.cache.remove(key);
-        Ok(())
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
+        Box::pin(async move {
+            self.cache.remove(key);
+            Ok(())
+        })
     }
 
-    async fn health_check(&self) -> bool {
-        let test_key = "health_check_quickcache";
-        let test_value = serde_json::json!({"test": true});
+    fn health_check(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            let test_key = "health_check_quickcache";
+            let test_value = Bytes::from_static(b"health_check");
 
-        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60)).await {
-            Ok(_) => {
-                match self.get(test_key).await {
+            match self
+                .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
+                .await
+            {
+                Ok(()) => match self.get(test_key).await {
                     Some(retrieved) => {
                         let _ = self.remove(test_key).await;
                         retrieved == test_value
                     }
-                    None => false
-                }
+                    None => false,
+                },
+                Err(_) => false,
             }
-            Err(_) => false
-        }
+        })
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "QuickCache"
     }
 }

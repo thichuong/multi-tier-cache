@@ -2,10 +2,10 @@
 //!
 //! Demonstrates publishing and consuming data via Redis Streams.
 //!
-//! Run with: cargo run --example redis_streams
+//! Run with: cargo run --example `redis_streams`
 
 use multi_tier_cache::CacheSystem;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -21,22 +21,23 @@ async fn main() -> anyhow::Result<()> {
     for i in 1..=5 {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or(Duration::from_secs(0))
             .as_secs();
 
         let fields = vec![
             ("event_id".to_string(), i.to_string()),
             ("event_type".to_string(), "user_action".to_string()),
-            ("user_id".to_string(), format!("user_{}", i)),
+            ("user_id".to_string(), format!("user_{i}")),
             ("timestamp".to_string(), timestamp.to_string()),
             ("action".to_string(), "login".to_string()),
         ];
 
-        let entry_id = cache.cache_manager()
+        let entry_id = cache
+            .cache_manager()
             .publish_to_stream("events_stream", fields, Some(1000))
             .await?;
 
-        println!("  ✅ Published event {} with ID: {}", i, entry_id);
+        println!("  ✅ Published event {i} with ID: {entry_id}");
     }
 
     println!();
@@ -44,14 +45,15 @@ async fn main() -> anyhow::Result<()> {
     // 2. Read latest entries from stream
     println!("Reading latest 3 entries from stream...\n");
 
-    let entries = cache.cache_manager()
+    let entries = cache
+        .cache_manager()
         .read_stream_latest("events_stream", 3)
         .await?;
 
     for (entry_id, fields) in &entries {
-        println!("  Entry ID: {}", entry_id);
+        println!("  Entry ID: {entry_id}");
         for (field, value) in fields {
-            println!("    {}: {}", field, value);
+            println!("    {field}: {value}");
         }
         println!();
     }
@@ -59,7 +61,8 @@ async fn main() -> anyhow::Result<()> {
     // 3. Read stream from beginning (XREAD)
     println!("Reading all entries from stream (from beginning)...\n");
 
-    let all_entries = cache.cache_manager()
+    let all_entries = cache
+        .cache_manager()
         .read_stream("events_stream", "0", 10, None)
         .await?;
 
@@ -71,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
     for i in 6..=10 {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or(Duration::from_secs(0))
             .as_secs();
 
         let fields = vec![
@@ -82,16 +85,18 @@ async fn main() -> anyhow::Result<()> {
             ("status_code".to_string(), "200".to_string()),
         ];
 
-        cache.cache_manager()
+        cache
+            .cache_manager()
             .publish_to_stream("events_stream", fields, Some(1000))
             .await?;
 
-        println!("  📤 Published real-time event {}", i);
+        println!("  📤 Published real-time event {i}");
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 
     println!("\n=== Stream Summary ===");
-    let final_entries = cache.cache_manager()
+    let final_entries = cache
+        .cache_manager()
         .read_stream_latest("events_stream", 1000)
         .await?;
     println!("Total events in stream: {}", final_entries.len());

@@ -1,26 +1,17 @@
-//! Redis Cache - Distributed Cache Backend
-//!
-//! Redis-based distributed cache for warm data storage with persistence.
-
-use std::sync::Arc;
-use std::time::Duration;
-use anyhow::{Context, Result};
-use redis::{Client, AsyncCommands};
+use crate::error::CacheResult;
+use crate::traits::{CacheBackend, L2CacheBackend};
+use bytes::Bytes;
+use futures_util::future::BoxFuture;
 use redis::aio::ConnectionManager;
-use serde_json;
+use redis::{AsyncCommands, Client};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use tracing::{info, debug};
+use std::time::Duration;
+use tracing::{debug, info};
 
-/// Redis distributed cache with ConnectionManager for automatic reconnection
-///
-/// This is the default L2 (warm tier) cache backend, providing:
-/// - Distributed caching across multiple instances
-/// - Persistence to disk
-/// - Automatic reconnection via ConnectionManager
-/// - TTL introspection for cache promotion
-/// - Pattern-based key scanning
+/// Redis distributed cache with `ConnectionManager` for automatic reconnection
 pub struct RedisCache {
-    /// Redis connection manager - handles reconnection automatically
+    /// Redis connection manager
     conn_manager: ConnectionManager,
     /// Hit counter
     hits: Arc<AtomicU64>,
@@ -31,36 +22,46 @@ pub struct RedisCache {
 }
 
 impl RedisCache {
-    /// Create new Redis cache with ConnectionManager for automatic reconnection
-    pub async fn new() -> Result<Self> {
-        let redis_url = std::env::var("REDIS_URL")
-            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+    /// Create new Redis cache
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the Redis URL is invalid or connection fails.
+    pub async fn new() -> CacheResult<Self> {
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         Self::with_url(&redis_url).await
     }
 
     /// Create new Redis cache with custom URL
     ///
-    /// # Arguments
+    /// # Errors
     ///
-    /// * `redis_url` - Redis connection string (e.g., "redis://localhost:6379")
-    pub async fn with_url(redis_url: &str) -> Result<Self> {
+    /// Returns an error if the Redis URL is invalid or connection fails.
+    pub async fn with_url(redis_url: &str) -> CacheResult<Self> {
         info!(redis_url = %redis_url, "Initializing Redis Cache with ConnectionManager");
 
-        let client = Client::open(redis_url)
-            .with_context(|| format!("Failed to create Redis client with URL: {}", redis_url))?;
+        let client = Client::open(redis_url).map_err(|e| {
+            crate::error::CacheError::ConfigError(format!("Failed to create Redis client: {e}"))
+        })?;
 
-        // Create ConnectionManager - handles reconnection automatically
-        let conn_manager = ConnectionManager::new(client).await
-            .context("Failed to establish Redis connection manager")?;
+        let conn_manager = ConnectionManager::new(client).await.map_err(|e| {
+            crate::error::CacheError::BackendError(format!(
+                "Failed to establish Redis connection manager: {e}"
+            ))
+        })?;
 
-        // Test connection
         let mut conn = conn_manager.clone();
         let _: String = redis::cmd("PING")
             .query_async(&mut conn)
             .await
-            .context("Redis PING health check failed")?;
+            .map_err(|e| {
+                crate::error::CacheError::BackendError(format!(
+                    "Redis PING health check failed: {e}"
+                ))
+            })?;
 
-        info!(redis_url = %redis_url, "Redis Cache connected successfully (ConnectionManager enabled)");
+        info!(redis_url = %redis_url, "Redis Cache connected successfully");
 
         Ok(Self {
             conn_manager,
@@ -70,51 +71,29 @@ impl RedisCache {
         })
     }
 
-
-    /// Scan keys matching a pattern (glob-style: *, ?, [])
+    /// Scan keys matching a pattern
     ///
-    /// Uses Redis SCAN command (non-blocking, cursor-based iteration)
-    /// This is safe for production use, unlike KEYS command.
+    /// # Errors
     ///
-    /// # Arguments
-    /// * `pattern` - Glob-style pattern (e.g., "user:*", "product:123:*")
-    ///
-    /// # Returns
-    /// Vector of matching key names
-    ///
-    /// # Examples
-    /// ```no_run
-    /// # use multi_tier_cache::backends::RedisCache;
-    /// # async fn example() -> anyhow::Result<()> {
-    /// # let cache = RedisCache::new().await?;
-    /// // Find all user cache keys
-    /// let keys = cache.scan_keys("user:*").await?;
-    ///
-    /// // Find specific user's cache keys
-    /// let keys = cache.scan_keys("user:123:*").await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
+    /// Returns an error if the SCAN command fails.
+    pub async fn scan_keys(&self, pattern: &str) -> CacheResult<Vec<String>> {
         let mut conn = self.conn_manager.clone();
         let mut keys = Vec::new();
         let mut cursor: u64 = 0;
 
         loop {
-            // SCAN cursor MATCH pattern COUNT 100
             let result: (u64, Vec<String>) = redis::cmd("SCAN")
                 .arg(cursor)
                 .arg("MATCH")
                 .arg(pattern)
                 .arg("COUNT")
-                .arg(100) // Fetch 100 keys per iteration
+                .arg(100)
                 .query_async(&mut conn)
                 .await?;
 
             cursor = result.0;
             keys.extend(result.1);
 
-            // Cursor 0 means iteration is complete
             if cursor == 0 {
                 break;
             }
@@ -124,10 +103,12 @@ impl RedisCache {
         Ok(keys)
     }
 
-    /// Remove multiple keys at once (bulk delete)
+    /// Remove multiple keys at once
     ///
-    /// More efficient than calling remove() multiple times
-    pub async fn remove_bulk(&self, keys: &[String]) -> Result<usize> {
+    /// # Errors
+    ///
+    /// Returns an error if the DEL command fails.
+    pub async fn remove_bulk(&self, keys: &[String]) -> CacheResult<usize> {
         if keys.is_empty() {
             return Ok(0);
         }
@@ -137,134 +118,110 @@ impl RedisCache {
         debug!(count = count, "[Redis] Removed keys in bulk");
         Ok(count)
     }
-
 }
 
 // ===== Trait Implementations =====
 
-use crate::traits::{CacheBackend, L2CacheBackend};
-use async_trait::async_trait;
-
-/// Implement CacheBackend trait for RedisCache
-///
-/// This allows RedisCache to be used as a pluggable backend in the multi-tier cache system.
-#[async_trait]
+/// Implement `CacheBackend` trait for `RedisCache`
 impl CacheBackend for RedisCache {
-    async fn get(&self, key: &str) -> Option<serde_json::Value> {
-        let mut conn = self.conn_manager.clone();
-
-        match conn.get::<_, String>(key).await {
-            Ok(json_str) => {
-                match serde_json::from_str(&json_str) {
-                    Ok(value) => {
-                        self.hits.fetch_add(1, Ordering::Relaxed);
-                        Some(value)
-                    }
-                    Err(_) => {
-                        self.misses.fetch_add(1, Ordering::Relaxed);
-                        None
-                    }
+    fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        Box::pin(async move {
+            let mut conn = self.conn_manager.clone();
+            let result: redis::RedisResult<Vec<u8>> = conn.get(key).await;
+            match result {
+                Ok(bytes) if !bytes.is_empty() => {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    Some(Bytes::from(bytes))
+                }
+                _ => {
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
                 }
             }
-            Err(_) => {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
-            }
-        }
+        })
     }
 
-    async fn set_with_ttl(
-        &self,
-        key: &str,
-        value: serde_json::Value,
+    fn set_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+        value: Bytes,
         ttl: Duration,
-    ) -> Result<()> {
-        let json_str = serde_json::to_string(&value)?;
-        let mut conn = self.conn_manager.clone();
-
-        let _: () = conn.set_ex(key, json_str, ttl.as_secs()).await?;
-        self.sets.fetch_add(1, Ordering::Relaxed);
-        debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Redis] Cached key with TTL");
-        Ok(())
-    }
-
-    async fn remove(&self, key: &str) -> Result<()> {
-        let mut conn = self.conn_manager.clone();
-        let _: () = conn.del(key).await?;
-        Ok(())
-    }
-
-    async fn health_check(&self) -> bool {
-        let test_key = "health_check_redis";
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or(Duration::from_secs(0))
-            .as_secs();
-        let test_value = serde_json::json!({"test": true, "timestamp": timestamp});
-
-        match self.set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10)).await {
-            Ok(_) => {
-                match self.get(test_key).await {
-                    Some(retrieved) => {
-                        let _ = self.remove(test_key).await;
-                        retrieved["test"].as_bool().unwrap_or(false)
-                    }
-                    None => false
-                }
+    ) -> BoxFuture<'a, CacheResult<()>> {
+        Box::pin(async move {
+            let mut conn = self.conn_manager.clone();
+            let ttl_ms = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX);
+            let result = conn.pset_ex(key, value.to_vec(), ttl_ms).await;
+            if result.is_ok() {
+                self.sets.fetch_add(1, Ordering::Relaxed);
+                debug!(key = %key, ttl_ms = %ttl.as_millis(), "[Redis] Cached key bytes with TTL");
             }
-            Err(_) => false
-        }
+            result.map_err(|e| {
+                crate::error::CacheError::BackendError(format!("Redis set failed: {e}"))
+            })
+        })
     }
 
-    fn name(&self) -> &str {
+    fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
+        Box::pin(async move {
+            let mut conn = self.conn_manager.clone();
+            let _: usize = conn.del(key).await?;
+            Ok(())
+        })
+    }
+
+    fn health_check(&self) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            let mut conn = self.conn_manager.clone();
+            let result: redis::RedisResult<String> =
+                redis::cmd("PING").query_async(&mut conn).await;
+            result.is_ok()
+        })
+    }
+
+    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, CacheResult<()>> {
+        Box::pin(async move {
+            let keys = self.scan_keys(pattern).await?;
+            if !keys.is_empty() {
+                self.remove_bulk(&keys).await?;
+            }
+            Ok(())
+        })
+    }
+
+    fn name(&self) -> &'static str {
         "Redis"
     }
 }
 
-/// Implement L2CacheBackend trait for RedisCache
-///
-/// This extends CacheBackend with TTL introspection capabilities needed for L2->L1 promotion.
-#[async_trait]
 impl L2CacheBackend for RedisCache {
-    async fn get_with_ttl(
-        &self,
-        key: &str,
-    ) -> Option<(serde_json::Value, Option<Duration>)> {
-        let mut conn = self.conn_manager.clone();
+    fn get_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+        Box::pin(async move {
+            let mut conn = self.conn_manager.clone();
+            // Pipelining is better:
+            let (bytes, ttl_secs): (Option<Vec<u8>>, i64) =
+                match redis::pipe().get(key).ttl(key).query_async(&mut conn).await {
+                    Ok(res) => res,
+                    Err(_) => return None,
+                };
 
-        // Get value
-        let json_str: String = match conn.get(key).await {
-            Ok(s) => s,
-            Err(_) => {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                return None;
+            match bytes {
+                Some(b) if !b.is_empty() => {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    let ttl = if ttl_secs > 0 {
+                        Some(Duration::from_secs(ttl_secs.unsigned_abs()))
+                    } else {
+                        None
+                    };
+                    Some((Bytes::from(b), ttl))
+                }
+                _ => {
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                }
             }
-        };
-
-        // Parse JSON
-        let value: serde_json::Value = match serde_json::from_str(&json_str) {
-            Ok(v) => v,
-            Err(_) => {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                return None;
-            }
-        };
-
-        // Get TTL (in seconds, -1 = no expiry, -2 = key doesn't exist)
-        let ttl_secs: i64 = redis::cmd("TTL")
-            .arg(key)
-            .query_async(&mut conn)
-            .await
-            .unwrap_or(-1);
-
-        self.hits.fetch_add(1, Ordering::Relaxed);
-
-        let ttl = if ttl_secs > 0 {
-            Some(Duration::from_secs(ttl_secs as u64))
-        } else {
-            None // No expiry or error
-        };
-
-        Some((value, ttl))
+        })
     }
 }

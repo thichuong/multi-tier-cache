@@ -5,7 +5,8 @@
 //!
 //! Run with: `cargo run --example database_caching`
 
-use multi_tier_cache::{CacheSystem, CacheStrategy};
+// use multi_tier_cache::error::CacheError;
+use multi_tier_cache::{CacheStrategy, CacheSystem};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -29,27 +30,28 @@ struct Product {
 
 /// Simulate database query (in real world, use sqlx)
 async fn fetch_user_from_db(user_id: i64) -> anyhow::Result<User> {
-    println!("  🗄️  Simulating database query for user {}", user_id);
+    println!("  🗄️  Simulating database query for user {user_id}");
     tokio::time::sleep(Duration::from_millis(100)).await; // Simulate DB latency
 
     Ok(User {
         id: user_id,
-        name: format!("User {}", user_id),
-        email: format!("user{}@example.com", user_id),
-        created_at: 1704326400, // 2024-01-04
+        name: format!("User {user_id}"),
+        email: format!("user{user_id}@example.com"),
+        created_at: 1_704_326_400, // 2024-01-04
     })
 }
 
 /// Simulate product query
 async fn fetch_product_from_db(product_id: i64) -> anyhow::Result<Product> {
-    println!("  🗄️  Simulating database query for product {}", product_id);
+    println!("  🗄️  Simulating database query for product {product_id}");
     tokio::time::sleep(Duration::from_millis(150)).await;
 
     Ok(Product {
         id: product_id,
-        title: format!("Product #{}", product_id),
+        title: format!("Product #{product_id}"),
+        #[allow(clippy::cast_precision_loss)]
         price: 99.99 + (product_id as f64),
-        stock: (product_id * 10) as i32,
+        stock: i32::try_from(product_id * 10).unwrap_or(0),
     })
 }
 
@@ -63,6 +65,14 @@ async fn main() -> anyhow::Result<()> {
     let cache = CacheSystem::new().await?;
     println!("✅ Cache system ready!\n");
 
+    run_basic_examples(&cache).await?;
+    run_concurrent_example(&cache).await?;
+    print_final_stats(&cache);
+
+    Ok(())
+}
+
+async fn run_basic_examples(cache: &CacheSystem) -> anyhow::Result<()> {
     // ========================================
     // Example 1: First Request (Cache Miss)
     // ========================================
@@ -72,16 +82,16 @@ async fn main() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let user: User = cache
         .cache_manager()
-        .get_or_compute_typed(
-            "user:123",
-            CacheStrategy::MediumTerm, // 1 hour TTL
-            || async { fetch_user_from_db(123).await },
-        )
+        .get_or_compute_typed("user:123", CacheStrategy::MediumTerm, || async {
+            fetch_user_from_db(123)
+                .await
+                .map_err(|e| multi_tier_cache::error::CacheError::InternalError(e.to_string()))
+        })
         .await?;
     let elapsed = start.elapsed();
 
-    println!("✅ Retrieved user: {:?}", user);
-    println!("⏱️  Time taken: {:?} (includes DB query + caching)\n", elapsed);
+    println!("✅ Retrieved user: {user:?}");
+    println!("⏱️  Time taken: {elapsed:?} (includes DB query + caching)\n");
 
     // ========================================
     // Example 2: Second Request (Cache Hit)
@@ -92,16 +102,16 @@ async fn main() -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let user: User = cache
         .cache_manager()
-        .get_or_compute_typed(
-            "user:123",
-            CacheStrategy::MediumTerm,
-            || async { fetch_user_from_db(123).await },
-        )
+        .get_or_compute_typed("user:123", CacheStrategy::MediumTerm, || async {
+            fetch_user_from_db(123)
+                .await
+                .map_err(|e| multi_tier_cache::error::CacheError::InternalError(e.to_string()))
+        })
         .await?;
     let elapsed = start.elapsed();
 
-    println!("✅ Retrieved user: {:?}", user);
-    println!("⏱️  Time taken: {:?} (sub-millisecond from L1!)\n", elapsed);
+    println!("✅ Retrieved user: {user:?}");
+    println!("⏱️  Time taken: {elapsed:?} (sub-millisecond from L1!)\n");
 
     // ========================================
     // Example 3: Different Type (Product)
@@ -111,15 +121,18 @@ async fn main() -> anyhow::Result<()> {
 
     let product: Product = cache
         .cache_manager()
-        .get_or_compute_typed(
-            "product:456",
-            CacheStrategy::LongTerm, // 3 hours TTL
-            || async { fetch_product_from_db(456).await },
-        )
+        .get_or_compute_typed("product:456", CacheStrategy::LongTerm, || async {
+            fetch_product_from_db(456)
+                .await
+                .map_err(|e| multi_tier_cache::error::CacheError::InternalError(e.to_string()))
+        })
         .await?;
 
-    println!("✅ Retrieved product: {:?}\n", product);
+    println!("✅ Retrieved product: {product:?}\n");
+    Ok(())
+}
 
+async fn run_concurrent_example(cache: &CacheSystem) -> anyhow::Result<()> {
     // ========================================
     // Example 4: Multiple Concurrent Requests
     // ========================================
@@ -135,13 +148,13 @@ async fn main() -> anyhow::Result<()> {
                 let start = std::time::Instant::now();
                 let user: User = cache
                     .cache_manager()
-                    .get_or_compute_typed(
-                        "user:999",
-                        CacheStrategy::ShortTerm,
-                        || async { fetch_user_from_db(999).await },
-                    )
+                    .get_or_compute_typed("user:999", CacheStrategy::ShortTerm, || async move {
+                        fetch_user_from_db(999).await.map_err(|e| {
+                            multi_tier_cache::error::CacheError::InternalError(e.to_string())
+                        })
+                    })
                     .await
-                    .unwrap();
+                    .unwrap_or_else(|_| panic!("Failed to get user"));
                 let elapsed = start.elapsed();
                 println!("  🎯 Request {} completed in {:?}", i + 1, elapsed);
                 user
@@ -156,7 +169,10 @@ async fn main() -> anyhow::Result<()> {
 
     println!("\n💡 Notice: Only ONE database query was executed!");
     println!("   Cache stampede protection coalesced all 5 requests.\n");
+    Ok(())
+}
 
+fn print_final_stats(cache: &CacheSystem) {
     // ========================================
     // Statistics
     // ========================================
@@ -171,15 +187,15 @@ async fn main() -> anyhow::Result<()> {
     println!("Promotions: {}", stats.promotions);
 
     println!("\n✅ Example completed successfully!");
-    println!("
-💡 Key Takeaways:
-─────────────────
-1. Type-safe: Compiler enforces correct types
-2. Zero boilerplate: No manual serialize/deserialize
-3. Automatic caching: L1+L2 storage handled for you
-4. Stampede protection: Concurrent requests coalesced
-5. Generic: Works with any Serialize + Deserialize type
-");
-
-    Ok(())
+    println!(
+        "
+186: 💡 Key Takeaways:
+187: ─────────────────
+188: 1. Type-safe: Compiler enforces correct types
+189: 2. Zero boilerplate: No manual serialize/deserialize
+190: 3. Automatic caching: L1+L2 storage handled for you
+191: 4. Stampede protection: Concurrent requests coalesced
+192: 5. Generic: Works with any Serialize + Deserialize type
+"
+    );
 }

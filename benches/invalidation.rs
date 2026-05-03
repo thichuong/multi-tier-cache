@@ -1,26 +1,36 @@
 //! Benchmarks for cache invalidation operations
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use multi_tier_cache::{CacheManager, CacheStrategy, InvalidationConfig, L1Cache, L2Cache};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use multi_tier_cache::{
+    Bytes, CacheManager, CacheStrategy, InvalidationConfig, L1Cache, L2Cache, MokaCacheConfig,
+};
+// use multi_tier_cache::error::CacheResult;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
 fn setup_cache_with_invalidation() -> (Arc<CacheManager>, Runtime) {
-    let rt = Runtime::new().unwrap();
+    let rt = Runtime::new().unwrap_or_else(|_| panic!("Failed to create runtime"));
     let cache = rt.block_on(async {
-        let redis_url = std::env::var("REDIS_URL")
-            .unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
 
-        let l1 = Arc::new(L1Cache::new().await.unwrap());
-        let l2 = Arc::new(L2Cache::new().await.unwrap());
+        let l1 = Arc::new(
+            L1Cache::new(MokaCacheConfig::default())
+                .unwrap_or_else(|_| panic!("Failed to create L1")),
+        );
+        let l2 = Arc::new(
+            L2Cache::new()
+                .await
+                .unwrap_or_else(|_| panic!("Failed to create L2")),
+        );
         let config = InvalidationConfig::default();
 
         Arc::new(
             CacheManager::new_with_invalidation(l1, l2, &redis_url, config)
                 .await
-                .expect("Failed to create cache manager with invalidation")
+                .unwrap_or_else(|_| panic!("Failed to create cache manager with invalidation")),
         )
     });
     (cache, rt)
@@ -33,10 +43,15 @@ fn bench_invalidate_single_key(c: &mut Criterion) {
     // Pre-populate cache
     rt.block_on(async {
         for i in 0..100 {
-            let key = format!("bench:inv:{}", i);
-            cache.set_with_strategy(&key, json!({"id": i}), CacheStrategy::MediumTerm)
+            let key = format!("bench:inv:{i}");
+            let val = Bytes::from(
+                serde_json::to_vec(&json!({"id": i}))
+                    .unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")),
+            );
+            cache
+                .set_with_strategy(&key, val, CacheStrategy::MediumTerm)
                 .await
-                .unwrap();
+                .unwrap_or_else(|_| panic!("Failed to set cache"));
         }
     });
 
@@ -44,8 +59,12 @@ fn bench_invalidate_single_key(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let key = format!("bench:inv:{}", rand::random::<u8>() % 100);
-                black_box(cache.invalidate(&key).await.unwrap());
-            })
+                let _: () = cache
+                    .invalidate(&key)
+                    .await
+                    .unwrap_or_else(|_| panic!("Failed to invalidate"));
+                black_box(());
+            });
         });
     });
 }
@@ -56,10 +75,15 @@ fn bench_update_cache(c: &mut Criterion) {
 
     rt.block_on(async {
         for i in 0..100 {
-            let key = format!("bench:upd:{}", i);
-            cache.set_with_strategy(&key, json!({"id": i}), CacheStrategy::MediumTerm)
+            let key = format!("bench:upd:{i}");
+            let val = Bytes::from(
+                serde_json::to_vec(&json!({"id": i}))
+                    .unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")),
+            );
+            cache
+                .set_with_strategy(&key, val, CacheStrategy::MediumTerm)
                 .await
-                .unwrap();
+                .unwrap_or_else(|_| panic!("Failed to set cache"));
         }
     });
 
@@ -67,13 +91,16 @@ fn bench_update_cache(c: &mut Criterion) {
         b.iter(|| {
             rt.block_on(async {
                 let key = format!("bench:upd:{}", rand::random::<u8>() % 100);
-                let new_value = json!({"id": 999, "value": "updated"});
-                black_box(
-                    cache.update_cache(&key, new_value, Some(Duration::from_secs(300)))
-                        .await
-                        .unwrap()
+                let new_value = Bytes::from(
+                    serde_json::to_vec(&json!({"id": 999, "value": "updated"}))
+                        .unwrap_or_else(|e| panic!("Failed to serialize test data: {e}")),
                 );
-            })
+                let _: () = cache
+                    .update_cache(&key, new_value, Some(Duration::from_secs(300)))
+                    .await
+                    .unwrap_or_else(|_| panic!("Failed to update"));
+                black_box(());
+            });
         });
     });
 }
