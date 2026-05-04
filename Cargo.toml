@@ -38,7 +38,7 @@ rand = "0.8"
 [dev-dependencies]
 tokio = { version = "1.36", features = ["full"] }
 criterion = { version = "0.5", features = ["async_tokio"] }
-reqwest = { version = "0.12", features = ["json", "blocking"] }
+reqwest = { version = "0.13", features = ["json", "blocking"] }
 
 [features]
 default = ["moka", "redis"]
