@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Metrics export (Prometheus format)
 
+## [0.6.6] - 2026-06-07
+
+### Changed
+
+- **Dependencies Upgrade**:
+  - Upgraded `tokio` from `1.36` to **`1.52`** (latest stable).
+  - Upgraded `redis` from `1.0` to **`1.2`**.
+  - Upgraded `uuid` from `1.7` to **`1.23`**.
+  - Upgraded `rmp-serde` from `1.1` to **`1.3`**.
+  - Upgraded `bytes` from `1.5` to **`1.11`**.
+
 ## [0.6.5] - 2026-04-22
 
 ### Changed
