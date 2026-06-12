@@ -1,4 +1,3 @@
-use std::fmt;
 use thiserror::Error;
 
 #[cfg(feature = "redis")]
@@ -11,30 +10,23 @@ pub type CacheResult<T> = std::result::Result<T, CacheError>;
 #[derive(Error, Debug, Clone)]
 pub enum CacheError {
     /// Error from a cache backend (Redis, Memcached, etc.)
+    #[error("Backend error: {0}")]
     BackendError(String),
     /// Error during serialization/deserialization
+    #[error("Serialization error: {0}")]
     SerializationError(String),
     /// Error during cross-instance invalidation
+    #[error("Invalidation error: {0}")]
     InvalidationError(String),
     /// Configuration or initialization error
+    #[error("Configuration error: {0}")]
     ConfigError(String),
     /// Key not found in cache
+    #[error("Key not found")]
     NotFound,
     /// Internal logic error or unexpected state
+    #[error("Internal error: {0}")]
     InternalError(String),
-}
-
-impl fmt::Display for CacheError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::BackendError(msg) => write!(f, "Backend error: {msg}"),
-            Self::SerializationError(msg) => write!(f, "Serialization error: {msg}"),
-            Self::InvalidationError(msg) => write!(f, "Invalidation error: {msg}"),
-            Self::ConfigError(msg) => write!(f, "Configuration error: {msg}"),
-            Self::NotFound => write!(f, "Key not found"),
-            Self::InternalError(msg) => write!(f, "Internal error: {msg}"),
-        }
-    }
 }
 
 #[cfg(feature = "redis")]

@@ -104,7 +104,7 @@ pub trait CacheBackend: Send + Sync {
 
     /// Set value in cache with default TTL (5 minutes)
     fn set<'a>(&'a self, key: &'a str, value: Bytes) -> BoxFuture<'a, CacheResult<()>> {
-        self.set_with_ttl(key, value, std::time::Duration::from_secs(300))
+        self.set_with_ttl(key, value, std::time::Duration::from_mins(5))
     }
 
     /// Remove value from cache
@@ -164,7 +164,6 @@ pub trait CacheBackend: Send + Sync {
 ///
 /// # Example
 ///
-/// ```rust,ignore,ignore
 /// ```rust,ignore
 /// use multi_tier_cache::error::{CacheError, CacheResult};
 /// use bytes::Bytes;
@@ -222,7 +221,6 @@ pub type StreamEntry = (String, Vec<(String, String)>);
 ///
 /// # Example
 ///
-/// ```rust,ignore,ignore
 /// ```rust,ignore
 /// use multi_tier_cache::error::{CacheError, CacheResult};
 /// use multi_tier_cache::{StreamingBackend, StreamEntry};

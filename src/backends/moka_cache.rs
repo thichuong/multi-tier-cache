@@ -64,8 +64,8 @@ impl Default for MokaCacheConfig {
     fn default() -> Self {
         Self {
             max_capacity: 5000,
-            time_to_live: Duration::from_secs(3600),
-            time_to_idle: Duration::from_secs(120),
+            time_to_live: Duration::from_hours(1),
+            time_to_idle: Duration::from_mins(2),
         }
     }
 }
@@ -211,7 +211,7 @@ impl CacheBackend for MokaCache {
             let test_value = Bytes::from("health_check");
 
             match self
-                .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
+                .set_with_ttl(test_key, test_value.clone(), Duration::from_mins(1))
                 .await
             {
                 Ok(()) => match self.get(test_key).await {
@@ -228,17 +228,31 @@ impl CacheBackend for MokaCache {
 
     fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
-            // For Moka (L1), we'll do a full invalidation for pattern requests to ensure consistency.
-            // Pattern invalidation is usually relatively rare compared to single-key lookups,
-            // so clearing L1 is a safe and robust fallback to ensure no stale data remains.
-            self.cache.invalidate_all();
-            self.typed_cache.invalidate_all();
+            let mut keys_to_invalidate = Vec::new();
+            for (key, _) in &self.cache {
+                if crate::backends::matches_pattern(&key, pattern) {
+                    keys_to_invalidate.push((*key).clone());
+                }
+            }
+            for key in &keys_to_invalidate {
+                self.cache.invalidate(key).await;
+            }
+
+            let mut typed_keys_to_invalidate = Vec::new();
+            for (key, _) in &self.typed_cache {
+                if crate::backends::matches_pattern(&key, pattern) {
+                    typed_keys_to_invalidate.push((*key).clone());
+                }
+            }
+            for key in &typed_keys_to_invalidate {
+                self.typed_cache.invalidate(key).await;
+            }
 
             // Ensure background invalidation tasks are processed
             self.cache.run_pending_tasks().await;
             self.typed_cache.run_pending_tasks().await;
 
-            debug!(pattern = %pattern, "[Moka] Invalidated all entries due to pattern '{}' request", pattern);
+            debug!(pattern = %pattern, moka_count = %keys_to_invalidate.len(), typed_count = %typed_keys_to_invalidate.len(), "[Moka] Invalidated matching entries due to pattern '{}' request", pattern);
             Ok(())
         })
     }

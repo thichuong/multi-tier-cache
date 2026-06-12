@@ -42,7 +42,7 @@ use crate::L1Cache;
 #[cfg(feature = "redis")]
 #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 use crate::L2Cache;
-use anyhow::Result;
+use crate::error::CacheResult;
 use std::sync::Arc;
 use tracing::info;
 
@@ -343,7 +343,7 @@ impl CacheSystemBuilder {
     /// # Errors
     ///
     /// Returns an error if the default backends cannot be initialized.
-    pub async fn build(self) -> Result<CacheSystem> {
+    pub async fn build(self) -> CacheResult<CacheSystem> {
         info!("Building Multi-Tier Cache System");
 
         if !self.tiers.is_empty() {
@@ -356,7 +356,7 @@ impl CacheSystemBuilder {
     }
 
     /// Internal helper for multi-tier mode (v0.5.0+)
-    fn build_multi_tier(self) -> Result<CacheSystem> {
+    fn build_multi_tier(self) -> CacheResult<CacheSystem> {
         info!(
             tier_count = self.tiers.len(),
             "Initializing multi-tier architecture"
@@ -401,7 +401,7 @@ impl CacheSystemBuilder {
     }
 
     /// Internal helper for legacy default 2-tier mode
-    async fn build_default_2_tier(self) -> Result<CacheSystem> {
+    async fn build_default_2_tier(self) -> CacheResult<CacheSystem> {
         info!("Initializing default backends (Moka + Redis)");
 
         #[cfg(all(feature = "moka", feature = "redis"))]
@@ -428,14 +428,14 @@ impl CacheSystemBuilder {
         }
         #[cfg(not(all(feature = "moka", feature = "redis")))]
         {
-            Err(anyhow::anyhow!(
-                "Default backends (Moka/Redis) are not enabled. Provide custom backends or enable 'moka' and 'redis' features."
+            Err(CacheError::ConfigError(
+                "Default backends (Moka/Redis) are not enabled. Provide custom backends or enable 'moka' and 'redis' features.".to_string()
             ))
         }
     }
 
     /// Internal helper for legacy custom 2-tier mode
-    async fn build_custom_2_tier(self) -> Result<CacheSystem> {
+    async fn build_custom_2_tier(self) -> CacheResult<CacheSystem> {
         info!("Building with custom backends");
 
         let l1_backend: Arc<dyn CacheBackend> = if let Some(backend) = self.l1_backend {
@@ -448,8 +448,8 @@ impl CacheSystemBuilder {
             }
             #[cfg(not(feature = "moka"))]
             {
-                return Err(anyhow::anyhow!(
-                    "Moka feature not enabled. Provide a custom L1 backend."
+                return Err(CacheError::ConfigError(
+                    "Moka feature not enabled. Provide a custom L1 backend.".to_string(),
                 ));
             }
         };
@@ -464,8 +464,8 @@ impl CacheSystemBuilder {
             }
             #[cfg(not(feature = "redis"))]
             {
-                return Err(anyhow::anyhow!(
-                    "Redis feature not enabled. Provide a custom L2 backend."
+                return Err(CacheError::ConfigError(
+                    "Redis feature not enabled. Provide a custom L2 backend.".to_string(),
                 ));
             }
         };

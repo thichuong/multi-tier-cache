@@ -87,7 +87,7 @@ impl QuickCacheBackend {
 
 // ===== Trait Implementations =====
 
-use crate::traits::CacheBackend;
+use crate::traits::{CacheBackend, L2CacheBackend};
 
 /// Implement `CacheBackend` trait for `QuickCacheBackend`
 impl CacheBackend for QuickCacheBackend {
@@ -140,7 +140,7 @@ impl CacheBackend for QuickCacheBackend {
             let test_value = Bytes::from_static(b"health_check");
 
             match self
-                .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(60))
+                .set_with_ttl(test_key, test_value.clone(), Duration::from_mins(1))
                 .await
             {
                 Ok(()) => match self.get(test_key).await {
@@ -157,5 +157,36 @@ impl CacheBackend for QuickCacheBackend {
 
     fn name(&self) -> &'static str {
         "QuickCache"
+    }
+}
+
+impl L2CacheBackend for QuickCacheBackend {
+    fn get_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+        Box::pin(async move {
+            if let Some(entry_lock) = self.cache.get(key) {
+                let entry = entry_lock.read();
+                if entry.is_expired() {
+                    drop(entry); // Release read lock before removing
+                    self.cache.remove(key);
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                } else {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    let now = Instant::now();
+                    let remaining = if entry.expires_at > now {
+                        Some(entry.expires_at.duration_since(now))
+                    } else {
+                        None
+                    };
+                    Some((entry.value.clone(), remaining))
+                }
+            } else {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
+            }
+        })
     }
 }

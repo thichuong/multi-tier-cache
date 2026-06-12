@@ -132,6 +132,14 @@ impl CacheBackend for DashMapCache {
         })
     }
 
+    fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, CacheResult<()>> {
+        Box::pin(async move {
+            self.map
+                .retain(|key, _| !crate::backends::matches_pattern(key, pattern));
+            Ok(())
+        })
+    }
+
     fn health_check(&self) -> BoxFuture<'_, bool> {
         Box::pin(async move { true })
     }

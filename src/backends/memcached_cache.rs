@@ -2,7 +2,7 @@
 //!
 //! Memcached-based distributed cache for warm data storage with simple key-value operations.
 
-use anyhow::{Result, anyhow};
+use crate::error::{CacheError, CacheResult};
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
 use std::sync::Arc;
@@ -24,7 +24,7 @@ use tracing::{debug, info};
 /// - Advanced data structures
 pub struct MemcachedCache {
     /// Memcached client
-    client: memcache::Client,
+    client: Arc<memcache::Client>,
     /// Hit counter
     hits: Arc<AtomicU64>,
     /// Miss counter
@@ -43,7 +43,7 @@ impl MemcachedCache {
     /// # Errors
     ///
     /// Returns an error if the Memcached client cannot be created.
-    pub fn new() -> Result<Self> {
+    pub fn new() -> CacheResult<Self> {
         info!("Initializing Memcached Cache");
 
         // Get Memcached URL from environment
@@ -52,7 +52,7 @@ impl MemcachedCache {
 
         // Create Memcached client
         let client = memcache::connect(memcached_url.as_str())
-            .map_err(|e| anyhow!("Failed to connect to Memcached: {e}"))?;
+            .map_err(|e| CacheError::ConfigError(format!("Failed to connect to Memcached: {e}")))?;
 
         // Test connection with version command
         match client.version() {
@@ -64,12 +64,14 @@ impl MemcachedCache {
                 );
             }
             Err(e) => {
-                return Err(anyhow!("Memcached connection test failed: {e}"));
+                return Err(CacheError::ConfigError(format!(
+                    "Memcached connection test failed: {e}"
+                )));
             }
         }
 
         Ok(Self {
-            client,
+            client: Arc::new(client),
             hits: Arc::new(AtomicU64::new(0)),
             misses: Arc::new(AtomicU64::new(0)),
             sets: Arc::new(AtomicU64::new(0)),
@@ -86,29 +88,36 @@ impl MemcachedCache {
     /// Returns an error if the stats cannot be retrieved.
     pub fn get_server_stats(
         &self,
-    ) -> Result<Vec<(String, std::collections::HashMap<String, String>)>> {
+    ) -> CacheResult<Vec<(String, std::collections::HashMap<String, String>)>> {
         self.client
             .stats()
-            .map_err(|e| anyhow!("Failed to get Memcached stats: {e}"))
+            .map_err(|e| CacheError::BackendError(format!("Failed to get Memcached stats: {e}")))
     }
 }
 
 // ===== Trait Implementations =====
 
-use crate::error::CacheResult;
 use crate::traits::CacheBackend;
 
 /// Implement `CacheBackend` trait for `MemcachedCache`
 impl CacheBackend for MemcachedCache {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
+        let client = Arc::clone(&self.client);
+        let key = key.to_string();
+        let hits = Arc::clone(&self.hits);
+        let misses = Arc::clone(&self.misses);
         Box::pin(async move {
-            if let Ok(Some(bytes_vec)) = self.client.get::<Vec<u8>>(key) {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                Some(Bytes::from(bytes_vec))
-            } else {
-                self.misses.fetch_add(1, Ordering::Relaxed);
-                None
-            }
+            tokio::task::spawn_blocking(move || {
+                if let Ok(Some(bytes_vec)) = client.get::<Vec<u8>>(&key) {
+                    hits.fetch_add(1, Ordering::Relaxed);
+                    Some(Bytes::from(bytes_vec))
+                } else {
+                    misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                }
+            })
+            .await
+            .unwrap_or(None)
         })
     }
 
@@ -118,31 +127,50 @@ impl CacheBackend for MemcachedCache {
         value: Bytes,
         ttl: Duration,
     ) -> BoxFuture<'a, CacheResult<()>> {
+        let client = Arc::clone(&self.client);
+        let key = key.to_string();
+        let sets = Arc::clone(&self.sets);
         Box::pin(async move {
-            self.client
-                .set(
-                    key,
-                    value.as_ref(),
-                    u32::try_from(ttl.as_secs()).unwrap_or(u32::MAX),
-                )
-                .map_err(|e| {
-                    crate::error::CacheError::BackendError(format!(
-                        "Memcached operation failed: {e}"
-                    ))
-                })?;
+            tokio::task::spawn_blocking(move || {
+                client
+                    .set(
+                        &key,
+                        value.as_ref(),
+                        u32::try_from(ttl.as_secs()).unwrap_or(u32::MAX),
+                    )
+                    .map_err(|e| {
+                        crate::error::CacheError::BackendError(format!(
+                            "Memcached operation failed: {e}"
+                        ))
+                    })?;
 
-            self.sets.fetch_add(1, Ordering::Relaxed);
-            debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Memcached] Cached key with TTL");
-            Ok(())
+                sets.fetch_add(1, Ordering::Relaxed);
+                debug!(key = %key, ttl_secs = %ttl.as_secs(), "[Memcached] Cached key with TTL");
+                Ok(())
+            })
+            .await
+            .map_err(|_| {
+                crate::error::CacheError::InternalError("Spawn blocking task failed".to_string())
+            })?
         })
     }
 
     fn remove<'a>(&'a self, key: &'a str) -> BoxFuture<'a, CacheResult<()>> {
+        let client = Arc::clone(&self.client);
+        let key = key.to_string();
         Box::pin(async move {
-            self.client.delete(key).map_err(|e| {
-                crate::error::CacheError::BackendError(format!("Memcached operation failed: {e}"))
-            })?;
-            Ok(())
+            tokio::task::spawn_blocking(move || {
+                client.delete(&key).map_err(|e| {
+                    crate::error::CacheError::BackendError(format!(
+                        "Memcached operation failed: {e}"
+                    ))
+                })?;
+                Ok(())
+            })
+            .await
+            .map_err(|_| {
+                crate::error::CacheError::InternalError("Spawn blocking task failed".to_string())
+            })?
         })
     }
 

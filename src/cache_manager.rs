@@ -12,7 +12,7 @@ use std::time::Duration;
 #[cfg(feature = "redis")]
 #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
 use tokio::sync::Mutex;
-use tokio::sync::broadcast;
+use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "moka")]
@@ -33,8 +33,26 @@ use bytes::Bytes;
 use futures_util::future::BoxFuture;
 
 ///// Type alias for the in-flight requests map
-/// Stores a broadcast sender for each active key computation
-type InFlightMap = DashMap<String, broadcast::Sender<CacheResult<Bytes>>>;
+/// Stores a watch sender for each active key computation
+type InFlightMap = DashMap<String, Arc<watch::Sender<Option<CacheResult<Option<Bytes>>>>>>;
+
+/// RAII Guard to ensure that keys are removed from `in_flight_requests` on cancellation/drop.
+struct RemoveInFlightGuard {
+    map: Arc<InFlightMap>,
+    key: String,
+}
+
+impl Drop for RemoveInFlightGuard {
+    fn drop(&mut self) {
+        self.map.remove(&self.key);
+    }
+}
+
+/// Represents the concurrency state for in-flight requests stampede protection.
+enum FlightState {
+    Creator(Arc<watch::Sender<Option<CacheResult<Option<Bytes>>>>>),
+    Waiter(watch::Receiver<Option<CacheResult<Option<Bytes>>>>),
+}
 
 /// Cache strategies for different data types
 #[derive(Debug, Clone)]
@@ -60,9 +78,9 @@ impl CacheStrategy {
     pub fn to_duration(&self) -> Duration {
         match self {
             Self::RealTime => Duration::from_secs(10),
-            Self::ShortTerm | Self::Default => Duration::from_secs(300), // 5 minutes
-            Self::MediumTerm => Duration::from_secs(3600),               // 1 hour
-            Self::LongTerm => Duration::from_secs(10800),                // 3 hours
+            Self::ShortTerm | Self::Default => Duration::from_mins(5), // 5 minutes
+            Self::MediumTerm => Duration::from_hours(1),               // 1 hour
+            Self::LongTerm => Duration::from_hours(3),                 // 3 hours
             Self::Custom(duration) => *duration,
         }
     }
@@ -344,7 +362,6 @@ impl CacheManager {
             #[cfg(feature = "redis")]
             invalidation_subscriber: None,
             #[cfg(feature = "redis")]
-            #[cfg(feature = "redis")]
             invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
         })
     }
@@ -366,10 +383,6 @@ impl CacheManager {
     pub async fn new(l1_cache: Arc<L1Cache>, l2_cache: Arc<L2Cache>) -> CacheResult<Self> {
         debug!("Initializing Cache Manager...");
 
-        // Convert concrete types to trait objects
-        let l1_backend: Arc<dyn CacheBackend> = l1_cache.clone();
-        let l2_backend: Arc<dyn L2CacheBackend> = l2_cache.clone();
-
         // Create RedisStreams backend for streaming functionality
         let streaming_backend: Option<Arc<dyn StreamingBackend>> = {
             let redis_url =
@@ -378,7 +391,28 @@ impl CacheManager {
             Some(Arc::new(redis_streams))
         };
 
-        Self::new_with_backends(l1_backend, l2_backend, streaming_backend)
+        let tiers = vec![
+            CacheTier::new(l1_cache as Arc<dyn L2CacheBackend>, 1, false, 1, 1.0),
+            CacheTier::new(l2_cache as Arc<dyn L2CacheBackend>, 2, true, 10, 1.0),
+        ];
+
+        Ok(Self {
+            tiers,
+            streaming_backend,
+            total_requests: AtomicU64::new(0),
+            l1_hits: AtomicU64::new(0),
+            l2_hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+            promotions: AtomicUsize::new(0),
+            in_flight_requests: Arc::new(DashMap::new()),
+            serializer: Arc::new(CacheSerializer::Json(JsonSerializer)),
+            #[cfg(feature = "redis")]
+            invalidation_publisher: None,
+            #[cfg(feature = "redis")]
+            invalidation_subscriber: None,
+            #[cfg(feature = "redis")]
+            invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
+        })
     }
 
     /// Create new cache manager with invalidation support
@@ -420,10 +454,6 @@ impl CacheManager {
         debug!("Initializing Cache Manager with Invalidation...");
         debug!("  Pub/Sub channel: {}", config.channel);
 
-        // Convert concrete types to trait objects
-        let l1_backend: Arc<dyn CacheBackend> = l1_cache.clone();
-        let l2_backend: Arc<dyn L2CacheBackend> = l2_cache.clone();
-
         // Create RedisStreams backend for streaming functionality
         let streaming_backend: Option<Arc<dyn StreamingBackend>> = {
             let redis_streams = crate::redis_streams::RedisStreams::new(redis_url).await?;
@@ -447,8 +477,8 @@ impl CacheManager {
         let invalidation_stats = Arc::new(AtomicInvalidationStats::default());
 
         let tiers = vec![
-            CacheTier::new(Arc::new(ProxyL1ToL2(l1_backend)), 1, false, 1, 1.0),
-            CacheTier::new(l2_backend, 2, true, 10, 1.0),
+            CacheTier::new(l1_cache as Arc<dyn L2CacheBackend>, 1, false, 1, 1.0),
+            CacheTier::new(l2_cache as Arc<dyn L2CacheBackend>, 2, true, 10, 1.0),
         ];
 
         let manager = Self {
@@ -546,7 +576,6 @@ impl CacheManager {
             #[cfg(feature = "redis")]
             invalidation_subscriber: None,
             #[cfg(feature = "redis")]
-            #[cfg(feature = "redis")]
             invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
         })
     }
@@ -624,11 +653,25 @@ impl CacheManager {
     /// This method iterates through all configured tiers and automatically promotes
     /// to upper tiers on cache hit.
     async fn get_multi_tier(&self, key: &str) -> CacheResult<Option<Bytes>> {
-        // Try each tier sequentially (sorted by tier_level)
-        for (tier_index, tier) in self.tiers.iter().enumerate() {
+        self.get_multi_tier_from(key, 0).await
+    }
+
+    /// Get value from cache starting from a specific tier index
+    async fn get_multi_tier_from(
+        &self,
+        key: &str,
+        start_index: usize,
+    ) -> CacheResult<Option<Bytes>> {
+        // Try each tier sequentially (sorted by tier_level) starting from start_index
+        for (tier_index, tier) in self.tiers.iter().enumerate().skip(start_index) {
             if let Some((value, ttl)) = tier.get_with_ttl(key).await {
                 // Cache hit!
                 tier.record_hit();
+                if tier.tier_level == 1 {
+                    self.l1_hits.fetch_add(1, Ordering::Relaxed);
+                } else if tier.tier_level == 2 {
+                    self.l2_hits.fetch_add(1, Ordering::Relaxed);
+                }
 
                 // Promote to all upper tiers (if promotion enabled)
                 if tier.promotion_enabled && tier_index > 0 {
@@ -715,63 +758,85 @@ impl CacheManager {
             return Ok(Some(value));
         }
 
-        // L1 miss - use stampede protection for lower tiers
         let key_owned = key.to_string();
-        let lock_guard = self
-            .in_flight_requests
-            .entry(key_owned.clone())
-            .or_insert_with(|| broadcast::Sender::new(1))
-            .clone();
+        let flight_state = match self.in_flight_requests.entry(key_owned.clone()) {
+            dashmap::mapref::entry::Entry::Occupied(entry) => {
+                FlightState::Waiter(entry.get().subscribe())
+            }
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                let (tx, _) = watch::channel(None);
+                let tx = Arc::new(tx);
+                entry.insert(tx.clone());
+                FlightState::Creator(tx)
+            }
+        };
 
-        let mut rx = lock_guard.subscribe();
-
-        // If there are other receivers, someone else is computing, wait for it
-        if lock_guard.receiver_count() > 1 {
-            match rx.recv().await {
-                Ok(Ok(value)) => return Ok(Some(value)),
-                Ok(Err(e)) => {
-                    return Err(crate::error::CacheError::BackendError(format!(
-                        "Computation failed in another thread: {e}"
-                    )));
+        match flight_state {
+            FlightState::Waiter(mut rx) => {
+                // Wait for creator to finish
+                if rx.borrow().is_none() {
+                    while rx.changed().await.is_ok() {
+                        if rx.borrow().is_some() {
+                            break;
+                        }
+                    }
                 }
-                Err(_) => {} // Fall through to re-compute if sender dropped or channel empty
+                // Return result if it exists, otherwise fall through to re-compute
+                if let Some(res) = rx.borrow().clone() {
+                    return res;
+                }
+            }
+            FlightState::Creator(tx) => {
+                // Creator - guard key removal on drop/cancellation
+                let _guard = RemoveInFlightGuard {
+                    map: Arc::clone(&self.in_flight_requests),
+                    key: key_owned,
+                };
+
+                // Double-check L1 after acquiring lock (or if we are the first to compute)
+                if let Some(tier1) = self.tiers.first()
+                    && let Some((value, _ttl)) = tier1.get_with_ttl(key).await
+                {
+                    tier1.record_hit();
+                    self.l1_hits.fetch_add(1, Ordering::Relaxed);
+                    let _ = tx.send(Some(Ok(Some(value.clone())))); // Notify any waiting subscribers
+                    return Ok(Some(value));
+                }
+
+                // Check remaining tiers with promotion (start from tier index 1: L2)
+                let result = self.get_multi_tier_from(key, 1).await;
+
+                match &result {
+                    Ok(Some(val)) => {
+                        // Hit in L2+ tier - update legacy stats
+                        if self.tiers.len() >= 2 {
+                            self.l2_hits.fetch_add(1, Ordering::Relaxed);
+                        }
+                        let _ = tx.send(Some(Ok(Some(val.clone()))));
+                    }
+                    Ok(None) => {
+                        self.misses.fetch_add(1, Ordering::Relaxed);
+                        let _ = tx.send(Some(Ok(None)));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Some(Err(e.clone())));
+                    }
+                }
+
+                return result;
             }
         }
 
-        // Double-check L1 after acquiring lock (or if we are the first to compute)
-        if let Some(tier1) = self.tiers.first()
-            && let Some((value, _ttl)) = tier1.get_with_ttl(key).await
-        {
-            tier1.record_hit();
-            self.l1_hits.fetch_add(1, Ordering::Relaxed);
-            let _ = lock_guard.send(Ok(value.clone())); // Notify any waiting subscribers
-            return Ok(Some(value));
-        }
-
-        // Check remaining tiers with promotion
-        let result = self.get_multi_tier(key).await?;
-
-        if let Some(val) = result.clone() {
-            // Hit in L2+ tier - update legacy stats
+        // If waiter fell through (creator dropped without sending), do direct fallback query
+        let result = self.get_multi_tier_from(key, 1).await;
+        if let Ok(Some(_)) = result {
             if self.tiers.len() >= 2 {
                 self.l2_hits.fetch_add(1, Ordering::Relaxed);
             }
-
-            // Notify any waiting subscribers
-            let _ = lock_guard.send(Ok(val.clone()));
-
-            // Remove the in-flight entry after computation/retrieval
-            self.in_flight_requests.remove(key);
-
-            Ok(Some(val))
-        } else {
+        } else if let Ok(None) = result {
             self.misses.fetch_add(1, Ordering::Relaxed);
-
-            // Remove the in-flight entry after computation/retrieval
-            self.in_flight_requests.remove(key);
-
-            Ok(None)
         }
+        result
     }
 
     /// Get a value from cache and deserialize it (Type-Safe Version)
@@ -877,96 +942,86 @@ impl CacheManager {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
 
         // 1. Try tiers sequentially first
-        for (idx, tier) in self.tiers.iter().enumerate() {
-            if let Some((value, _ttl)) = tier.get_with_ttl(key).await {
-                tier.record_hit();
-                if tier.tier_level == 1 {
-                    self.l1_hits.fetch_add(1, Ordering::Relaxed);
-                } else if tier.tier_level == 2 {
-                    self.l2_hits.fetch_add(1, Ordering::Relaxed);
-                }
-
-                // Promotion to L1 if hit was in a lower tier
-                if idx > 0 && tier.promotion_enabled {
-                    // Probabilistic Promotion Check
-                    let should_promote = if tier.promotion_frequency <= 1 {
-                        true
-                    } else {
-                        rand::thread_rng().gen_ratio(
-                            1,
-                            u32::try_from(tier.promotion_frequency).unwrap_or(u32::MAX),
-                        )
-                    };
-
-                    if should_promote && let Some(l1_tier) = self.tiers.first() {
-                        let _ = l1_tier
-                            .set_with_ttl(key, value.clone(), strategy.to_duration())
-                            .await;
-                        self.promotions.fetch_add(1, Ordering::Relaxed);
-                    }
-                }
-                return Ok(value);
-            }
+        if let Some(value) = self.get_multi_tier(key).await? {
+            return Ok(value);
         }
 
-        // 2. Cache miss across all tiers - use stampede protection
-        let (tx, mut rx): (
-            tokio::sync::broadcast::Sender<CacheResult<Bytes>>,
-            tokio::sync::broadcast::Receiver<CacheResult<Bytes>>,
-        ) = match self.in_flight_requests.entry(key.to_string()) {
+        let key_owned = key.to_string();
+        let flight_state = match self.in_flight_requests.entry(key_owned.clone()) {
             dashmap::mapref::entry::Entry::Occupied(entry) => {
-                let tx = entry.get().clone();
-                (tx.clone(), tx.subscribe())
+                FlightState::Waiter(entry.get().subscribe())
             }
             dashmap::mapref::entry::Entry::Vacant(entry) => {
-                let (tx, _) = tokio::sync::broadcast::channel(1);
+                let (tx, _) = watch::channel(None);
+                let tx = Arc::new(tx);
                 entry.insert(tx.clone());
-                (tx.clone(), tx.subscribe())
+                FlightState::Creator(tx)
             }
         };
 
-        if tx.receiver_count() > 1 {
-            // Someone else is computing, wait for it
-            match rx.recv().await {
-                Ok(Ok(value)) => return Ok(value),
-                Ok(Err(e)) => {
-                    return Err(crate::error::CacheError::BackendError(format!(
-                        "Computation failed in another thread: {e}"
-                    )));
+        match flight_state {
+            FlightState::Waiter(mut rx) => {
+                // Wait for creator to finish
+                if rx.borrow().is_none() {
+                    while rx.changed().await.is_ok() {
+                        if rx.borrow().is_some() {
+                            break;
+                        }
+                    }
                 }
-                Err(_) => {} // Fall through to re-compute
+                // Return result if it exists, otherwise fall through to re-compute
+                if let Some(res) = rx.borrow().clone() {
+                    match res {
+                        Ok(Some(bytes)) => return Ok(bytes),
+                        Ok(None) => {} // Miss, fall through to re-compute
+                        Err(e) => return Err(e),
+                    }
+                }
+            }
+            FlightState::Creator(tx) => {
+                // Guard key removal on drop/cancellation
+                let _guard = RemoveInFlightGuard {
+                    map: Arc::clone(&self.in_flight_requests),
+                    key: key_owned,
+                };
+
+                // 3. Re-check cache after receiving/creating broadcaster (double-check pattern)
+                if let Some(value) = self.get_multi_tier(key).await? {
+                    let _ = tx.send(Some(Ok(Some(value.clone()))));
+                    return Ok(value);
+                }
+
+                // 4. Miss - compute fresh data
+                debug!(
+                    "Computing fresh data for key: '{}' (Stampede protected)",
+                    key
+                );
+
+                let result = compute_fn().await;
+
+                match &result {
+                    Ok(value) => {
+                        let _ = self.set_with_strategy(key, value.clone(), strategy).await;
+                        let _ = tx.send(Some(Ok(Some(value.clone()))));
+                    }
+                    Err(e) => {
+                        let _ = tx.send(Some(Err(e.clone())));
+                    }
+                }
+
+                return result;
             }
         }
 
-        // 3. Re-check cache after receiving/creating broadcaster (double-check pattern)
-        for tier in &self.tiers {
-            if let Some((value, _)) = tier.get_with_ttl(key).await {
-                let _ = tx.send(Ok(value.clone()));
-                return Ok(value);
-            }
-        }
-
-        // 4. Miss - compute fresh data
+        // If waiter fell through (creator dropped or miss without sending), do direct compute
         debug!(
-            "Computing fresh data for key: '{}' (Stampede protected)",
+            "Computing fresh data for key: '{}' (Stampede fallback)",
             key
         );
-
         let result = compute_fn().await;
-
-        // Remove from in_flight BEFORE broadcasting
-        self.in_flight_requests.remove(key);
-
-        match &result {
-            Ok(value) => {
-                let _ = self.set_with_strategy(key, value.clone(), strategy).await;
-                let _ = tx.send(Ok(value.clone()));
-            }
-            Err(e) => {
-                let _ = tx.send(Err(e.clone()));
-            }
+        if let Ok(value) = &result {
+            let _ = self.set_with_strategy(key, value.clone(), strategy).await;
         }
-
         result
     }
 
@@ -1531,4 +1586,47 @@ pub struct CacheManagerStats {
     pub l1_hit_rate: f64,
     pub promotions: usize,
     pub in_flight_requests: usize,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_in_flight_cancellation_cleanup() {
+        let l1 = Arc::new(crate::backends::DashMapCache::new());
+        let l2 = Arc::new(crate::backends::DashMapCache::new());
+        let manager = CacheManager::new_with_backends(
+            l1,
+            Arc::new(ProxyL1ToL2(l2)) as Arc<dyn L2CacheBackend>,
+            None,
+        )
+        .unwrap();
+
+        let key = "cancellation_test_key";
+        let manager_clone = Arc::new(manager);
+        let manager_clone2 = Arc::clone(&manager_clone);
+
+        let handle = tokio::spawn(async move {
+            let _ = manager_clone2
+                .get_or_compute_with(key, CacheStrategy::ShortTerm, || async {
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                    Ok(Bytes::from("result"))
+                })
+                .await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        assert!(manager_clone.in_flight_requests.contains_key(key));
+
+        handle.abort();
+        let _ = handle.await;
+
+        assert!(
+            !manager_clone.in_flight_requests.contains_key(key),
+            "Key was not cleaned up after cancellation"
+        );
+    }
 }

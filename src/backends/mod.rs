@@ -103,3 +103,46 @@ pub type L2Cache = RedisCache;
 // pub mod rocksdb_cache;
 // #[cfg(feature = "backend-rocksdb")]
 // pub use rocksdb_cache::RocksDBCache;
+
+/// A simple glob-like pattern matching helper supporting '*' wildcard
+#[must_use]
+#[allow(clippy::indexing_slicing)]
+pub fn matches_pattern(key: &str, pattern: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return key == pattern;
+    }
+    if !key.starts_with(parts[0]) {
+        return false;
+    }
+    let mut key_rem = &key[parts[0].len()..];
+    for &part in &parts[1..parts.len() - 1] {
+        if let Some(idx) = key_rem.find(part) {
+            key_rem = &key_rem[idx + part.len()..];
+        } else {
+            return false;
+        }
+    }
+    key_rem.ends_with(parts[parts.len() - 1])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matches_pattern;
+
+    #[test]
+    fn test_matches_pattern() {
+        assert!(matches_pattern("user:123", "user:123"));
+        assert!(matches_pattern("user:123", "user:*"));
+        assert!(matches_pattern("user:123:profile", "user:*:profile"));
+        assert!(matches_pattern(
+            "user:123:profile:details",
+            "user:*:details"
+        ));
+        assert!(!matches_pattern("product:123", "user:*"));
+        assert!(matches_pattern("user:123", "*"));
+        assert!(matches_pattern("user:123", "user:123*"));
+        assert!(matches_pattern("user:123", "*123"));
+        assert!(!matches_pattern("user:123", "user:1234*"));
+    }
+}
