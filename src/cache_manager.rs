@@ -323,14 +323,18 @@ impl CacheManager {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use multi_tier_cache::{CacheManager, L1Cache, L2Cache};
+    /// ```rust,no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use multi_tier_cache::{CacheManager, L1Cache, L2Cache, MokaCacheConfig};
     /// use std::sync::Arc;
     ///
-    /// let l1: Arc<dyn CacheBackend> = Arc::new(L1Cache::new().await?);
-    /// let l2: Arc<dyn L2CacheBackend> = Arc::new(L2Cache::new().await?);
+    /// let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
+    /// let l2 = Arc::new(L2Cache::new().await?);
     ///
-    /// let manager = CacheManager::new_with_backends(l1, l2, None).await?;
+    /// let manager = CacheManager::new_with_backends(l1, l2, None)?;
+    /// # Ok(())
+    /// # }
     /// ```
     /// # Errors
     ///
@@ -428,8 +432,14 @@ impl CacheManager {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use multi_tier_cache::{CacheManager, L1Cache, L2Cache, InvalidationConfig};
+    /// ```rust,no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use multi_tier_cache::{CacheManager, L1Cache, L2Cache, InvalidationConfig, MokaCacheConfig};
+    /// use std::sync::Arc;
+    ///
+    /// let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
+    /// let l2 = Arc::new(L2Cache::new().await?);
     ///
     /// let config = InvalidationConfig {
     ///     channel: "my_app:cache:invalidate".to_string(),
@@ -439,6 +449,8 @@ impl CacheManager {
     /// let manager = CacheManager::new_with_invalidation(
     ///     l1, l2, "redis://localhost", config
     /// ).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     /// # Errors
     ///
@@ -516,22 +528,24 @@ impl CacheManager {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use multi_tier_cache::{CacheManager, CacheTier, TierConfig, L1Cache, L2Cache};
+    /// ```rust,no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use multi_tier_cache::{CacheManager, CacheTier, TierConfig, L1Cache, L2Cache, MokaCacheConfig};
     /// use std::sync::Arc;
     ///
-    /// // L1 + L2 + L3 setup
-    /// let l1 = Arc::new(L1Cache::new()?);
+    /// // L1 + L2 setup
+    /// let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
     /// let l2 = Arc::new(L2Cache::new().await?);
-    /// let l3 = Arc::new(RocksDBCache::new("/tmp/cache").await?);
     ///
     /// let tiers = vec![
-    ///     CacheTier::new(l1, 1, false, 1.0),  // L1 - no promotion
-    ///     CacheTier::new(l2, 2, true, 1.0),   // L2 - promote to L1
-    ///     CacheTier::new(l3, 3, true, 2.0),   // L3 - promote to L2&L1, 2x TTL
+    ///     CacheTier::new(l1, 1, false, 1, 1.0),  // L1 - no promotion
+    ///     CacheTier::new(l2, 2, true, 10, 1.0),   // L2 - promote to L1
     /// ];
     ///
-    /// let manager = CacheManager::new_with_tiers(tiers, None).await?;
+    /// let manager = CacheManager::new_with_tiers(tiers, None)?;
+    /// # Ok(())
+    /// # }
     /// ```
     /// # Errors
     ///
@@ -916,7 +930,15 @@ impl CacheManager {
     /// * `compute_fn` - Async function to compute the value if not in any cache
     ///
     /// # Example
-    /// ```ignore
+    /// ```rust,no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # use multi_tier_cache::{CacheManager, CacheStrategy, L1Cache, L2Cache, MokaCacheConfig};
+    /// # use std::sync::Arc;
+    /// # let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
+    /// # let l2 = Arc::new(L2Cache::new().await?);
+    /// # let cache_manager = CacheManager::new(l1, l2).await?;
+    /// # async fn fetch_data_from_api() -> Result<bytes::Bytes, multi_tier_cache::error::CacheError> { Ok(bytes::Bytes::new()) }
     /// let api_data = cache_manager.get_or_compute_with(
     ///     "api_response",
     ///     CacheStrategy::RealTime,
@@ -924,6 +946,8 @@ impl CacheManager {
     ///         fetch_data_from_api().await
     ///     }
     /// ).await?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[allow(dead_code)]
     /// # Errors
@@ -1201,15 +1225,23 @@ impl CacheManager {
     /// Returns None if using legacy 2-tier mode.
     ///
     /// # Example
-    /// ```rust,ignore
-    /// if let Some(tier_stats) = cache_manager.get_tier_stats() {
-    ///     for stats in tier_stats {
-    ///         println!("L{}: {} hits ({})",
-    ///                  stats.tier_level,
-    ///                  stats.hit_count(),
-    ///                  stats.backend_name);
-    ///     }
+    /// ```rust,no_run
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # use multi_tier_cache::{CacheManager, L1Cache, L2Cache, MokaCacheConfig};
+    /// # use std::sync::Arc;
+    /// # let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
+    /// # let l2 = Arc::new(L2Cache::new().await?);
+    /// # let cache_manager = CacheManager::new(l1, l2).await?;
+    /// let tier_stats = cache_manager.get_tier_stats();
+    /// for stats in tier_stats {
+    ///     println!("L{}: {} hits ({})",
+    ///              stats.tier_level,
+    ///              stats.hit_count(),
+    ///              stats.backend_name);
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get_tier_stats(&self) -> Vec<TierStats> {
         self.tiers.iter().map(|tier| tier.stats.clone()).collect()

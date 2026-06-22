@@ -11,7 +11,7 @@
 //!
 //! # Example: Custom L1 Backend
 //!
-/// ```rust,ignore
+/// ```rust,no_run
 /// use multi_tier_cache::error::{CacheError, CacheResult};
 /// use bytes::Bytes;
 /// use std::time::Duration;
@@ -164,7 +164,7 @@ pub trait CacheBackend: Send + Sync {
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use multi_tier_cache::error::{CacheError, CacheResult};
 /// use bytes::Bytes;
 /// use std::time::Duration;
@@ -221,9 +221,10 @@ pub type StreamEntry = (String, Vec<(String, String)>);
 ///
 /// # Example
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use multi_tier_cache::error::{CacheError, CacheResult};
-/// use multi_tier_cache::{StreamingBackend, StreamEntry};
+/// use multi_tier_cache::StreamingBackend;
+/// use multi_tier_cache::traits::StreamEntry;
 /// use futures_util::future::BoxFuture;
 ///
 /// struct MyStreamingCache;

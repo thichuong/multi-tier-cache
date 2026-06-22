@@ -18,16 +18,33 @@
 //!
 //! # Example: Custom L1 Backend
 //!
-//! ```rust,ignore
+//! ```rust,no_run
+//! # use std::sync::Arc;
+//! # use futures_util::future::BoxFuture;
+//! # use bytes::Bytes;
+//! # use std::time::Duration;
+//! # use multi_tier_cache::error::CacheResult;
+//! # struct MyCustomL1Cache;
+//! # impl multi_tier_cache::CacheBackend for MyCustomL1Cache {
+//! #     fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> { Box::pin(async { None }) }
+//! #     fn set_with_ttl<'a>(&'a self, _key: &'a str, _value: Bytes, _ttl: Duration) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+//! #     fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+//! #     fn health_check(&self) -> BoxFuture<'_, bool> { Box::pin(async { true }) }
+//! #     fn name(&self) -> &'static str { "MyCustomL1" }
+//! # }
+//! # #[tokio::main]
+//! # async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! use multi_tier_cache::{CacheSystemBuilder, CacheBackend};
 //! use std::sync::Arc;
 //!
-//! let custom_l1 = Arc::new(MyCustomL1Cache::new());
+//! let custom_l1 = Arc::new(MyCustomL1Cache);
 //!
 //! let cache = CacheSystemBuilder::new()
 //!     .with_l1(custom_l1)
 //!     .build()
 //!     .await?;
+//! # Ok(())
+//! # }
 //! ```
 
 #[cfg(feature = "moka")]
@@ -88,13 +105,32 @@ use tracing::info;
 ///
 /// # Example - Custom 3-Tier (v0.5.0+)
 ///
-/// ```rust,ignore
-/// use multi_tier_cache::{CacheSystemBuilder, TierConfig};
+/// ```rust,no_run
+/// # use std::sync::Arc;
+/// # use futures_util::future::BoxFuture;
+/// # use bytes::Bytes;
+/// # use std::time::Duration;
+/// # use multi_tier_cache::error::CacheResult;
+/// # use multi_tier_cache::{CacheBackend, L2CacheBackend};
+/// # struct RocksDBCache;
+/// # impl CacheBackend for RocksDBCache {
+/// #     fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> { Box::pin(async { None }) }
+/// #     fn set_with_ttl<'a>(&'a self, _key: &'a str, _value: Bytes, _ttl: Duration) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+/// #     fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+/// #     fn health_check(&self) -> BoxFuture<'_, bool> { Box::pin(async { true }) }
+/// #     fn name(&self) -> &'static str { "RocksDB" }
+/// # }
+/// # impl L2CacheBackend for RocksDBCache {
+/// #     fn get_with_ttl<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> { Box::pin(async { None }) }
+/// # }
+/// # #[tokio::main]
+/// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// use multi_tier_cache::{CacheSystemBuilder, TierConfig, L1Cache, L2Cache, MokaCacheConfig};
 /// use std::sync::Arc;
 ///
-/// let l1 = Arc::new(L1Cache::new().await?);
+/// let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
 /// let l2 = Arc::new(L2Cache::new().await?);
-/// let l3 = Arc::new(RocksDBCache::new("/tmp/cache").await?);
+/// let l3 = Arc::new(RocksDBCache);
 ///
 /// let cache = CacheSystemBuilder::new()
 ///     .with_tier(l1, TierConfig::as_l1())
@@ -102,6 +138,8 @@ use tracing::info;
 ///     .with_l3(l3)  // Convenience method
 ///     .build()
 ///     .await?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct CacheSystemBuilder {
     // Legacy 2-tier configuration (v0.1.0 - v0.4.x)
@@ -144,16 +182,33 @@ impl CacheSystemBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use std::sync::Arc;
+    /// # use futures_util::future::BoxFuture;
+    /// # use bytes::Bytes;
+    /// # use std::time::Duration;
+    /// # use multi_tier_cache::error::CacheResult;
+    /// # struct MyCustomL1;
+    /// # impl multi_tier_cache::CacheBackend for MyCustomL1 {
+    /// #     fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> { Box::pin(async { None }) }
+    /// #     fn set_with_ttl<'a>(&'a self, _key: &'a str, _value: Bytes, _ttl: Duration) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn health_check(&self) -> BoxFuture<'_, bool> { Box::pin(async { true }) }
+    /// #     fn name(&self) -> &'static str { "MyCustomL1" }
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::sync::Arc;
     /// use multi_tier_cache::CacheSystemBuilder;
     ///
-    /// let custom_l1 = Arc::new(MyCustomL1::new());
+    /// let custom_l1 = Arc::new(MyCustomL1);
     ///
     /// let cache = CacheSystemBuilder::new()
     ///     .with_l1(custom_l1)
     ///     .build()
     ///     .await?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_l1(mut self, backend: Arc<dyn CacheBackend>) -> Self {
@@ -178,16 +233,37 @@ impl CacheSystemBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use std::sync::Arc;
+    /// # use futures_util::future::BoxFuture;
+    /// # use bytes::Bytes;
+    /// # use std::time::Duration;
+    /// # use multi_tier_cache::error::CacheResult;
+    /// # use multi_tier_cache::{CacheBackend, L2CacheBackend};
+    /// # struct MyMemcachedBackend;
+    /// # impl CacheBackend for MyMemcachedBackend {
+    /// #     fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> { Box::pin(async { None }) }
+    /// #     fn set_with_ttl<'a>(&'a self, _key: &'a str, _value: Bytes, _ttl: Duration) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn health_check(&self) -> BoxFuture<'_, bool> { Box::pin(async { true }) }
+    /// #     fn name(&self) -> &'static str { "MyMemcached" }
+    /// # }
+    /// # impl L2CacheBackend for MyMemcachedBackend {
+    /// #     fn get_with_ttl<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> { Box::pin(async { None }) }
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::sync::Arc;
     /// use multi_tier_cache::CacheSystemBuilder;
     ///
-    /// let custom_l2 = Arc::new(MyMemcachedBackend::new());
+    /// let custom_l2 = Arc::new(MyMemcachedBackend);
     ///
     /// let cache = CacheSystemBuilder::new()
     ///     .with_l2(custom_l2)
     ///     .build()
     ///     .await?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_l2(mut self, backend: Arc<dyn L2CacheBackend>) -> Self {
@@ -206,16 +282,34 @@ impl CacheSystemBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use std::sync::Arc;
+    /// # use futures_util::future::BoxFuture;
+    /// # use multi_tier_cache::error::CacheResult;
+    /// # use multi_tier_cache::StreamingBackend;
+    /// # use multi_tier_cache::traits::StreamEntry;
+    /// # struct MyKafkaBackend;
+    /// # impl StreamingBackend for MyKafkaBackend {
+    /// #     fn stream_add<'a>(&'a self, _s: &'a str, _f: Vec<(String, String)>, _m: Option<usize>) -> BoxFuture<'a, CacheResult<String>> { Box::pin(async { Ok("".to_string()) }) }
+    /// #     fn stream_read_latest<'a>(&'a self, _s: &'a str, _c: usize) -> BoxFuture<'a, CacheResult<Vec<StreamEntry>>> { Box::pin(async { Ok(vec![]) }) }
+    /// #     fn stream_read<'a>(&'a self, _s: &'a str, _l: &'a str, _c: usize, _b: Option<usize>) -> BoxFuture<'a, CacheResult<Vec<StreamEntry>>> { Box::pin(async { Ok(vec![]) }) }
+    /// #     fn stream_create_group<'a>(&'a self, _s: &'a str, _g: &'a str, _i: &'a str) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn stream_read_group<'a>(&'a self, _s: &'a str, _g: &'a str, _c: &'a str, _co: usize, _b: Option<usize>) -> BoxFuture<'a, CacheResult<Vec<StreamEntry>>> { Box::pin(async { Ok(vec![]) }) }
+    /// #     fn stream_ack<'a>(&'a self, _s: &'a str, _g: &'a str, _i: &'a [String]) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::sync::Arc;
     /// use multi_tier_cache::CacheSystemBuilder;
     ///
-    /// let kafka_backend = Arc::new(MyKafkaBackend::new());
+    /// let kafka_backend = Arc::new(MyKafkaBackend);
     ///
     /// let cache = CacheSystemBuilder::new()
     ///     .with_streams(kafka_backend)
     ///     .build()
     ///     .await?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_streams(mut self, backend: Arc<dyn StreamingBackend>) -> Self {
@@ -235,13 +329,32 @@ impl CacheSystemBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
-    /// use multi_tier_cache::{CacheSystemBuilder, TierConfig, L1Cache, L2Cache};
+    /// ```rust,no_run
+    /// # use std::sync::Arc;
+    /// # use futures_util::future::BoxFuture;
+    /// # use bytes::Bytes;
+    /// # use std::time::Duration;
+    /// # use multi_tier_cache::error::CacheResult;
+    /// # use multi_tier_cache::{CacheBackend, L2CacheBackend};
+    /// # struct RocksDBCache;
+    /// # impl CacheBackend for RocksDBCache {
+    /// #     fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> { Box::pin(async { None }) }
+    /// #     fn set_with_ttl<'a>(&'a self, _key: &'a str, _value: Bytes, _ttl: Duration) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn health_check(&self) -> BoxFuture<'_, bool> { Box::pin(async { true }) }
+    /// #     fn name(&self) -> &'static str { "RocksDB" }
+    /// # }
+    /// # impl L2CacheBackend for RocksDBCache {
+    /// #     fn get_with_ttl<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> { Box::pin(async { None }) }
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// use multi_tier_cache::{CacheSystemBuilder, TierConfig, L1Cache, L2Cache, MokaCacheConfig};
     /// use std::sync::Arc;
     ///
-    /// let l1 = Arc::new(L1Cache::new().await?);
+    /// let l1 = Arc::new(L1Cache::new(MokaCacheConfig::default())?);
     /// let l2 = Arc::new(L2Cache::new().await?);
-    /// let l3 = Arc::new(RocksDBCache::new("/tmp").await?);
+    /// let l3 = Arc::new(RocksDBCache);
     ///
     /// let cache = CacheSystemBuilder::new()
     ///     .with_tier(l1, TierConfig::as_l1())
@@ -249,6 +362,8 @@ impl CacheSystemBuilder {
     ///     .with_tier(l3, TierConfig::as_l3())
     ///     .build()
     ///     .await?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_tier(mut self, backend: Arc<dyn L2CacheBackend>, config: TierConfig) -> Self {
@@ -266,15 +381,37 @@ impl CacheSystemBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use std::sync::Arc;
+    /// # use futures_util::future::BoxFuture;
+    /// # use bytes::Bytes;
+    /// # use std::time::Duration;
+    /// # use multi_tier_cache::error::CacheResult;
+    /// # use multi_tier_cache::{CacheBackend, L2CacheBackend};
+    /// # struct RocksDBCache;
+    /// # impl CacheBackend for RocksDBCache {
+    /// #     fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> { Box::pin(async { None }) }
+    /// #     fn set_with_ttl<'a>(&'a self, _key: &'a str, _value: Bytes, _ttl: Duration) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn health_check(&self) -> BoxFuture<'_, bool> { Box::pin(async { true }) }
+    /// #     fn name(&self) -> &'static str { "RocksDB" }
+    /// # }
+    /// # impl L2CacheBackend for RocksDBCache {
+    /// #     fn get_with_ttl<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> { Box::pin(async { None }) }
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::sync::Arc;
+    /// use multi_tier_cache::CacheSystemBuilder;
     ///
-    /// let rocksdb = Arc::new(RocksDBCache::new("/tmp/l3cache").await?);
+    /// let rocksdb = Arc::new(RocksDBCache);
     ///
     /// let cache = CacheSystemBuilder::new()
     ///     .with_l3(rocksdb)
     ///     .build()
     ///     .await?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_l3(mut self, backend: Arc<dyn L2CacheBackend>) -> Self {
@@ -292,15 +429,37 @@ impl CacheSystemBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use std::sync::Arc;
+    /// # use futures_util::future::BoxFuture;
+    /// # use bytes::Bytes;
+    /// # use std::time::Duration;
+    /// # use multi_tier_cache::error::CacheResult;
+    /// # use multi_tier_cache::{CacheBackend, L2CacheBackend};
+    /// # struct S3Cache;
+    /// # impl CacheBackend for S3Cache {
+    /// #     fn get<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<Bytes>> { Box::pin(async { None }) }
+    /// #     fn set_with_ttl<'a>(&'a self, _key: &'a str, _value: Bytes, _ttl: Duration) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn remove<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, CacheResult<()>> { Box::pin(async { Ok(()) }) }
+    /// #     fn health_check(&self) -> BoxFuture<'_, bool> { Box::pin(async { true }) }
+    /// #     fn name(&self) -> &'static str { "S3" }
+    /// # }
+    /// # impl L2CacheBackend for S3Cache {
+    /// #     fn get_with_ttl<'a>(&'a self, _key: &'a str) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> { Box::pin(async { None }) }
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::sync::Arc;
+    /// use multi_tier_cache::CacheSystemBuilder;
     ///
-    /// let s3_cache = Arc::new(S3Cache::new("my-bucket").await?);
+    /// let s3_cache = Arc::new(S3Cache);
     ///
     /// let cache = CacheSystemBuilder::new()
     ///     .with_l4(s3_cache)
     ///     .build()
     ///     .await?;
+    /// # Ok(())
+    /// # }
     /// ```
     #[must_use]
     pub fn with_l4(mut self, backend: Arc<dyn L2CacheBackend>) -> Self {
