@@ -122,8 +122,18 @@ mod serde_bytes_wrapper {
     {
         let mut hex_str = String::with_capacity(bytes.len() * 2);
         for &b in bytes.as_ref() {
-            hex_str.push(std::char::from_digit(u32::from(b >> 4), 16).unwrap());
-            hex_str.push(std::char::from_digit(u32::from(b & 0xf), 16).unwrap());
+            let high = match b >> 4 {
+                val @ 0..=9 => (b'0' + val) as char,
+                val @ 10..=15 => (b'a' + val - 10) as char,
+                _ => '0',
+            };
+            let low = match b & 0xf {
+                val @ 0..=9 => (b'0' + val) as char,
+                val @ 10..=15 => (b'a' + val - 10) as char,
+                _ => '0',
+            };
+            hex_str.push(high);
+            hex_str.push(low);
         }
         serializer.serialize_str(&hex_str)
     }
@@ -139,11 +149,13 @@ mod serde_bytes_wrapper {
         }
         let mut v = Vec::with_capacity(bytes_str.len() / 2);
         for chunk in bytes_str.chunks_exact(2) {
-            let high = parse_hex_digit(chunk[0])
-                .ok_or_else(|| serde::de::Error::custom("Invalid hex character"))?;
-            let low = parse_hex_digit(chunk[1])
-                .ok_or_else(|| serde::de::Error::custom("Invalid hex character"))?;
-            v.push((high << 4) | low);
+            if let [h, l] = chunk {
+                let high = parse_hex_digit(*h)
+                    .ok_or_else(|| serde::de::Error::custom("Invalid hex character"))?;
+                let low = parse_hex_digit(*l)
+                    .ok_or_else(|| serde::de::Error::custom("Invalid hex character"))?;
+                v.push((high << 4) | low);
+            }
         }
         Ok(Bytes::from(v))
     }
@@ -642,7 +654,10 @@ impl ReliableStreamSubscriber {
                     }
                 }
                 Err(e) => {
-                    error!("Failed to initialize Redis Streams backend for reliable subscriber: {}", e);
+                    error!(
+                        "Failed to initialize Redis Streams backend for reliable subscriber: {}",
+                        e
+                    );
                 }
             }
         })

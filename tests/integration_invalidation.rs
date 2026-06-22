@@ -228,23 +228,37 @@ async fn test_bulk_invalidation() {
 /// Test invalidation message serialization is compact hex
 #[tokio::test]
 async fn test_invalidation_message_hex_serialization() {
-    use multi_tier_cache::InvalidationMessage;
     use bytes::Bytes;
-    
+    use multi_tier_cache::InvalidationMessage;
+
     let key = "test_hex_key";
     let original_bytes = Bytes::from(vec![0xAA, 0xBB, 0xCC, 0x00, 0x11, 0xFF]);
     let msg = InvalidationMessage::update(key, original_bytes.clone(), None);
 
     // Serialize to JSON
-    let json = msg.to_json().unwrap_or_else(|e| panic!("Failed to serialize message: {e:?}"));
+    let json = msg
+        .to_json()
+        .unwrap_or_else(|e| panic!("Failed to serialize message: {e:?}"));
 
     // The JSON string should contain the hex representation "aabbcc0011ff" and NOT integer array "[170,187,...]"
-    assert!(json.contains("aabbcc0011ff"), "JSON does not contain the expected hex payload: {json}");
-    assert!(!json.contains("170"), "JSON contains integer array values, serialization is not using optimized hex format!");
+    assert!(
+        json.contains("aabbcc0011ff"),
+        "JSON does not contain the expected hex payload: {json}"
+    );
+    assert!(
+        !json.contains("170"),
+        "JSON contains integer array values, serialization is not using optimized hex format!"
+    );
 
     // Deserialize back and verify
-    let parsed = InvalidationMessage::from_json(&json).unwrap_or_else(|e| panic!("Failed to deserialize message: {e:?}"));
-    if let InvalidationMessage::Update { key: parsed_key, value: parsed_bytes, .. } = parsed {
+    let parsed = InvalidationMessage::from_json(&json)
+        .unwrap_or_else(|e| panic!("Failed to deserialize message: {e:?}"));
+    if let InvalidationMessage::Update {
+        key: parsed_key,
+        value: parsed_bytes,
+        ..
+    } = parsed
+    {
         assert_eq!(parsed_key, key);
         assert_eq!(parsed_bytes, original_bytes);
     } else {

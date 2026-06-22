@@ -128,15 +128,12 @@ impl CacheBackend for RedisCache {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
             let result: redis::RedisResult<Option<Vec<u8>>> = conn.get(key).await;
-            match result {
-                Ok(Some(bytes)) => {
-                    self.hits.fetch_add(1, Ordering::Relaxed);
-                    Some(Bytes::from(bytes))
-                }
-                _ => {
-                    self.misses.fetch_add(1, Ordering::Relaxed);
-                    None
-                }
+            if let Ok(Some(bytes)) = result {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                Some(Bytes::from(bytes))
+            } else {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
             }
         })
     }
@@ -207,20 +204,17 @@ impl L2CacheBackend for RedisCache {
                     Err(_) => return None,
                 };
 
-            match bytes {
-                Some(b) => {
-                    self.hits.fetch_add(1, Ordering::Relaxed);
-                    let ttl = if ttl_secs > 0 {
-                        Some(Duration::from_secs(ttl_secs.unsigned_abs()))
-                    } else {
-                        None
-                    };
-                    Some((Bytes::from(b), ttl))
-                }
-                None => {
-                    self.misses.fetch_add(1, Ordering::Relaxed);
+            if let Some(b) = bytes {
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                let ttl = if ttl_secs > 0 {
+                    Some(Duration::from_secs(ttl_secs.unsigned_abs()))
+                } else {
                     None
-                }
+                };
+                Some((Bytes::from(b), ttl))
+            } else {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
             }
         })
     }

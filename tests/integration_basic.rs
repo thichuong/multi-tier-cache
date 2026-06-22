@@ -417,7 +417,10 @@ async fn test_negative_caching() {
         .await
         .unwrap_or_else(|_| panic!("Failed to get or compute empty cache"));
     assert_eq!(cached_or_computed, empty_value);
-    assert_eq!(computed_count, 0, "Compute function was called, bypassing negative cache hit!");
+    assert_eq!(
+        computed_count, 0,
+        "Compute function was called, bypassing negative cache hit!"
+    );
 
     // Cleanup
     let _ = cache

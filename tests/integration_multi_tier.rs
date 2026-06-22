@@ -551,5 +551,8 @@ async fn test_memcached_tier_integration() {
     // Verify stats
     let tier_stats = manager.get_tier_stats();
     assert_eq!(tier_stats.len(), 2);
-    assert_eq!(tier_stats.get(1).map(|s| s.backend_name.as_str()), Some("Memcached"));
+    assert_eq!(
+        tier_stats.get(1).map(|s| s.backend_name.as_str()),
+        Some("Memcached")
+    );
 }
