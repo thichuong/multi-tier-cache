@@ -107,20 +107,44 @@ mod serde_bytes_wrapper {
     use bytes::Bytes;
     use serde::{Deserialize, Deserializer, Serializer};
 
+    fn parse_hex_digit(b: u8) -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    }
+
     pub fn serialize<S>(bytes: &Bytes, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        // For JSON, we use a vector of bytes.
-        // In a real production system, we'd use Base64.
-        serializer.serialize_bytes(bytes)
+        let mut hex_str = String::with_capacity(bytes.len() * 2);
+        for &b in bytes.as_ref() {
+            hex_str.push(std::char::from_digit(u32::from(b >> 4), 16).unwrap());
+            hex_str.push(std::char::from_digit(u32::from(b & 0xf), 16).unwrap());
+        }
+        serializer.serialize_str(&hex_str)
     }
 
     pub fn deserialize<'de, D>(deserializer: D) -> Result<Bytes, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let v: Vec<u8> = Vec::deserialize(deserializer)?;
+        let hex_str = String::deserialize(deserializer)?;
+        let bytes_str = hex_str.as_bytes();
+        if bytes_str.len() % 2 != 0 {
+            return Err(serde::de::Error::custom("Odd-length hex string"));
+        }
+        let mut v = Vec::with_capacity(bytes_str.len() / 2);
+        for chunk in bytes_str.chunks_exact(2) {
+            let high = parse_hex_digit(chunk[0])
+                .ok_or_else(|| serde::de::Error::custom("Invalid hex character"))?;
+            let low = parse_hex_digit(chunk[1])
+                .ok_or_else(|| serde::de::Error::custom("Invalid hex character"))?;
+            v.push((high << 4) | low);
+        }
         Ok(Bytes::from(v))
     }
 }
@@ -526,7 +550,7 @@ impl InvalidationSubscriber {
 
 /// Reliable subscriber using Redis Streams and Consumer Groups
 pub struct ReliableStreamSubscriber {
-    client: redis::Client,
+    redis_url: String,
     config: InvalidationConfig,
     stats: Arc<AtomicInvalidationStats>,
     shutdown_tx: broadcast::Sender<()>,
@@ -541,7 +565,7 @@ impl ReliableStreamSubscriber {
     ///
     /// Returns an error if the Redis client fails to open.
     pub fn new(redis_url: &str, config: InvalidationConfig, group_name: &str) -> CacheResult<Self> {
-        let client = redis::Client::open(redis_url).map_err(|e| {
+        let _client = redis::Client::open(redis_url).map_err(|e| {
             crate::error::CacheError::ConfigError(format!(
                 "Failed to create Redis client for reliable subscriber: {e}"
             ))
@@ -551,7 +575,7 @@ impl ReliableStreamSubscriber {
         let consumer_name = format!("consumer-{}", Uuid::new_v4());
 
         Ok(Self {
-            client,
+            redis_url: redis_url.to_string(),
             config,
             stats: Arc::new(AtomicInvalidationStats::default()),
             shutdown_tx,
@@ -565,13 +589,13 @@ impl ReliableStreamSubscriber {
         F: Fn(InvalidationMessage) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = CacheResult<()>> + Send + 'static,
     {
-        let client = self.client.clone();
         let stream_key = self.config.channel.clone();
         let group_name = self.group_name.clone();
         let consumer_name = self.consumer_name.clone();
         let handler = Arc::new(handler);
         let stats = self.stats.clone();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let redis_url = self.redis_url.clone();
 
         tokio::spawn(async move {
             info!(
@@ -582,41 +606,43 @@ impl ReliableStreamSubscriber {
             );
 
             // 1. Ensure stream and group exist
-            let redis_backend = crate::redis_streams::RedisStreams::new(
-                client.get_connection_info().addr().to_string().as_str(),
-            )
-            .await;
-            if let Ok(backend) = redis_backend {
-                let _ = backend
-                    .stream_create_group(&stream_key, &group_name, "0")
-                    .await;
+            let redis_backend = crate::redis_streams::RedisStreams::new(&redis_url).await;
+            match redis_backend {
+                Ok(backend) => {
+                    let _ = backend
+                        .stream_create_group(&stream_key, &group_name, "0")
+                        .await;
 
-                loop {
-                    // Check shutdown before starting loop
-                    if shutdown_rx.try_recv().is_ok() {
-                        break;
-                    }
-
-                    if let Err(e) = Self::run_reliable_loop(
-                        &backend,
-                        &stream_key,
-                        &group_name,
-                        &consumer_name,
-                        handler.clone(),
-                        stats.clone(),
-                        &mut shutdown_rx,
-                    )
-                    .await
-                    {
-                        error!("Reliable subscriber loop error: {}", e);
-
-                        tokio::select! {
-                            () = tokio::time::sleep(Duration::from_secs(5)) => {},
-                            _ = shutdown_rx.recv() => break,
+                    loop {
+                        // Check shutdown before starting loop
+                        if shutdown_rx.try_recv().is_ok() {
+                            break;
                         }
-                    } else {
-                        break; // Normal shutdown
+
+                        if let Err(e) = Self::run_reliable_loop(
+                            &backend,
+                            &stream_key,
+                            &group_name,
+                            &consumer_name,
+                            handler.clone(),
+                            stats.clone(),
+                            &mut shutdown_rx,
+                        )
+                        .await
+                        {
+                            error!("Reliable subscriber loop error: {}", e);
+
+                            tokio::select! {
+                                () = tokio::time::sleep(Duration::from_secs(5)) => {},
+                                _ = shutdown_rx.recv() => break,
+                            }
+                        } else {
+                            break; // Normal shutdown
+                        }
                     }
+                }
+                Err(e) => {
+                    error!("Failed to initialize Redis Streams backend for reliable subscriber: {}", e);
                 }
             }
         })

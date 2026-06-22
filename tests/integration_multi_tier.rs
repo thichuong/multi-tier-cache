@@ -503,3 +503,53 @@ async fn test_stampede_retrieves_from_l3() {
 
     println!("✅ Stampede retrieves from L3 test passed");
 }
+
+/// Test `MemcachedCache` implementing `L2CacheBackend` and integration with `CacheSystemBuilder`
+#[cfg(feature = "memcached")]
+#[tokio::test]
+async fn test_memcached_tier_integration() {
+    // If memcached server is not running, we skip the test instead of failing
+    let memcached_backend = match multi_tier_cache::backends::MemcachedCache::new() {
+        Ok(backend) => Arc::new(backend),
+        Err(e) => {
+            println!("Skipping Memcached integration test: Memcached server not available ({e})");
+            return;
+        }
+    };
+
+    let l1 = Arc::new(
+        L2Cache::new()
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create L1")),
+    );
+
+    // Build cache system with Memcached as L2 tier!
+    let cache = CacheSystemBuilder::new()
+        .with_tier(l1, TierConfig::as_l1())
+        .with_tier(memcached_backend, TierConfig::as_l2())
+        .build()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to build cache system with Memcached"));
+
+    let manager = cache.cache_manager();
+    let key = test_key("memcached_tier");
+    let test_value = Bytes::from("memcached_data");
+
+    // Set value - should store in Memcached as well
+    manager
+        .set_with_strategy(&key, test_value.clone(), CacheStrategy::ShortTerm)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to set cache"));
+
+    // Get value
+    let result = manager
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get cache"));
+    assert_eq!(result, Some(test_value));
+
+    // Verify stats
+    let tier_stats = manager.get_tier_stats();
+    assert_eq!(tier_stats.len(), 2);
+    assert_eq!(tier_stats.get(1).map(|s| s.backend_name.as_str()), Some("Memcached"));
+}

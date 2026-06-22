@@ -381,3 +381,49 @@ async fn test_cache_strategies() {
             .await;
     }
 }
+
+/// Test negative caching (caching empty bytes)
+#[tokio::test]
+async fn test_negative_caching() {
+    let cache = setup_cache_system()
+        .await
+        .unwrap_or_else(|_| panic!("Failed to setup cache"));
+    let key = test_key("negative_caching");
+    let empty_value = bytes::Bytes::new();
+
+    // Store empty bytes
+    cache
+        .cache_manager()
+        .set_with_strategy(&key, empty_value.clone(), CacheStrategy::ShortTerm)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to set empty cache"));
+
+    // Retrieve - should be a hit returning empty bytes (not None)
+    let cached = cache
+        .cache_manager()
+        .get(&key)
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get empty cache"));
+    assert_eq!(cached, Some(empty_value.clone()));
+
+    // Retrieve via get_or_compute_with - should NOT compute again
+    let mut computed_count = 0;
+    let cached_or_computed = cache
+        .cache_manager()
+        .get_or_compute_with(&key, CacheStrategy::ShortTerm, || async {
+            computed_count += 1;
+            Ok(bytes::Bytes::from("should not compute"))
+        })
+        .await
+        .unwrap_or_else(|_| panic!("Failed to get or compute empty cache"));
+    assert_eq!(cached_or_computed, empty_value);
+    assert_eq!(computed_count, 0, "Compute function was called, bypassing negative cache hit!");
+
+    // Cleanup
+    let _ = cache
+        .l2_cache
+        .as_ref()
+        .unwrap_or_else(|| panic!("L2 cache missing"))
+        .remove(&key)
+        .await;
+}

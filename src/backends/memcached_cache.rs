@@ -199,3 +199,12 @@ impl CacheBackend for MemcachedCache {
         "Memcached"
     }
 }
+
+impl crate::traits::L2CacheBackend for MemcachedCache {
+    fn get_with_ttl<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
+        Box::pin(async move { self.get(key).await.map(|v| (v, None)) })
+    }
+}

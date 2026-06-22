@@ -127,9 +127,9 @@ impl CacheBackend for RedisCache {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
-            let result: redis::RedisResult<Vec<u8>> = conn.get(key).await;
+            let result: redis::RedisResult<Option<Vec<u8>>> = conn.get(key).await;
             match result {
-                Ok(bytes) if !bytes.is_empty() => {
+                Ok(Some(bytes)) => {
                     self.hits.fetch_add(1, Ordering::Relaxed);
                     Some(Bytes::from(bytes))
                 }
@@ -208,7 +208,7 @@ impl L2CacheBackend for RedisCache {
                 };
 
             match bytes {
-                Some(b) if !b.is_empty() => {
+                Some(b) => {
                     self.hits.fetch_add(1, Ordering::Relaxed);
                     let ttl = if ttl_secs > 0 {
                         Some(Duration::from_secs(ttl_secs.unsigned_abs()))
@@ -217,7 +217,7 @@ impl L2CacheBackend for RedisCache {
                     };
                     Some((Bytes::from(b), ttl))
                 }
-                _ => {
+                None => {
                     self.misses.fetch_add(1, Ordering::Relaxed);
                     None
                 }
