@@ -11,6 +11,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Metrics export (Prometheus format)
 
+## [0.6.7] - 2026-07-12
+
+### Added
+
+- **Memcached L2 Support**: Added `MemcachedCache` implementing `L2CacheBackend` and integrated it with `CacheSystemBuilder`.
+- **Negative Caching**: Enabled caching of empty bytes (returning `Some(empty_bytes)` instead of triggering misses or re-computing).
+
+### Changed
+
+- **Memcached Blocking Calls**: Wrapped blocking memcached calls in `tokio::task::spawn_blocking` to prevent blocking the async runtime executor.
+- **Custom Error Handling**: Migrated all cache backends and managers to return the custom `CacheResult`/`CacheError` types.
+- **Optimized Invalidation Messages**: Refactored invalidation payload serialization to use compact hex string encoding rather than raw byte integer arrays, reducing payload sizes.
+- **Code Simplification**: Cleaned up match statements in `RedisCache` backend.
+
+### Docs
+
+- **Doc Tests Validation**: Updated inline documentation and example code in `builder.rs` and `cache_manager.rs` to use valid, runnable Rust code with `#[tokio::main]`.
+
 ## [0.6.6] - 2026-06-07
 
 ### Changed
@@ -874,7 +892,24 @@ This is the initial release extracted from a production web server project that 
 
 The cache system was originally developed as `cache_system_island` module and has been refactored into a standalone, reusable library with zero business logic coupling.
 
-[Unreleased]: https://github.com/thichuong/multi-tier-cache/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.7...HEAD
+[0.6.7]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.6...v0.6.7
+[0.6.6]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.5...v0.6.6
+[0.6.5]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.4...v0.6.5
+[0.6.4]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.3...v0.6.4
+[0.6.3]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/thichuong/multi-tier-cache/compare/v0.5.7...v0.6.1
+[0.5.7]: https://github.com/thichuong/multi-tier-cache/compare/v0.5.6...v0.5.7
+[0.5.6]: https://github.com/thichuong/multi-tier-cache/compare/v0.5.5...v0.5.6
+[0.5.5]: https://github.com/thichuong/multi-tier-cache/compare/v0.5.4...v0.5.5
+[0.5.4]: https://github.com/thichuong/multi-tier-cache/compare/v0.5.3...v0.5.4
+[0.5.3]: https://github.com/thichuong/multi-tier-cache/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/thichuong/multi-tier-cache/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/thichuong/multi-tier-cache/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/thichuong/multi-tier-cache/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/thichuong/multi-tier-cache/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/thichuong/multi-tier-cache/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/thichuong/multi-tier-cache/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/thichuong/multi-tier-cache/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/thichuong/multi-tier-cache/compare/v0.1.2...v0.2.0
