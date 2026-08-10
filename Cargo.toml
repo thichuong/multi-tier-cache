@@ -13,7 +13,7 @@ readme = "README.md"
 
 [dependencies]
 # Caching
-memcache = { version = "0.19", optional = true }
+memcache = { version = "0.20", optional = true }
 quick_cache = { version = "0.6", optional = true }
 parking_lot = { version = "0.12", optional = true }
 futures-util = "0.3"
