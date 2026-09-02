@@ -11,7 +11,7 @@ use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 /// Invalidation message types sent across cache instances via Redis Pub/Sub
@@ -37,6 +37,50 @@ pub enum InvalidationMessage {
 
     /// Bulk remove multiple keys at once
     RemoveBulk { keys: Vec<String> },
+}
+
+/// Envelope for invalidation messages supporting instance tracking to avoid self-invalidation echo
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvalidationEnvelope {
+    /// Originating instance ID (to prevent self-invalidation echo)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_id: Option<String>,
+
+    /// The wrapped invalidation message
+    #[serde(flatten)]
+    pub message: InvalidationMessage,
+}
+
+impl InvalidationEnvelope {
+    /// Create a new envelope with optional origin ID
+    #[must_use]
+    pub fn new(message: InvalidationMessage, origin_id: Option<String>) -> Self {
+        Self { origin_id, message }
+    }
+
+    /// Parse JSON payload into an `InvalidationEnvelope`
+    ///
+    /// # Errors
+    /// Returns error if deserialization fails.
+    pub fn parse(json: &str) -> CacheResult<Self> {
+        serde_json::from_str(json).map_err(|e| {
+            crate::error::CacheError::SerializationError(format!(
+                "Failed to deserialize invalidation envelope: {e}"
+            ))
+        })
+    }
+
+    /// Serialize envelope to JSON string
+    ///
+    /// # Errors
+    /// Returns error if serialization fails.
+    pub fn to_json(&self) -> CacheResult<String> {
+        serde_json::to_string(self).map_err(|e| {
+            crate::error::CacheError::SerializationError(format!(
+                "Failed to serialize invalidation envelope: {e}"
+            ))
+        })
+    }
 }
 
 impl InvalidationMessage {
@@ -210,12 +254,29 @@ impl InvalidationPublisher {
     /// # Errors
     ///
     /// Returns an error if serialization or publishing fails.
-    pub async fn publish(&mut self, message: &InvalidationMessage) -> CacheResult<()> {
-        let json = message.to_json()?;
+    pub async fn publish(&self, message: &InvalidationMessage) -> CacheResult<()> {
+        self.publish_with_origin(message, None).await
+    }
+
+    /// Publish an invalidation message with an origin ID to prevent self-invalidation echo
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if serialization or publishing fails.
+    pub async fn publish_with_origin(
+        &self,
+        message: &InvalidationMessage,
+        origin_id: Option<&str>,
+    ) -> CacheResult<()> {
+        let envelope = InvalidationEnvelope {
+            origin_id: origin_id.map(ToString::to_string),
+            message: message.clone(),
+        };
+        let json = envelope.to_json()?;
 
         // Publish to Pub/Sub channel
-        let _: () = self
-            .connection
+        let mut conn = self.connection.clone();
+        let _: () = conn
             .publish(&self.config.channel, &json)
             .await
             .map_err(|e| {
@@ -226,7 +287,7 @@ impl InvalidationPublisher {
 
         // Optionally publish to audit stream
         if self.config.enable_audit_stream
-            && let Err(e) = self.publish_to_audit_stream(message).await
+            && let Err(e) = self.publish_to_audit_stream(message, &json).await
         {
             // Don't fail the invalidation if audit logging fails
             warn!("Failed to publish to audit stream: {}", e);
@@ -236,7 +297,11 @@ impl InvalidationPublisher {
     }
 
     /// Publish to audit stream for observability
-    async fn publish_to_audit_stream(&mut self, message: &InvalidationMessage) -> CacheResult<()> {
+    async fn publish_to_audit_stream(
+        &self,
+        message: &InvalidationMessage,
+        payload_json: &str,
+    ) -> CacheResult<()> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
@@ -270,7 +335,11 @@ impl InvalidationPublisher {
             }
         }
 
-        let mut fields = vec![("type", type_str), ("timestamp", timestamp.as_str())];
+        let mut fields = vec![
+            ("type", type_str),
+            ("timestamp", timestamp.as_str()),
+            ("payload", payload_json),
+        ];
 
         if !key_str.is_empty() {
             fields.push(("key", key_str));
@@ -292,7 +361,8 @@ impl InvalidationPublisher {
             cmd.arg(key).arg(value);
         }
 
-        let _: String = cmd.query_async(&mut self.connection).await.map_err(|e| {
+        let mut conn = self.connection.clone();
+        let _: String = cmd.query_async(&mut conn).await.map_err(|e| {
             crate::error::CacheError::BackendError(format!("Failed to add to audit stream: {e}"))
         })?;
 
@@ -368,6 +438,8 @@ pub struct InvalidationSubscriber {
     stats: Arc<AtomicInvalidationStats>,
     /// Shutdown signal sender
     shutdown_tx: broadcast::Sender<()>,
+    /// Instance ID to filter self-invalidation echo
+    instance_id: Option<String>,
 }
 
 impl InvalidationSubscriber {
@@ -393,7 +465,15 @@ impl InvalidationSubscriber {
             config,
             stats: Arc::new(AtomicInvalidationStats::default()),
             shutdown_tx,
+            instance_id: None,
         })
+    }
+
+    /// Set instance ID for filtering out self-invalidation messages
+    #[must_use]
+    pub fn with_instance_id(mut self, instance_id: impl Into<String>) -> Self {
+        self.instance_id = Some(instance_id.into());
+        self
     }
 
     /// Get a snapshot of current statistics
@@ -418,6 +498,7 @@ impl InvalidationSubscriber {
         let channel = self.config.channel.clone();
         let stats = Arc::clone(&self.stats);
         let mut shutdown_rx = self.shutdown_tx.subscribe();
+        let instance_id = self.instance_id.clone();
 
         tokio::spawn(async move {
             let handler = Arc::new(handler);
@@ -435,6 +516,7 @@ impl InvalidationSubscriber {
                     &channel,
                     Arc::clone(&handler),
                     Arc::clone(&stats),
+                    instance_id.clone(),
                     &mut shutdown_rx,
                 )
                 .await
@@ -470,6 +552,7 @@ impl InvalidationSubscriber {
         channel: &str,
         handler: Arc<F>,
         stats: Arc<AtomicInvalidationStats>,
+        instance_id: Option<String>,
         shutdown_rx: &mut broadcast::Receiver<()>,
     ) -> CacheResult<()>
     where
@@ -508,8 +591,8 @@ impl InvalidationSubscriber {
                                 }
                             };
 
-                            // Deserialize message
-                            let invalidation_msg = match InvalidationMessage::from_json(&payload) {
+                            // Deserialize envelope
+                            let envelope = match InvalidationEnvelope::parse(&payload) {
                                 Ok(m) => m,
                                 Err(e) => {
                                     warn!("Failed to deserialize invalidation message: {}", e);
@@ -517,6 +600,16 @@ impl InvalidationSubscriber {
                                     continue;
                                 }
                             };
+
+                            // Filter self-invalidation echo
+                            if let (Some(my_id), Some(sender_id)) = (&instance_id, &envelope.origin_id)
+                                && my_id == sender_id
+                            {
+                                debug!(instance_id = %my_id, "Skipping self-invalidation echo");
+                                continue;
+                            }
+
+                            let invalidation_msg = envelope.message;
 
                             // Update stats
                             stats.messages_received.fetch_add(1, Ordering::Relaxed);
@@ -689,7 +782,7 @@ impl ReliableStreamSubscriber {
                             .map(|(_, v)| v.as_str())
                             .or_else(|| fields.first().map(|(_, v)| v.as_str()));
 
-                        if let Some(msg) = payload.and_then(|json| InvalidationMessage::from_json(json).ok()) {
+                        if let Some(msg) = payload.and_then(|json| InvalidationEnvelope::parse(json).map(|env| env.message).or_else(|_| InvalidationMessage::from_json(json)).ok()) {
                             stats.messages_received.fetch_add(1, Ordering::Relaxed);
                             if let Err(e) = handler(msg).await {
                                 error!("Reliable handler error: {}", e);
@@ -776,5 +869,30 @@ mod tests {
         assert_eq!(config.channel, "cache:invalidate");
         assert!(!config.auto_broadcast_on_write);
         assert!(!config.enable_audit_stream);
+    }
+
+    #[test]
+    fn test_invalidation_envelope_with_and_without_origin() -> CacheResult<()> {
+        let msg = InvalidationMessage::remove("user:42");
+        let envelope = InvalidationEnvelope::new(msg, Some("node-1".to_string()));
+        let json = envelope.to_json()?;
+
+        let parsed = InvalidationEnvelope::parse(&json)?;
+        assert_eq!(parsed.origin_id, Some("node-1".to_string()));
+        match parsed.message {
+            InvalidationMessage::Remove { key } => assert_eq!(key, "user:42"),
+            _ => panic!("Expected Remove variant"),
+        }
+
+        // Backward compatibility: parsing legacy JSON without origin_id
+        let legacy_json = r#"{"type":"Remove","key":"user:42"}"#;
+        let parsed_legacy = InvalidationEnvelope::parse(legacy_json)?;
+        assert_eq!(parsed_legacy.origin_id, None);
+        match parsed_legacy.message {
+            InvalidationMessage::Remove { key } => assert_eq!(key, "user:42"),
+            _ => panic!("Expected Remove variant"),
+        }
+
+        Ok(())
     }
 }

@@ -2,6 +2,7 @@
 //!
 //! These tests verify core functionality with real Redis instance.
 
+#[macro_use]
 mod common;
 
 use common::*;
@@ -11,6 +12,7 @@ use std::time::Duration;
 /// Test basic cache set and get operations
 #[tokio::test]
 async fn test_basic_set_and_get() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -45,6 +47,7 @@ async fn test_basic_set_and_get() {
 /// Test L1 hit path
 #[tokio::test]
 async fn test_l1_cache_hit() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -89,6 +92,7 @@ async fn test_l1_cache_hit() {
 /// Test L2-to-L1 promotion
 #[tokio::test]
 async fn test_l2_to_l1_promotion() {
+    skip_if_no_redis!();
     let cache = setup_cache_with_n(1)
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -136,6 +140,7 @@ async fn test_l2_to_l1_promotion() {
 /// Test cache miss behavior
 #[tokio::test]
 async fn test_cache_miss() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -157,6 +162,7 @@ async fn test_cache_miss() {
 /// Test compute-on-miss pattern
 #[tokio::test]
 async fn test_compute_on_miss() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -195,6 +201,7 @@ async fn test_compute_on_miss() {
 /// Test type-safe caching
 #[tokio::test]
 async fn test_type_safe_caching() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -236,6 +243,7 @@ async fn test_type_safe_caching() {
 /// Test TTL expiration
 #[tokio::test]
 async fn test_ttl_expiration() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -284,6 +292,7 @@ async fn test_ttl_expiration() {
 /// Test cache statistics tracking
 #[tokio::test]
 async fn test_statistics_tracking() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -331,6 +340,7 @@ async fn test_statistics_tracking() {
 /// Test health check functionality
 #[tokio::test]
 async fn test_health_check() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -342,6 +352,7 @@ async fn test_health_check() {
 /// Test different cache strategies
 #[tokio::test]
 async fn test_cache_strategies() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -385,6 +396,7 @@ async fn test_cache_strategies() {
 /// Test negative caching (caching empty bytes)
 #[tokio::test]
 async fn test_negative_caching() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));

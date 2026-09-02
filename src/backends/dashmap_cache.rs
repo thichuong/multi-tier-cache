@@ -32,6 +32,8 @@ impl CacheEntry {
 pub struct DashMapCache {
     /// Concurrent `HashMap`
     map: Arc<DashMap<String, CacheEntry>>,
+    /// Optional maximum capacity limit
+    max_capacity: Option<usize>,
     /// Hit counter
     hits: Arc<AtomicU64>,
     /// Miss counter
@@ -47,10 +49,32 @@ impl DashMapCache {
 
         Self {
             map: Arc::new(DashMap::new()),
+            max_capacity: None,
             hits: Arc::new(AtomicU64::new(0)),
             misses: Arc::new(AtomicU64::new(0)),
             sets: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Create new `DashMap` cache with capacity limit
+    #[must_use]
+    pub fn new_with_capacity(capacity: usize) -> Self {
+        info!(capacity = capacity, "Initializing DashMap Cache with capacity limit");
+
+        Self {
+            map: Arc::new(DashMap::with_capacity(capacity)),
+            max_capacity: Some(capacity),
+            hits: Arc::new(AtomicU64::new(0)),
+            misses: Arc::new(AtomicU64::new(0)),
+            sets: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// Set maximum capacity limit
+    #[must_use]
+    pub fn with_max_capacity(mut self, capacity: usize) -> Self {
+        self.max_capacity = Some(capacity);
+        self
     }
 
     /// Cleanup expired entries
@@ -117,6 +141,14 @@ impl CacheBackend for DashMapCache {
         ttl: Duration,
     ) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
+            // If capacity limit reached and not an existing key, evict expired entries
+            if let Some(cap) = self.max_capacity
+                && self.map.len() >= cap
+                && !self.map.contains_key(key)
+            {
+                self.cleanup_expired();
+            }
+
             let entry = CacheEntry::new(value, ttl);
             self.map.insert(key.to_string(), entry);
             self.sets.fetch_add(1, Ordering::Relaxed);
@@ -184,5 +216,39 @@ impl L2CacheBackend for DashMapCache {
                 None
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_dashmap_cache_basic_and_capacity() {
+        let cache = DashMapCache::new_with_capacity(2);
+        assert_eq!(cache.len(), 0);
+
+        cache
+            .set_with_ttl("k1", Bytes::from("v1"), Duration::from_millis(50))
+            .await
+            .unwrap();
+        cache
+            .set_with_ttl("k2", Bytes::from("v2"), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(cache.len(), 2);
+
+        // Wait for k1 to expire
+        tokio::time::sleep(Duration::from_millis(60)).await;
+
+        // Inserting k3 when len >= cap triggers cleanup_expired, evicting expired k1
+        cache
+            .set_with_ttl("k3", Bytes::from("v3"), Duration::from_secs(10))
+            .await
+            .unwrap();
+
+        assert_eq!(cache.get("k1").await, None);
+        assert_eq!(cache.get("k2").await, Some(Bytes::from("v2")));
+        assert_eq!(cache.get("k3").await, Some(Bytes::from("v3")));
     }
 }

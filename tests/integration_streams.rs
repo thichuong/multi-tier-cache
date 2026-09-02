@@ -1,5 +1,6 @@
 //! Integration tests for Redis Streams functionality
 
+#[macro_use]
 mod common;
 
 use common::*;
@@ -7,6 +8,7 @@ use common::*;
 /// Test publishing to Redis Stream
 #[tokio::test]
 async fn test_stream_publish() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache system"));
@@ -30,6 +32,7 @@ async fn test_stream_publish() {
 /// Test reading from Redis Stream
 #[tokio::test]
 async fn test_stream_read_latest() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache system"));
@@ -62,6 +65,7 @@ async fn test_stream_read_latest() {
 /// Test stream auto-trimming
 #[tokio::test]
 async fn test_stream_maxlen_trimming() {
+    skip_if_no_redis!();
     let cache = setup_cache_system()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache system"));

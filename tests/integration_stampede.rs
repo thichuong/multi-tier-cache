@@ -2,6 +2,7 @@
 //!
 //! Tests concurrent access patterns and request coalescing
 
+#[macro_use]
 mod common;
 
 use common::*;
@@ -13,6 +14,7 @@ use tokio::task::JoinSet;
 /// Test stampede protection with concurrent requests
 #[tokio::test]
 async fn test_concurrent_cache_miss() {
+    skip_if_no_redis!();
     let cache = Arc::new(
         setup_cache_system()
             .await
@@ -65,6 +67,7 @@ async fn test_concurrent_cache_miss() {
 /// Test concurrent reads (all should be fast)
 #[tokio::test]
 async fn test_concurrent_cache_hits() {
+    skip_if_no_redis!();
     let cache = Arc::new(
         setup_cache_system()
             .await
@@ -114,6 +117,7 @@ async fn test_concurrent_cache_hits() {
 /// Test that stampede protection reduces latency
 #[tokio::test]
 async fn test_stampede_latency_reduction() {
+    skip_if_no_redis!();
     let cache = Arc::new(
         setup_cache_system()
             .await

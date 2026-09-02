@@ -32,6 +32,35 @@ pub fn redis_url() -> String {
     std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string())
 }
 
+/// Check if Redis is reachable
+pub async fn is_redis_available() -> bool {
+    let url = redis_url();
+    if let Ok(client) = redis::Client::open(url.as_str()) {
+        if let Ok(mut conn) = client.get_multiplexed_async_connection().await {
+            let pong: redis::RedisResult<String> = redis::cmd("PING").query_async(&mut conn).await;
+            return pong.is_ok();
+        }
+    }
+    false
+}
+
+/// Macro to skip a test if Redis is not running
+#[macro_export]
+macro_rules! skip_if_no_redis {
+    () => {
+        if !common::is_redis_available().await {
+            eprintln!("Skipping test: Redis server is not reachable at {}", common::redis_url());
+            return;
+        }
+    };
+    ($ret:expr) => {
+        if !common::is_redis_available().await {
+            eprintln!("Skipping test: Redis server is not reachable at {}", common::redis_url());
+            return $ret;
+        }
+    };
+}
+
 /// Generate a unique test key prefix to avoid conflicts between tests
 pub fn test_key_prefix() -> String {
     use std::time::{Duration, SystemTime, UNIX_EPOCH};

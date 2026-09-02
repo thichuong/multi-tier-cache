@@ -5,7 +5,6 @@
 use crate::error::CacheResult;
 use bytes::Bytes;
 use futures_util::future::BoxFuture;
-use parking_lot::RwLock;
 use quick_cache::sync::Cache;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,7 +45,7 @@ impl CacheEntry {
 /// - Use Moka when you need advanced features like time-to-idle or weight-based eviction
 pub struct QuickCacheBackend {
     /// `QuickCache` instance
-    cache: Cache<String, Arc<RwLock<CacheEntry>>>,
+    cache: Cache<String, Arc<CacheEntry>>,
     /// Hit counter
     hits: Arc<AtomicU64>,
     /// Miss counter
@@ -93,11 +92,8 @@ use crate::traits::{CacheBackend, L2CacheBackend};
 impl CacheBackend for QuickCacheBackend {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
         Box::pin(async move {
-            if let Some(entry_lock) = self.cache.get(key) {
-                let entry: parking_lot::RwLockReadGuard<'_, CacheEntry> = entry_lock.read();
+            if let Some(entry) = self.cache.get(key) {
                 if entry.is_expired() {
-                    // Remove expired entry
-                    drop(entry); // Release read lock before removing
                     self.cache.remove(key);
                     self.misses.fetch_add(1, Ordering::Relaxed);
                     None
@@ -119,7 +115,7 @@ impl CacheBackend for QuickCacheBackend {
         ttl: Duration,
     ) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
-            let entry = Arc::new(RwLock::new(CacheEntry::new(value, ttl)));
+            let entry = Arc::new(CacheEntry::new(value, ttl));
             self.cache.insert(key.to_string(), entry);
             self.sets.fetch_add(1, Ordering::Relaxed);
             debug!(key = %key, ttl_secs = %ttl.as_secs(), "[QuickCache] Cached key with TTL");
@@ -166,10 +162,8 @@ impl L2CacheBackend for QuickCacheBackend {
         key: &'a str,
     ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
         Box::pin(async move {
-            if let Some(entry_lock) = self.cache.get(key) {
-                let entry = entry_lock.read();
+            if let Some(entry) = self.cache.get(key) {
                 if entry.is_expired() {
-                    drop(entry); // Release read lock before removing
                     self.cache.remove(key);
                     self.misses.fetch_add(1, Ordering::Relaxed);
                     None

@@ -9,9 +9,6 @@ use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
-#[cfg(feature = "redis")]
-#[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
-use tokio::sync::Mutex;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
 
@@ -297,7 +294,7 @@ pub struct CacheManager {
     /// Invalidation publisher
     #[cfg(feature = "redis")]
     #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
-    invalidation_publisher: Option<Arc<Mutex<InvalidationPublisher>>>,
+    invalidation_publisher: Option<Arc<InvalidationPublisher>>,
     /// Invalidation subscriber
     #[cfg(feature = "redis")]
     #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
@@ -306,6 +303,8 @@ pub struct CacheManager {
     #[cfg(feature = "redis")]
     #[cfg_attr(docsrs, doc(cfg(feature = "redis")))]
     invalidation_stats: Arc<AtomicInvalidationStats>,
+    /// Unique instance ID for filtering self-invalidation echo
+    instance_id: String,
     /// Number of promotions performed
     promotions: AtomicUsize,
 }
@@ -367,6 +366,7 @@ impl CacheManager {
             invalidation_subscriber: None,
             #[cfg(feature = "redis")]
             invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
+            instance_id: uuid::Uuid::new_v4().to_string(),
         })
     }
 
@@ -416,6 +416,7 @@ impl CacheManager {
             invalidation_subscriber: None,
             #[cfg(feature = "redis")]
             invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
+            instance_id: uuid::Uuid::new_v4().to_string(),
         })
     }
 
@@ -472,16 +473,19 @@ impl CacheManager {
             Some(Arc::new(redis_streams))
         };
 
-        // Create publisher
+        let instance_id = uuid::Uuid::new_v4().to_string();
+
+        // Create publisher & subscriber
         let (invalidation_publisher, invalidation_subscriber) = {
             let client = redis::Client::open(redis_url)?;
             let conn_manager = redis::aio::ConnectionManager::new(client).await?;
             let publisher = InvalidationPublisher::new(conn_manager, config.clone());
 
-            // Create subscriber
-            let subscriber = InvalidationSubscriber::new(redis_url, config.clone())?;
+            // Create subscriber with instance ID to avoid self-invalidation echo
+            let subscriber = InvalidationSubscriber::new(redis_url, config.clone())?
+                .with_instance_id(&instance_id);
             (
-                Some(Arc::new(Mutex::new(publisher))),
+                Some(Arc::new(publisher)),
                 Some(Arc::new(subscriber)),
             )
         };
@@ -506,6 +510,7 @@ impl CacheManager {
             invalidation_publisher,
             invalidation_subscriber,
             invalidation_stats,
+            instance_id,
         };
 
         // Start subscriber with handler
@@ -591,6 +596,7 @@ impl CacheManager {
             invalidation_subscriber: None,
             #[cfg(feature = "redis")]
             invalidation_stats: Arc::new(AtomicInvalidationStats::default()),
+            instance_id: uuid::Uuid::new_v4().to_string(),
         })
     }
 
@@ -822,10 +828,6 @@ impl CacheManager {
 
                 match &result {
                     Ok(Some(val)) => {
-                        // Hit in L2+ tier - update legacy stats
-                        if self.tiers.len() >= 2 {
-                            self.l2_hits.fetch_add(1, Ordering::Relaxed);
-                        }
                         let _ = tx.send(Some(Ok(Some(val.clone()))));
                     }
                     Ok(None) => {
@@ -843,11 +845,7 @@ impl CacheManager {
 
         // If waiter fell through (creator dropped without sending), do direct fallback query
         let result = self.get_multi_tier_from(key, 1).await;
-        if let Ok(Some(_)) = result {
-            if self.tiers.len() >= 2 {
-                self.l2_hits.fetch_add(1, Ordering::Relaxed);
-            }
-        } else if let Ok(None) = result {
+        if let Ok(None) = result {
             self.misses.fetch_add(1, Ordering::Relaxed);
         }
         result
@@ -1169,15 +1167,28 @@ impl CacheManager {
         }
 
         // 2. Use get_or_compute_with to handle stampede protection
+        let computed_val = Arc::new(std::sync::Mutex::new(None));
+        let computed_val_clone = Arc::clone(&computed_val);
         let serializer = self.serializer.clone();
         let bytes_result = self
             .get_or_compute_with(key, strategy, || async move {
                 let val = compute_fn().await?;
-                serializer.serialize(&val)
+                let bytes = serializer.serialize(&val)?;
+                if let Ok(mut guard) = computed_val_clone.lock() {
+                    *guard = Some(val);
+                }
+                Ok(bytes)
             })
             .await?;
 
-        // 3. Deserialize result
+        // 3. Fast-path: if this task computed the value, return it directly without deserializing
+        if let Ok(mut guard) = computed_val.lock()
+            && let Some(val) = guard.take()
+        {
+            return Ok(val);
+        }
+
+        // 4. Fallback for waiters: deserialize from bytes
         self.serializer.deserialize::<T>(&bytes_result)
     }
 
@@ -1416,12 +1427,8 @@ impl CacheManager {
         #[cfg(feature = "redis")]
         {
             if let Some(publisher) = &self.invalidation_publisher {
-                let mut pub_lock: tokio::sync::MutexGuard<
-                    '_,
-                    crate::invalidation::InvalidationPublisher,
-                > = publisher.lock().await;
                 let msg = InvalidationMessage::remove(key);
-                pub_lock.publish(&msg).await?;
+                publisher.publish_with_origin(&msg, Some(&self.instance_id)).await?;
                 self.invalidation_stats
                     .messages_sent
                     .fetch_add(1, Ordering::Relaxed);
@@ -1477,9 +1484,8 @@ impl CacheManager {
         // Broadcast update to other instances
         #[cfg(feature = "redis")]
         if let Some(publisher) = &self.invalidation_publisher {
-            let mut pub_lock = publisher.lock().await;
             let msg = InvalidationMessage::update(key, value, Some(ttl));
-            pub_lock.publish(&msg).await?;
+            publisher.publish_with_origin(&msg, Some(&self.instance_id)).await?;
             self.invalidation_stats
                 .messages_sent
                 .fetch_add(1, Ordering::Relaxed);
@@ -1531,7 +1537,7 @@ impl CacheManager {
         {
             if let Some(publisher) = &self.invalidation_publisher {
                 let msg = InvalidationMessage::remove_pattern(pattern);
-                publisher.lock().await.publish(&msg).await?;
+                publisher.publish_with_origin(&msg, Some(&self.instance_id)).await?;
                 debug!(pattern = %pattern, "Broadcasted pattern invalidation");
             }
         }
@@ -1578,15 +1584,20 @@ impl CacheManager {
         // Broadcast update if invalidation is enabled
         #[cfg(feature = "redis")]
         if let Some(publisher) = &self.invalidation_publisher {
-            let mut pub_lock = publisher.lock().await;
             let msg = InvalidationMessage::update(key, value, Some(ttl));
-            pub_lock.publish(&msg).await?;
+            publisher.publish_with_origin(&msg, Some(&self.instance_id)).await?;
             self.invalidation_stats
                 .messages_sent
                 .fetch_add(1, Ordering::Relaxed);
         }
 
         Ok(())
+    }
+
+    /// Get unique instance ID of this `CacheManager`
+    #[must_use]
+    pub fn instance_id(&self) -> &str {
+        &self.instance_id
     }
 
     /// Get invalidation statistics

@@ -6,6 +6,7 @@ use multi_tier_cache::error::CacheResult;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[macro_use]
 mod common;
 use common::{test_data, test_key};
 use multi_tier_cache::{
@@ -15,6 +16,7 @@ use multi_tier_cache::{
 /// Test basic multi-tier get/set operations
 #[tokio::test]
 async fn test_multi_tier_basic_operations() {
+    skip_if_no_redis!();
     // Create 3-tier cache: L1 + L2 + L3 (all using L2Cache for testing)
     // Note: In production, L1 would be Moka-based, but for multi-tier mode,
     // all backends must implement L2CacheBackend for TTL support
@@ -81,6 +83,7 @@ async fn test_multi_tier_basic_operations() {
 /// Test multi-tier statistics tracking
 #[tokio::test]
 async fn test_multi_tier_stats() {
+    skip_if_no_redis!();
     let l1 = Arc::new(
         L2Cache::new()
             .await
@@ -154,6 +157,7 @@ async fn test_multi_tier_stats() {
 /// Test backward compatibility - legacy 2-tier mode should still work
 #[tokio::test]
 async fn test_backward_compatibility_legacy_mode() {
+    skip_if_no_redis!();
     // Use old-style constructor (no tiers)
     let cache = CacheSystemBuilder::new()
         .build()
@@ -193,6 +197,7 @@ async fn test_backward_compatibility_legacy_mode() {
 /// Test TTL scaling across tiers
 #[tokio::test]
 async fn test_multi_tier_ttl_scaling() {
+    skip_if_no_redis!();
     let l1 = Arc::new(
         L2Cache::new()
             .await
@@ -248,6 +253,7 @@ async fn test_multi_tier_ttl_scaling() {
 /// Test multi-tier cache miss
 #[tokio::test]
 async fn test_multi_tier_cache_miss() {
+    skip_if_no_redis!();
     let l1 = Arc::new(
         L2Cache::new()
             .await
@@ -285,6 +291,7 @@ async fn test_multi_tier_cache_miss() {
 /// Test convenience methods: `with_l3()` and `with_l4()`
 #[tokio::test]
 async fn test_convenience_methods() {
+    skip_if_no_redis!();
     let l1_backend = Arc::new(
         L2Cache::new()
             .await
@@ -342,6 +349,7 @@ async fn test_convenience_methods() {
 /// Test multi-tier stampede protection
 #[tokio::test]
 async fn test_multi_tier_stampede_protection() {
+    skip_if_no_redis!();
     use std::sync::atomic::{AtomicU32, Ordering};
     use tokio::task::JoinSet;
 
@@ -420,6 +428,7 @@ async fn test_multi_tier_stampede_protection() {
 /// Test stampede protection retrieves from L3 instead of computing
 #[tokio::test]
 async fn test_stampede_retrieves_from_l3() {
+    skip_if_no_redis!();
     use std::sync::atomic::{AtomicU32, Ordering};
     use tokio::task::JoinSet;
 
@@ -508,6 +517,7 @@ async fn test_stampede_retrieves_from_l3() {
 #[cfg(feature = "memcached")]
 #[tokio::test]
 async fn test_memcached_tier_integration() {
+    skip_if_no_redis!();
     // If memcached server is not running, we skip the test instead of failing
     let memcached_backend = match multi_tier_cache::backends::MemcachedCache::new() {
         Ok(backend) => Arc::new(backend),

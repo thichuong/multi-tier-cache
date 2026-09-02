@@ -2,6 +2,7 @@
 //!
 //! Tests cross-instance cache invalidation via Redis Pub/Sub
 
+#[macro_use]
 mod common;
 
 use common::*;
@@ -12,6 +13,7 @@ use tokio::time::sleep;
 /// Test single key invalidation
 #[tokio::test]
 async fn test_invalidate_single_key() {
+    skip_if_no_redis!();
     let cache = setup_cache_with_invalidation()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -48,6 +50,7 @@ async fn test_invalidate_single_key() {
 /// Test update cache across instances
 #[tokio::test]
 async fn test_update_cache() {
+    skip_if_no_redis!();
     let cache = setup_cache_with_invalidation()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -81,6 +84,7 @@ async fn test_update_cache() {
 /// Test pattern-based invalidation
 #[tokio::test]
 async fn test_invalidate_pattern() {
+    skip_if_no_redis!();
     common::init_test_tracing();
     let cache = setup_cache_with_invalidation()
         .await
@@ -132,6 +136,7 @@ async fn test_invalidate_pattern() {
 /// Test write-through broadcast
 #[tokio::test]
 async fn test_set_with_broadcast() {
+    skip_if_no_redis!();
     let cache = setup_cache_with_invalidation()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -158,6 +163,7 @@ async fn test_set_with_broadcast() {
 /// Test invalidation statistics
 #[tokio::test]
 async fn test_invalidation_stats() {
+    skip_if_no_redis!();
     let cache = setup_cache_with_invalidation()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));
@@ -189,6 +195,7 @@ async fn test_invalidation_stats() {
 /// Test multiple invalidation operations
 #[tokio::test]
 async fn test_bulk_invalidation() {
+    skip_if_no_redis!();
     let cache = setup_cache_with_invalidation()
         .await
         .unwrap_or_else(|_| panic!("Failed to setup cache"));

@@ -4,10 +4,12 @@ use multi_tier_cache::{CacheStrategy, CacheSystem};
 use std::time::Duration;
 use tokio::time::sleep;
 
+#[macro_use]
 mod common;
 
 #[tokio::test]
 async fn test_real_time_strategy_expiry() -> anyhow::Result<()> {
+    skip_if_no_redis!(Ok(()));
     // Setup
     let cache = CacheSystem::new().await?;
     let manager = cache.cache_manager();
@@ -40,6 +42,7 @@ async fn test_real_time_strategy_expiry() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_manual_l1_invalidation_check() -> anyhow::Result<()> {
+    skip_if_no_redis!(Ok(()));
     // This test verifies that we can manually invalidation works
     // Note: Cross-instance invalidation is tested in integration_invalidation.rs
     // This tests the local mechanism via direct removal.
@@ -67,6 +70,7 @@ async fn test_manual_l1_invalidation_check() -> anyhow::Result<()> {
 
 #[tokio::test]
 async fn test_get_or_compute_error_propagation() -> anyhow::Result<()> {
+    skip_if_no_redis!(Ok(()));
     let cache = CacheSystem::new().await?;
     let manager = cache.cache_manager();
     let key = common::test_key("compute_err");
