@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Metrics export (Prometheus format)
 
+## [0.6.8] - 2026-09-02
+
+### Added
+
+- **Self-Invalidation Echo Prevention**: Added `InvalidationEnvelope` with `origin_id: Option<String>` and `#[serde(flatten)]` to identify message origin and prevent nodes from re-invalidating their own local cache.
+- **Instance ID Tracking**: Added `instance_id` to `CacheManager` with getter `CacheManager::instance_id(&self)`.
+- **DashMap Capacity Limits**: Added `with_max_capacity` and `new_with_capacity` to `DashMapCache` with automatic eviction of expired entries upon reaching threshold.
+- **In-Memory Integration Test Suite**: Added comprehensive `tests/integration_in_memory.rs` verifying multi-tier orchestration without Redis dependencies.
+
+### Changed
+
+- **Eliminated Invalidation Lock Contention**: Removed async `Mutex` wrapper around `InvalidationPublisher` in `CacheManager`, leveraging thread-safe `redis::aio::ConnectionManager` concurrency.
+- **QuickCache Optimization**: Removed redundant `RwLock` wrapper around `CacheEntry` in `QuickCacheBackend`.
+- **Fast-Path `get_or_compute_typed`**: Creator tasks now return the computed struct directly without redundant deserialization.
+- **Fixed `l2_hits` Double-Counting**: Corrected `CacheManager::get` to avoid double-incrementing `l2_hits`.
+- **Graceful Integration Test Fallbacks**: Added `skip_if_no_redis!` macro and `is_redis_available` check across integration tests for environments without a running Redis server.
+
 ## [0.6.7] - 2026-07-12
 
 ### Added
@@ -892,7 +909,8 @@ This is the initial release extracted from a production web server project that 
 
 The cache system was originally developed as `cache_system_island` module and has been refactored into a standalone, reusable library with zero business logic coupling.
 
-[Unreleased]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.7...HEAD
+[Unreleased]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.8...HEAD
+[0.6.8]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.4...v0.6.5
