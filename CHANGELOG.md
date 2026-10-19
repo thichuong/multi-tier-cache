@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+
+- Metrics export (Prometheus format)
+
+## [0.6.9] - 2026-10-19
+
 ### Added
 
 - **Multi-tier Health Checking**: Added `health_check(&self)` to `CacheManager` and unified health check handling in `CacheSystem::health_check` across all configured tiers.
@@ -23,7 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Multi-Tier L3+ Hit Rate Aggregation**: Updated `CacheManager::get_stats` to aggregate hit counts across all registered tiers in `self.tiers`.
 - **Strict DashMap Capacity Limit**: Enhanced `DashMapCache` eviction logic when reaching `max_capacity`: if no expired items are found, the item with the earliest expiration deadline is evicted.
 - **Safe Concurrent Health Checks**: Converted in-memory backend `health_check()` implementations (`DashMap`, `Moka`, `QuickCache`) to lightweight atomic read-only checks, preventing key collisions and metric pollution. `MemcachedCache` now uses `version()` probe.
-
 
 ## [0.6.8] - 2026-09-02
 
@@ -923,7 +928,8 @@ This is the initial release extracted from a production web server project that 
 
 The cache system was originally developed as `cache_system_island` module and has been refactored into a standalone, reusable library with zero business logic coupling.
 
-[Unreleased]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.8...HEAD
+[Unreleased]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.9...HEAD
+[0.6.9]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.8...v0.6.9
 [0.6.8]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.7...v0.6.8
 [0.6.7]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/thichuong/multi-tier-cache/compare/v0.6.5...v0.6.6
