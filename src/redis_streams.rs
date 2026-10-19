@@ -35,6 +35,11 @@ impl RedisStreams {
 
         Ok(Self { conn_manager })
     }
+
+    /// Create a new `RedisStreams` instance from an existing `ConnectionManager`
+    pub(crate) fn from_connection_manager(conn_manager: ConnectionManager) -> Self {
+        Self { conn_manager }
+    }
 }
 
 /// Implement `StreamingBackend` trait for `RedisStreams`

@@ -7,9 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
+### Added
 
-- Metrics export (Prometheus format)
+- **Multi-tier Health Checking**: Added `health_check(&self)` to `CacheManager` and unified health check handling in `CacheSystem::health_check` across all configured tiers.
+- **ConnectionManager Reuse**: Added `RedisCache::connection_manager(&self)` and `RedisStreams::from_connection_manager` allowing `CacheManager` and `RedisStreams` to share a single multiplexed Redis connection.
+- **Graceful Subscriber Task Shutdown**: Implemented `Drop` for `InvalidationSubscriber` and `ReliableStreamSubscriber` to reliably abort background listening tasks upon drop.
+- **Shared Invalidation Metrics**: Added `InvalidationSubscriber::with_stats` to share `AtomicInvalidationStats` directly between `CacheManager` and `InvalidationSubscriber`.
+- **Automatic Broadcast on Write**: Integrated write-through strategy with `auto_broadcast_on_write` in `CacheManager::set_with_strategy`.
+
+### Changed
+
+- **Eliminated Stampede Redundant Queries**: Refactored `get_or_compute_with` fast-path to check L1 without lock acquisition, double-check L1 after acquiring the single-flight creator lock, query lower tiers (L2..Ln) only once, and correctly count a single miss when computing.
+- **Fixed `get_or_compute_typed` Metrics Double-Counting**: Removed redundant `get_typed::<T>` pre-check, eliminating duplicate `total_requests` and extraneous cache lookups.
+- **Millisecond Precision for Redis TTL**: Updated `RedisCache::get_with_ttl` to query `PTTL` instead of `TTL`, preserving sub-second expiration accuracy.
+- **Multi-Tier L3+ Hit Rate Aggregation**: Updated `CacheManager::get_stats` to aggregate hit counts across all registered tiers in `self.tiers`.
+- **Strict DashMap Capacity Limit**: Enhanced `DashMapCache` eviction logic when reaching `max_capacity`: if no expired items are found, the item with the earliest expiration deadline is evicted.
+- **Safe Concurrent Health Checks**: Converted in-memory backend `health_check()` implementations (`DashMap`, `Moka`, `QuickCache`) to lightweight atomic read-only checks, preventing key collisions and metric pollution. `MemcachedCache` now uses `version()` probe.
+
 
 ## [0.6.8] - 2026-09-02
 

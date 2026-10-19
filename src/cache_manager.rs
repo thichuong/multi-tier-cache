@@ -384,14 +384,15 @@ impl CacheManager {
     /// Returns an error if Redis connection fails.
     #[cfg(all(feature = "moka", feature = "redis"))]
     #[cfg_attr(docsrs, doc(cfg(all(feature = "moka", feature = "redis"))))]
+    #[allow(clippy::unused_async)]
     pub async fn new(l1_cache: Arc<L1Cache>, l2_cache: Arc<L2Cache>) -> CacheResult<Self> {
         debug!("Initializing Cache Manager...");
 
-        // Create RedisStreams backend for streaming functionality
+        // Create RedisStreams backend for streaming functionality by reusing L2 connection manager
         let streaming_backend: Option<Arc<dyn StreamingBackend>> = {
-            let redis_url =
-                std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-            let redis_streams = crate::redis_streams::RedisStreams::new(&redis_url).await?;
+            let redis_streams = crate::redis_streams::RedisStreams::from_connection_manager(
+                l2_cache.connection_manager(),
+            );
             Some(Arc::new(redis_streams))
         };
 
@@ -474,6 +475,7 @@ impl CacheManager {
         };
 
         let instance_id = uuid::Uuid::new_v4().to_string();
+        let invalidation_stats = Arc::new(AtomicInvalidationStats::default());
 
         // Create publisher & subscriber
         let (invalidation_publisher, invalidation_subscriber) = {
@@ -481,16 +483,12 @@ impl CacheManager {
             let conn_manager = redis::aio::ConnectionManager::new(client).await?;
             let publisher = InvalidationPublisher::new(conn_manager, config.clone());
 
-            // Create subscriber with instance ID to avoid self-invalidation echo
+            // Create subscriber with instance ID to avoid self-invalidation echo and share stats
             let subscriber = InvalidationSubscriber::new(redis_url, config.clone())?
-                .with_instance_id(&instance_id);
-            (
-                Some(Arc::new(publisher)),
-                Some(Arc::new(subscriber)),
-            )
+                .with_instance_id(&instance_id)
+                .with_stats(Arc::clone(&invalidation_stats));
+            (Some(Arc::new(publisher)), Some(Arc::new(subscriber)))
         };
-
-        let invalidation_stats = Arc::new(AtomicInvalidationStats::default());
 
         let tiers = vec![
             CacheTier::new(l1_cache as Arc<dyn L2CacheBackend>, 1, false, 1, 1.0),
@@ -627,18 +625,11 @@ impl CacheManager {
                                 value,
                                 ttl_secs,
                             } => {
-                                if let Some(secs) = ttl_secs {
-                                    tier.backend
-                                        .set_with_ttl(
-                                            key,
-                                            value.clone(),
-                                            Duration::from_secs(*secs),
-                                        )
-                                        .await
-                                        .ok();
-                                } else {
-                                    tier.backend.set(key, value.clone()).await.ok();
-                                }
+                                let ttl = ttl_secs.map_or_else(
+                                    || CacheStrategy::Default.to_duration(),
+                                    Duration::from_secs,
+                                );
+                                tier.set_with_ttl(key, value.clone(), ttl).await.ok();
                             }
                             InvalidationMessage::RemovePattern { pattern } => {
                                 if let Err(e) = tier.backend.remove_pattern(pattern).await {
@@ -672,8 +663,9 @@ impl CacheManager {
     ///
     /// This method iterates through all configured tiers and automatically promotes
     /// to upper tiers on cache hit.
+    #[allow(dead_code)]
     async fn get_multi_tier(&self, key: &str) -> CacheResult<Option<Bytes>> {
-        self.get_multi_tier_from(key, 0).await
+        self.get_multi_tier_from_internal(key, 0, false).await
     }
 
     /// Get value from cache starting from a specific tier index
@@ -681,6 +673,17 @@ impl CacheManager {
         &self,
         key: &str,
         start_index: usize,
+    ) -> CacheResult<Option<Bytes>> {
+        self.get_multi_tier_from_internal(key, start_index, false)
+            .await
+    }
+
+    /// Internal method to get value from cache starting from `start_index` with optional forced promotion
+    async fn get_multi_tier_from_internal(
+        &self,
+        key: &str,
+        start_index: usize,
+        force_promote: bool,
     ) -> CacheResult<Option<Bytes>> {
         // Try each tier sequentially (sorted by tier_level) starting from start_index
         for (tier_index, tier) in self.tiers.iter().enumerate().skip(start_index) {
@@ -695,15 +698,16 @@ impl CacheManager {
 
                 // Promote to all upper tiers (if promotion enabled)
                 if tier.promotion_enabled && tier_index > 0 {
-                    // Probabilistic Promotion Check
-                    let should_promote = if tier.promotion_frequency <= 1 {
-                        true
-                    } else {
-                        rand::thread_rng().gen_ratio(
-                            1,
-                            u32::try_from(tier.promotion_frequency).unwrap_or(u32::MAX),
-                        )
-                    };
+                    // Probabilistic Promotion Check (forced if force_promote is true)
+                    let should_promote = force_promote
+                        || if tier.promotion_frequency <= 1 {
+                            true
+                        } else {
+                            rand::thread_rng().gen_ratio(
+                                1,
+                                u32::try_from(tier.promotion_frequency).unwrap_or(u32::MAX),
+                            )
+                        };
 
                     if should_promote {
                         let promotion_ttl =
@@ -824,7 +828,10 @@ impl CacheManager {
                 }
 
                 // Check remaining tiers with promotion (start from tier index 1: L2)
-                let result = self.get_multi_tier_from(key, 1).await;
+                let force_promote = tx.receiver_count() > 0;
+                let result = self
+                    .get_multi_tier_from_internal(key, 1, force_promote)
+                    .await;
 
                 match &result {
                     Ok(Some(val)) => {
@@ -907,6 +914,25 @@ impl CacheManager {
                 self.tiers.len(),
                 ttl
             );
+
+            // Broadcast update if invalidation is enabled with auto_broadcast_on_write
+            #[cfg(feature = "redis")]
+            if let Some(publisher) = &self.invalidation_publisher
+                && publisher.config().auto_broadcast_on_write
+            {
+                let msg = InvalidationMessage::update(key, value, Some(ttl));
+                if let Err(e) = publisher
+                    .publish_with_origin(&msg, Some(&self.instance_id))
+                    .await
+                {
+                    warn!("Auto-broadcast on write failed for key '{}': {}", key, e);
+                } else {
+                    self.invalidation_stats
+                        .messages_sent
+                        .fetch_add(1, Ordering::Relaxed);
+                }
+            }
+
             return Ok(());
         }
 
@@ -963,8 +989,12 @@ impl CacheManager {
     {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
 
-        // 1. Try tiers sequentially first
-        if let Some(value) = self.get_multi_tier(key).await? {
+        // 1. Fast path for L1 (first tier) - no locking needed
+        if let Some(tier1) = self.tiers.first()
+            && let Some((value, _ttl)) = tier1.get_with_ttl(key).await
+        {
+            tier1.record_hit();
+            self.l1_hits.fetch_add(1, Ordering::Relaxed);
             return Ok(value);
         }
 
@@ -1007,11 +1037,25 @@ impl CacheManager {
                     key: key_owned,
                 };
 
-                // 3. Re-check cache after receiving/creating broadcaster (double-check pattern)
-                if let Some(value) = self.get_multi_tier(key).await? {
+                // Double-check L1 after acquiring lock
+                if let Some(tier1) = self.tiers.first()
+                    && let Some((value, _ttl)) = tier1.get_with_ttl(key).await
+                {
+                    tier1.record_hit();
+                    self.l1_hits.fetch_add(1, Ordering::Relaxed);
                     let _ = tx.send(Some(Ok(Some(value.clone()))));
                     return Ok(value);
                 }
+
+                // Check remaining tiers with promotion (start from tier index 1: L2)
+                let tier_res = self.get_multi_tier_from_internal(key, 1, true).await?;
+                if let Some(value) = tier_res {
+                    let _ = tx.send(Some(Ok(Some(value.clone()))));
+                    return Ok(value);
+                }
+
+                // Cache miss across all tiers - record miss
+                self.misses.fetch_add(1, Ordering::Relaxed);
 
                 // 4. Miss - compute fresh data
                 debug!(
@@ -1161,12 +1205,7 @@ impl CacheManager {
         F: FnOnce() -> Fut + Send,
         Fut: Future<Output = CacheResult<T>> + Send,
     {
-        // 1. Try to get typed from cache first
-        if let Some(value) = self.get_typed::<T>(key).await? {
-            return Ok(value);
-        }
-
-        // 2. Use get_or_compute_with to handle stampede protection
+        // 1. Use get_or_compute_with to handle checking tiers and stampede protection
         let computed_val = Arc::new(std::sync::Mutex::new(None));
         let computed_val_clone = Arc::clone(&computed_val);
         let serializer = self.serializer.clone();
@@ -1181,14 +1220,14 @@ impl CacheManager {
             })
             .await?;
 
-        // 3. Fast-path: if this task computed the value, return it directly without deserializing
+        // 2. Fast-path: if this task computed the value, return it directly without deserializing
         if let Ok(mut guard) = computed_val.lock()
             && let Some(val) = guard.take()
         {
             return Ok(val);
         }
 
-        // 4. Fallback for waiters: deserialize from bytes
+        // 3. Fallback for cache hits and waiters: deserialize from bytes
         self.serializer.deserialize::<T>(&bytes_result)
     }
 
@@ -1203,16 +1242,22 @@ impl CacheManager {
         let l2_hits = self.l2_hits.load(Ordering::Relaxed);
         let misses = self.misses.load(Ordering::Relaxed);
 
+        let total_hits: u64 = if self.tiers.len() <= 2 {
+            l1_hits + l2_hits
+        } else {
+            self.tiers.iter().map(|t| t.stats.hit_count()).sum()
+        };
+
         CacheManagerStats {
             total_requests: total_reqs,
             l1_hits,
             l2_hits,
-            total_hits: l1_hits + l2_hits,
+            total_hits,
             misses,
             hit_rate: if total_reqs > 0 {
                 #[allow(clippy::cast_precision_loss)]
                 {
-                    ((l1_hits + l2_hits) as f64 / total_reqs as f64) * 100.0
+                    (total_hits as f64 / total_reqs as f64) * 100.0
                 }
             } else {
                 0.0
@@ -1428,7 +1473,9 @@ impl CacheManager {
         {
             if let Some(publisher) = &self.invalidation_publisher {
                 let msg = InvalidationMessage::remove(key);
-                publisher.publish_with_origin(&msg, Some(&self.instance_id)).await?;
+                publisher
+                    .publish_with_origin(&msg, Some(&self.instance_id))
+                    .await?;
                 self.invalidation_stats
                     .messages_sent
                     .fetch_add(1, Ordering::Relaxed);
@@ -1485,7 +1532,9 @@ impl CacheManager {
         #[cfg(feature = "redis")]
         if let Some(publisher) = &self.invalidation_publisher {
             let msg = InvalidationMessage::update(key, value, Some(ttl));
-            publisher.publish_with_origin(&msg, Some(&self.instance_id)).await?;
+            publisher
+                .publish_with_origin(&msg, Some(&self.instance_id))
+                .await?;
             self.invalidation_stats
                 .messages_sent
                 .fetch_add(1, Ordering::Relaxed);
@@ -1537,7 +1586,9 @@ impl CacheManager {
         {
             if let Some(publisher) = &self.invalidation_publisher {
                 let msg = InvalidationMessage::remove_pattern(pattern);
-                publisher.publish_with_origin(&msg, Some(&self.instance_id)).await?;
+                publisher
+                    .publish_with_origin(&msg, Some(&self.instance_id))
+                    .await?;
                 debug!(pattern = %pattern, "Broadcasted pattern invalidation");
             }
         }
@@ -1585,7 +1636,9 @@ impl CacheManager {
         #[cfg(feature = "redis")]
         if let Some(publisher) = &self.invalidation_publisher {
             let msg = InvalidationMessage::update(key, value, Some(ttl));
-            publisher.publish_with_origin(&msg, Some(&self.instance_id)).await?;
+            publisher
+                .publish_with_origin(&msg, Some(&self.instance_id))
+                .await?;
             self.invalidation_stats
                 .messages_sent
                 .fetch_add(1, Ordering::Relaxed);
@@ -1607,12 +1660,37 @@ impl CacheManager {
     pub fn invalidation_stats(&self) -> Option<crate::invalidation::InvalidationStats> {
         #[cfg(feature = "redis")]
         {
-            Some(self.invalidation_stats.snapshot())
+            if self.invalidation_publisher.is_some() || self.invalidation_subscriber.is_some() {
+                Some(self.invalidation_stats.snapshot())
+            } else {
+                None
+            }
         }
         #[cfg(not(feature = "redis"))]
         {
             None
         }
+    }
+
+    /// Check health of all configured cache tiers
+    ///
+    /// Returns `true` if at least tier 1 is operational.
+    pub async fn health_check(&self) -> bool {
+        if self.tiers.is_empty() {
+            return true;
+        }
+        let mut t1_ok = true;
+        let mut all_ok = true;
+        for (i, tier) in self.tiers.iter().enumerate() {
+            let ok = tier.backend.health_check().await;
+            if i == 0 {
+                t1_ok = ok;
+            }
+            if !ok {
+                all_ok = false;
+            }
+        }
+        if all_ok { true } else { t1_ok }
     }
 }
 
@@ -1632,6 +1710,7 @@ pub struct CacheManagerStats {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::time::Duration;

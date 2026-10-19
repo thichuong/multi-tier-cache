@@ -118,6 +118,11 @@ impl RedisCache {
         debug!(count = count, "[Redis] Removed keys in bulk");
         Ok(count)
     }
+
+    /// Get a clone of the internal connection manager
+    pub(crate) fn connection_manager(&self) -> ConnectionManager {
+        self.conn_manager.clone()
+    }
 }
 
 // ===== Trait Implementations =====
@@ -146,8 +151,8 @@ impl CacheBackend for RedisCache {
     ) -> BoxFuture<'a, CacheResult<()>> {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
-            let ttl_ms = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX);
-            let result = conn.pset_ex(key, value.to_vec(), ttl_ms).await;
+            let ttl_ms = u64::try_from(ttl.as_millis()).unwrap_or(u64::MAX).max(1);
+            let result = conn.pset_ex(key, value.as_ref(), ttl_ms).await;
             if result.is_ok() {
                 self.sets.fetch_add(1, Ordering::Relaxed);
                 debug!(key = %key, ttl_ms = %ttl.as_millis(), "[Redis] Cached key bytes with TTL");
@@ -197,17 +202,18 @@ impl L2CacheBackend for RedisCache {
     ) -> BoxFuture<'a, Option<(Bytes, Option<Duration>)>> {
         Box::pin(async move {
             let mut conn = self.conn_manager.clone();
-            // Pipelining is better:
-            let (bytes, ttl_secs): (Option<Vec<u8>>, i64) =
-                match redis::pipe().get(key).ttl(key).query_async(&mut conn).await {
-                    Ok(res) => res,
-                    Err(_) => return None,
-                };
+            // Pipelining with PTTL for millisecond precision
+            let mut pipe = redis::pipe();
+            pipe.get(key).cmd("PTTL").arg(key);
+            let (bytes, ttl_ms): (Option<Vec<u8>>, i64) = match pipe.query_async(&mut conn).await {
+                Ok(res) => res,
+                Err(_) => return None,
+            };
 
             if let Some(b) = bytes {
                 self.hits.fetch_add(1, Ordering::Relaxed);
-                let ttl = if ttl_secs > 0 {
-                    Some(Duration::from_secs(ttl_secs.unsigned_abs()))
+                let ttl = if ttl_ms > 0 {
+                    Some(Duration::from_millis(ttl_ms.unsigned_abs()))
                 } else {
                     None
                 };

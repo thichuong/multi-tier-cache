@@ -59,7 +59,10 @@ impl DashMapCache {
     /// Create new `DashMap` cache with capacity limit
     #[must_use]
     pub fn new_with_capacity(capacity: usize) -> Self {
-        info!(capacity = capacity, "Initializing DashMap Cache with capacity limit");
+        info!(
+            capacity = capacity,
+            "Initializing DashMap Cache with capacity limit"
+        );
 
         Self {
             map: Arc::new(DashMap::with_capacity(capacity)),
@@ -119,17 +122,19 @@ impl Default for DashMapCache {
 impl CacheBackend for DashMapCache {
     fn get<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Option<Bytes>> {
         Box::pin(async move {
-            match self.map.get(key) {
-                Some(entry) => {
-                    if entry.is_expired() {
-                        drop(entry);
-                        self.map.remove(key);
-                        None
-                    } else {
-                        Some(entry.value.clone())
-                    }
+            if let Some(entry) = self.map.get(key) {
+                if entry.is_expired() {
+                    drop(entry);
+                    self.map.remove(key);
+                    self.misses.fetch_add(1, Ordering::Relaxed);
+                    None
+                } else {
+                    self.hits.fetch_add(1, Ordering::Relaxed);
+                    Some(entry.value.clone())
                 }
-                None => None,
+            } else {
+                self.misses.fetch_add(1, Ordering::Relaxed);
+                None
             }
         })
     }
@@ -147,6 +152,21 @@ impl CacheBackend for DashMapCache {
                 && !self.map.contains_key(key)
             {
                 self.cleanup_expired();
+                if self.map.len() >= cap {
+                    // Evict the entry with the earliest expiration to strictly respect max_capacity
+                    let mut candidate_key = None;
+                    let mut earliest_expiry = None;
+                    for ref_item in self.map.iter() {
+                        let exp = ref_item.value().expires_at;
+                        if earliest_expiry.is_none() || exp < earliest_expiry {
+                            earliest_expiry = exp;
+                            candidate_key = Some(ref_item.key().clone());
+                        }
+                    }
+                    if let Some(k) = candidate_key {
+                        self.map.remove(&k);
+                    }
+                }
             }
 
             let entry = CacheEntry::new(value, ttl);
@@ -220,6 +240,7 @@ impl L2CacheBackend for DashMapCache {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

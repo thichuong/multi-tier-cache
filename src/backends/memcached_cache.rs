@@ -175,23 +175,11 @@ impl CacheBackend for MemcachedCache {
     }
 
     fn health_check(&self) -> BoxFuture<'_, bool> {
+        let client = Arc::clone(&self.client);
         Box::pin(async move {
-            let test_key = "health_check_memcached";
-            let test_value = Bytes::from_static(b"health_check");
-
-            match self
-                .set_with_ttl(test_key, test_value.clone(), Duration::from_secs(10))
+            tokio::task::spawn_blocking(move || client.version().is_ok())
                 .await
-            {
-                Ok(()) => match self.get(test_key).await {
-                    Some(retrieved) => {
-                        let _ = self.remove(test_key).await;
-                        retrieved == test_value
-                    }
-                    None => false,
-                },
-                Err(_) => false,
-            }
+                .unwrap_or(false)
         })
     }
 

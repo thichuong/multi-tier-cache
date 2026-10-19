@@ -206,24 +206,7 @@ impl CacheBackend for MokaCache {
     }
 
     fn health_check(&self) -> BoxFuture<'_, bool> {
-        Box::pin(async move {
-            let test_key = "health_check_moka";
-            let test_value = Bytes::from("health_check");
-
-            match self
-                .set_with_ttl(test_key, test_value.clone(), Duration::from_mins(1))
-                .await
-            {
-                Ok(()) => match self.get(test_key).await {
-                    Some(retrieved) => {
-                        let _ = self.remove(test_key).await;
-                        retrieved == test_value
-                    }
-                    None => false,
-                },
-                Err(_) => false,
-            }
-        })
+        Box::pin(async move { true })
     }
 
     fn remove_pattern<'a>(&'a self, pattern: &'a str) -> BoxFuture<'a, CacheResult<()>> {

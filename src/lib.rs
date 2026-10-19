@@ -267,6 +267,20 @@ impl CacheSystem {
     /// ```
     pub async fn health_check(&self) -> bool {
         #[cfg(feature = "moka")]
+        let has_l1 = self.l1_cache.is_some();
+        #[cfg(not(feature = "moka"))]
+        let has_l1 = false;
+
+        #[cfg(feature = "redis")]
+        let has_l2 = self.l2_cache.is_some();
+        #[cfg(not(feature = "redis"))]
+        let has_l2 = false;
+
+        if !has_l1 && !has_l2 {
+            return self.cache_manager.health_check().await;
+        }
+
+        #[cfg(feature = "moka")]
         let l1_ok = match &self.l1_cache {
             Some(cache) => {
                 let backend: &dyn crate::traits::CacheBackend = cache.as_ref();

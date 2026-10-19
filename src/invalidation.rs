@@ -249,6 +249,12 @@ impl InvalidationPublisher {
         Self { connection, config }
     }
 
+    /// Get the publisher's invalidation configuration
+    #[must_use]
+    pub fn config(&self) -> &InvalidationConfig {
+        &self.config
+    }
+
     /// Publish an invalidation message to all subscribers
     ///
     /// # Errors
@@ -476,6 +482,13 @@ impl InvalidationSubscriber {
         self
     }
 
+    /// Set custom invalidation stats instance
+    #[must_use]
+    pub fn with_stats(mut self, stats: Arc<AtomicInvalidationStats>) -> Self {
+        self.stats = stats;
+        self
+    }
+
     /// Get a snapshot of current statistics
     #[must_use]
     pub fn stats(&self) -> InvalidationStats {
@@ -653,6 +666,12 @@ impl InvalidationSubscriber {
     }
 }
 
+impl Drop for InvalidationSubscriber {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 /// Reliable subscriber using Redis Streams and Consumer Groups
 pub struct ReliableStreamSubscriber {
     redis_url: String,
@@ -808,6 +827,12 @@ impl ReliableStreamSubscriber {
     }
 }
 
+impl Drop for ReliableStreamSubscriber {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,7 +852,7 @@ mod tests {
         let msg = InvalidationMessage::update(
             "test_key",
             Bytes::from("{\"value\": 123}"),
-            Some(Duration::from_secs(3600)),
+            Some(Duration::from_hours(1)),
         );
 
         if let InvalidationMessage::Update {

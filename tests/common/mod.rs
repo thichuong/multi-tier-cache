@@ -49,13 +49,19 @@ pub async fn is_redis_available() -> bool {
 macro_rules! skip_if_no_redis {
     () => {
         if !common::is_redis_available().await {
-            eprintln!("Skipping test: Redis server is not reachable at {}", common::redis_url());
+            eprintln!(
+                "Skipping test: Redis server is not reachable at {}",
+                common::redis_url()
+            );
             return;
         }
     };
     ($ret:expr) => {
         if !common::is_redis_available().await {
-            eprintln!("Skipping test: Redis server is not reachable at {}", common::redis_url());
+            eprintln!(
+                "Skipping test: Redis server is not reachable at {}",
+                common::redis_url()
+            );
             return $ret;
         }
     };

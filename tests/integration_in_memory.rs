@@ -1,7 +1,12 @@
+#![allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::duration_suboptimal_units
+)]
 //! Pure In-Memory Integration Tests
 //!
 //! These tests verify the entire multi-tier caching pipeline, stampede protection,
-//! TTL scaling, and statistics tracking using pure in-memory backends (DashMapCache).
+//! TTL scaling, and statistics tracking using pure in-memory backends (`DashMapCache`).
 //! They run completely isolated without requiring an external Redis or network service.
 
 use bytes::Bytes;
@@ -23,7 +28,7 @@ struct TestUser {
     role: String,
 }
 
-/// Helper to construct a 2-tier in-memory CacheManager
+/// Helper to construct a 2-tier in-memory `CacheManager`
 fn setup_in_memory_2tier() -> CacheResult<Arc<CacheManager>> {
     let l1 = Arc::new(DashMapCache::new_with_capacity(100));
     let l2 = Arc::new(DashMapCache::new_with_capacity(500));
@@ -129,7 +134,10 @@ async fn test_in_memory_stampede_protection() -> CacheResult<()> {
     assert_eq!(calls, 1, "Expected exactly 1 compute call, but got {calls}");
 
     // Subsequent get should hit L1
-    assert_eq!(manager.get(key).await?, Some(Bytes::from("computed_result")));
+    assert_eq!(
+        manager.get(key).await?,
+        Some(Bytes::from("computed_result"))
+    );
 
     Ok(())
 }
@@ -147,9 +155,11 @@ async fn test_in_memory_typed_compute_on_miss() -> CacheResult<()> {
 
     let user_clone = expected_user.clone();
     let result: TestUser = manager
-        .get_or_compute_typed(key, CacheStrategy::ShortTerm, || async move {
-            Ok(user_clone)
-        })
+        .get_or_compute_typed(
+            key,
+            CacheStrategy::ShortTerm,
+            || async move { Ok(user_clone) },
+        )
         .await?;
 
     assert_eq!(result, expected_user);
@@ -223,6 +233,147 @@ async fn test_in_memory_builder_multi_tier() -> CacheResult<()> {
     assert_eq!(tier_stats[0].tier_level, 1);
     assert_eq!(tier_stats[1].tier_level, 2);
     assert_eq!(tier_stats[2].tier_level, 3);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_in_memory_typed_single_request_count() -> CacheResult<()> {
+    let manager = setup_in_memory_2tier()?;
+    let key = "typed:count:test";
+
+    let stats_before = manager.get_stats();
+    assert_eq!(stats_before.total_requests, 0);
+
+    let res: TestUser = manager
+        .get_or_compute_typed(key, CacheStrategy::ShortTerm, || async move {
+            Ok(TestUser {
+                id: 99,
+                name: "Charlie".to_string(),
+                role: "tester".to_string(),
+            })
+        })
+        .await?;
+
+    assert_eq!(res.id, 99);
+
+    let stats_after = manager.get_stats();
+    // Verify total_requests incremented by exactly 1 (not 2)
+    assert_eq!(
+        stats_after.total_requests, 1,
+        "Expected total_requests to be exactly 1, but got {}",
+        stats_after.total_requests
+    );
+    assert_eq!(stats_after.misses, 1);
+
+    // Second call should be a hit in L1
+    let hit: TestUser = manager
+        .get_or_compute_typed(key, CacheStrategy::ShortTerm, || async move {
+            panic!("Should not compute on hit");
+        })
+        .await?;
+    assert_eq!(hit.id, 99);
+
+    let stats_final = manager.get_stats();
+    assert_eq!(stats_final.total_requests, 2);
+    assert_eq!(stats_final.l1_hits, 1);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_in_memory_multi_tier_stats_l3_hits() -> CacheResult<()> {
+    let l1 = Arc::new(DashMapCache::new());
+    let l2 = Arc::new(DashMapCache::new());
+    let l3 = Arc::new(DashMapCache::new());
+
+    // Pre-populate only L3
+    let key = "l3_hit_key";
+    let val = Bytes::from("l3_value");
+    l3.set_with_ttl(key, val.clone(), Duration::from_mins(1))
+        .await?;
+
+    let tiers = vec![
+        multi_tier_cache::CacheTier::new(l1.clone() as Arc<dyn L2CacheBackend>, 1, false, 1, 1.0),
+        multi_tier_cache::CacheTier::new(l2.clone() as Arc<dyn L2CacheBackend>, 2, false, 1, 1.0),
+        multi_tier_cache::CacheTier::new(l3.clone() as Arc<dyn L2CacheBackend>, 3, false, 1, 1.0),
+    ];
+    let manager = CacheManager::new_with_tiers(tiers, None)?;
+
+    let res = manager.get(key).await?;
+    assert_eq!(res, Some(val));
+
+    let stats = manager.get_stats();
+    // L1 and L2 missed, but L3 hit
+    assert_eq!(stats.l1_hits, 0);
+    assert_eq!(stats.l2_hits, 0);
+    assert_eq!(
+        stats.total_hits, 1,
+        "Total hits must include L3 hits in 3-tier cache"
+    );
+    assert!(
+        (stats.hit_rate - 100.0).abs() < f64::EPSILON,
+        "Hit rate must be 100% since L3 had a hit"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_in_memory_dashmap_strict_max_capacity() -> CacheResult<()> {
+    let cache = DashMapCache::new_with_capacity(3);
+
+    // Insert 3 items that will not expire soon
+    cache
+        .set_with_ttl("k1", Bytes::from("v1"), Duration::from_secs(100))
+        .await?;
+    cache
+        .set_with_ttl("k2", Bytes::from("v2"), Duration::from_secs(200))
+        .await?;
+    cache
+        .set_with_ttl("k3", Bytes::from("v3"), Duration::from_mins(5))
+        .await?;
+    assert_eq!(cache.len(), 3);
+
+    // Insert 4th item - none are expired, but max_capacity=3 must be strictly enforced
+    cache
+        .set_with_ttl("k4", Bytes::from("v4"), Duration::from_secs(400))
+        .await?;
+    assert_eq!(
+        cache.len(),
+        3,
+        "DashMapCache must strictly enforce max_capacity"
+    );
+
+    // k1 had the earliest expiration (100s), so it should have been evicted
+    assert_eq!(cache.get("k1").await, None);
+    assert_eq!(cache.get("k4").await, Some(Bytes::from("v4")));
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_in_memory_concurrent_health_checks() -> CacheResult<()> {
+    let l1 = Arc::new(DashMapCache::new());
+    let l2 = Arc::new(DashMapCache::new());
+
+    let cache_system = CacheSystemBuilder::new()
+        .with_tier(l1 as Arc<dyn L2CacheBackend>, TierConfig::as_l1())
+        .with_tier(l2 as Arc<dyn L2CacheBackend>, TierConfig::as_l2())
+        .build()
+        .await?;
+
+    let mut set = JoinSet::new();
+    let cs = Arc::new(cache_system);
+
+    for _ in 0..20 {
+        let cs_clone = Arc::clone(&cs);
+        set.spawn(async move { cs_clone.health_check().await });
+    }
+
+    while let Some(res) = set.join_next().await {
+        assert!(res.unwrap_or(false));
+    }
 
     Ok(())
 }
